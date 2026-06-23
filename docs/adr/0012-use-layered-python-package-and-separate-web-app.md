@@ -1,0 +1,3 @@
+# Use a layered Python package and separate Web UI app
+
+The v1 project will use a layered Python package under `src/research_agent/` for configuration, Core Service use cases, LangGraph runtime, roles, context builders, the ResearchExecutor, runtime tool capabilities, Knowledge Base ingestion/indexing, RAG, web research, storage, API, CLI, and shared schemas. Python dependencies and CLI entry points are managed through `uv` and `pyproject.toml`, with tests under `tests/`. The React/Vite/TypeScript Web UI will live under `web/` and use npm scripts, keeping interface code separate while both Web UI and CLI share the Core Service behavior.

@@ -1,0 +1,7 @@
+# List finished Task History without task deletion in v1
+
+V1 will not automatically clean up Task History, Web Report Files, source snapshots, or task artifacts. Task History and task-management views list only finished tasks with final status `completed` or `failed`; running task progress is shown through Research Progress Stream and Process View. V1 does not include task delete commands/actions. The Web UI Tasks Page supports clicking a task row to navigate to its result page (see ADR-0029); `research-agent task list` remains a summary-only CLI view without detail navigation.
+
+`research-agent task list` and the Web UI Tasks Page display only `task_id`, `mode`, `status`, `title_or_question`, and `created_at`. They show all `local` and `web` finished tasks in one mixed list sorted by `created_at` descending, using the `mode` column to distinguish task type rather than separate tabs. V1 does not paginate or apply a default limit. They do not save or display a separate `error_summary` field for task-history listing, and they do not add report file error columns. Runtime failure details, including `file_write_error`, are shown by the active result view or CLI command output for that run, not the v1 task-history list.
+
+Task History stores only concrete task modes: `local` and `web`. `research-agent both` is not a task mode and does not create a parent task-history record; it creates one Local RAG task and one Web Research task, which appear as separate finished records.

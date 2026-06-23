@@ -1,0 +1,3 @@
+# Use Python, LangGraph, FastAPI, React, SQLite, and a Markdown Vault for v1
+
+The v1 research agent will use Python with `uv` and `pyproject.toml` for the Core Service, Research Runtime, and CLI; LangGraph for recoverable Web Research execution; FastAPI for the Web UI API and task event streams; React/Vite/TypeScript with npm for the Web UI; SQLite for task history, configuration, metadata, and FTS5 full-text indexing; a Markdown Vault as the canonical Knowledge Base source; and Chroma for local vector indexing. This keeps the Web Research runtime and local RAG stack in one Python-centered backend while allowing both Web UI and CLI to expose the same Capability Surface through the shared Core Service.

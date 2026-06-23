@@ -1,0 +1,45 @@
+# Use phase-based Research Progress Stream records
+
+Research progress streaming is phase-based rather than based on global progress categories. Each streamed record represents progress for one product-level phase and has `phase` as its primary discriminator. `event_type` only describes the progress state inside that phase: `started`, `progress`, `completed`, or `failed`.
+
+Local RAG and Web Research are separate workflows, so their phases are separate in practice. Local RAG uses `local_rag`. Web Research uses `web_planning`, `web_execution`, `web_supervision`, `web_revision`, and `web_curation`. `web_planning` is the first Planner run that creates the initial subtask plan, while `web_revision` is a later Planner run that appends new pending subtasks based on Supervisor-maintained research gaps.
+
+V1 progress records use this shape:
+
+```json
+{
+  "task_id": "task_20260623_abc123",
+  "mode": "web",
+  "phase": "web_execution",
+  "event_type": "progress",
+  "created_at": "2026-06-23T10:30:00Z",
+  "message": "Researching subtask",
+  "details": {
+    "items": []
+  }
+}
+```
+
+Each line in `tasks/{task_id}/events.jsonl` is one JSON object with exactly this top-level shape: `task_id`, `mode`, `phase`, `event_type`, `created_at`, `message`, and `details`. `mode` is `local` or `web`. `event_type` is `started`, `progress`, `completed`, or `failed`. V1 does not add `event_id` or an outer `subtask_id`; subtask context, if useful for display, belongs in `message` or `details`.
+
+`details.items` is display-only and is not used as the source of truth for recovery, routing, Supervisor judgment, or final report generation. Internal state remains authoritative. `events.jsonl` is an append-only progress display log, is not inserted into SQLite, and is not used as a Supervisor or Curator input.
+
+`details.items` stays minimal and supports only these v1 item shapes:
+
+```json
+{ "kind": "tool_call", "name": "web.search", "input": "LangGraph deep research architecture" }
+```
+
+```json
+{ "kind": "source", "title": "LangGraph documentation", "url": "https://langchain-ai.github.io/langgraph/" }
+```
+
+```json
+{ "kind": "source", "path": "D:/vault/langgraph.md" }
+```
+
+```json
+{ "kind": "finding", "text": "LangGraph supports stateful graph workflows." }
+```
+
+Tool calls are represented as phase progress details rather than separate top-level progress records. Report paths are carried on the `web_curation` phase's `completed` record. This keeps Web UI and CLI rendering consistent without exposing LangGraph internals or proliferating progress categories.

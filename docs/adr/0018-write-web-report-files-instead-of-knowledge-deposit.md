@@ -1,0 +1,5 @@
+# Write Web Report Files instead of Knowledge Base deposit in v1
+
+V1 will not automatically deposit research outputs into the Markdown Vault. Web Research tasks write a local Markdown Web Report File under `reports/web/` with summary, findings, linked evidence, and the full web source list, while Local RAG tasks display existing local content with source paths; users decide outside the application whether and how to save web reports into their knowledge system. Workflow-internal research gaps are not included in the Web Report File.
+
+After CuratorOutput is produced successfully, runtime immediately renders the Markdown template and writes the Web Report File to `reports/web/`. Web Research is marked `completed` only after the Web Report File is written successfully. Web UI displays `report_path`, and CLI prints `report_path` when the command completes. If writing the report file fails, the task is marked `failed` with a `file_write_error` because the user-visible report file was not created. Task list views still display only summary fields and do not add a separate report artifact column.
