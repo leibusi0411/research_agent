@@ -1,0 +1,306 @@
+:root {
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #1f2933;
+  background: #f6f8fb;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  border: 1px solid #b8c2cc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2933;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: #57708f;
+}
+
+button:disabled {
+  color: #7b8794;
+  cursor: not-allowed;
+}
+
+textarea,
+input {
+  width: 100%;
+  border: 1px solid #cbd2d9;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2933;
+}
+
+textarea {
+  min-height: 104px;
+  resize: vertical;
+  padding: 10px;
+}
+
+input {
+  min-height: 36px;
+  padding: 8px 10px;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+}
+
+h3 {
+  font-size: 14px;
+}
+
+code {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 6px 0;
+  color: #334e68;
+}
+
+.boot,
+.setup-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.setup-panel {
+  width: min(920px, 100%);
+  border: 1px solid #d9e2ec;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 24px;
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.setup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 18px 0;
+}
+
+.setup-grid label span {
+  display: block;
+  margin-bottom: 6px;
+  color: #52606d;
+  font-size: 13px;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 244px minmax(0, 1fr);
+}
+
+.sidebar {
+  border-right: 1px solid #d9e2ec;
+  background: #ffffff;
+  padding: 18px;
+}
+
+.brand {
+  font-weight: 700;
+  margin-bottom: 20px;
+}
+
+.sidebar button {
+  width: 100%;
+  justify-content: flex-start;
+  margin-bottom: 8px;
+}
+
+.sidebar button.active {
+  border-color: #486581;
+  background: #e4eef7;
+}
+
+.workspace {
+  min-width: 0;
+  padding: 24px;
+}
+
+.research-grid,
+.result-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.tool-panel,
+.result-panel {
+  border: 1px solid #d9e2ec;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 16px;
+}
+
+.tool-panel button {
+  margin-top: 10px;
+}
+
+.result-grid {
+  margin-top: 16px;
+}
+
+.result-item {
+  border-top: 1px solid #eef2f7;
+  padding-top: 12px;
+  margin-top: 12px;
+}
+
+.result-item small {
+  display: block;
+  color: #52606d;
+}
+
+.status {
+  display: inline-block;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.status.completed {
+  background: #e3f9e5;
+  color: #276749;
+}
+
+.status.failed,
+.error {
+  background: #ffe3e3;
+  color: #9b2c2c;
+}
+
+.banner {
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 16px;
+}
+
+.process section {
+  border-top: 1px solid #eef2f7;
+  padding-top: 10px;
+}
+
+.table {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.task-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 1fr) 80px 90px minmax(180px, 2fr) minmax(170px, 1fr);
+  gap: 10px;
+  justify-content: stretch;
+  text-align: left;
+  min-height: 44px;
+  padding: 8px 10px;
+}
+
+.task-row span {
+  overflow-wrap: anywhere;
+}
+
+.kb-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid #d9e2ec;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 16px;
+}
+
+.kv dt {
+  color: #52606d;
+}
+
+.kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+
+  .brand {
+    grid-column: 1 / -1;
+    margin-bottom: 4px;
+  }
+
+  .research-grid,
+  .result-grid,
+  .setup-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .task-row {
+    grid-template-columns: 1fr;
+  }
+
+  .kv {
+    grid-template-columns: 1fr;
+  }
+}

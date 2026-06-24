@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/api.ts","./src/main.tsx","./tests/app.test.tsx","./tests/api.test.ts","./tests/setup.ts","./tests/e2e/app.spec.ts","./playwright.config.ts"],"version":"5.9.3"}

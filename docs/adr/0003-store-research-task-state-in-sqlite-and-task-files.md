@@ -8,7 +8,7 @@ V1 uses one core SQLite task table:
 CREATE TABLE tasks (
   task_id TEXT PRIMARY KEY,
   mode TEXT NOT NULL CHECK (mode IN ('local', 'web')),
-  status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+  status TEXT NOT NULL CHECK (status IN ('completed', 'failed')),
   title_or_question TEXT NOT NULL,
   created_at TEXT NOT NULL,
   completed_at TEXT,
@@ -17,7 +17,7 @@ CREATE TABLE tasks (
 );
 ```
 
-`created_at` and `completed_at` use UTC ISO 8601 with `Z`. `result_path` points to `tasks/{task_id}/result.json`. The task lifecycle is: a task record is inserted with `status = 'pending'` at creation, updated to `status = 'running'` when execution starts, and updated to `status = 'completed'` or `status = 'failed'` with `completed_at` when execution finishes. This allows the system to detect orphaned tasks from prior crashes on startup: any task left in `pending` or `running` status is marked `failed` with a `runtime_error` and a message indicating the task did not complete. V1 does not create a `progress_events` SQLite table; progress records are written only to `events.jsonl`. Each `events.jsonl` line is an append-only Research Progress Stream JSON object and is used for display, not routing or final report generation.
+`created_at` and `completed_at` use UTC ISO 8601 with `Z`. `result_path` points to `tasks/{task_id}/result.json`. V1 task history records only finished tasks, so SQLite stores a task after it reaches `completed` or `failed`; running-task visibility comes from active runtime state and task-local files, not from task-history rows. V1 does not implement checkpoint-based task recovery or orphaned running-task repair. V1 does not create a `progress_events` SQLite table; progress records are written only to `events.jsonl`. Each `events.jsonl` line is an append-only Research Progress Stream JSON object and is used for display, not routing or final report generation.
 
 Local RAG tasks persist the task record, progress records, final status, and the returned Local Results with source paths in `result.json`. Web Research tasks persist the task record, progress records, final status, CuratorOutput, source metadata, and `report_path` when Web Report File writing succeeds in `result.json`; extracted Web source text is stored under `artifacts/web_sources/`. The user-visible Web Report File is written only under `reports/web/`, not duplicated inside the task artifact directory.
 
