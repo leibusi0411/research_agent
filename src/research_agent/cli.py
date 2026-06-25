@@ -8,7 +8,6 @@ from pathlib import Path
 from research_agent.core.config import InitConfigRequest, default_config_path, load_user_config
 from research_agent.core.errors import ResearchError
 from research_agent.core.service import CoreService
-from research_agent.web.fake_runtime import FakeWebResearchRuntime
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -141,15 +140,18 @@ def _run_web(args: argparse.Namespace, service: CoreService) -> int:
     if not args.question:
         print("[config_invalid] Web research question is required.")
         return 1
-    runtime = FakeWebResearchRuntime(
-        workspace=service.workspace.root,
-        max_retrieval_rounds=int(os.environ.get("RESEARCH_AGENT_FAKE_WEB_MAX_ROUNDS", "3")),
-        produce_findings=os.environ.get("RESEARCH_AGENT_FAKE_WEB_PRODUCE_FINDINGS", "1") != "0",
-        fail_report_write=os.environ.get("RESEARCH_AGENT_FAKE_WEB_REPORT_FAILURE") == "1",
-        schema_failure=os.environ.get("RESEARCH_AGENT_FAKE_WEB_SCHEMA_FAILURE") == "1",
-        on_event=_print_web_event,
-        event_delay_seconds=float(os.environ.get("RESEARCH_AGENT_FAKE_WEB_EVENT_DELAY_SECONDS", "0")),
-    )
+    runtime = None
+    if os.environ.get("RESEARCH_AGENT_FAKE_WEB") == "1":
+        from research_agent.web.fake_runtime import FakeWebResearchRuntime
+        runtime = FakeWebResearchRuntime(
+            workspace=service.workspace.root,
+            max_retrieval_rounds=int(os.environ.get("RESEARCH_AGENT_FAKE_WEB_MAX_ROUNDS", "3")),
+            produce_findings=os.environ.get("RESEARCH_AGENT_FAKE_WEB_PRODUCE_FINDINGS", "1") != "0",
+            fail_report_write=os.environ.get("RESEARCH_AGENT_FAKE_WEB_REPORT_FAILURE") == "1",
+            schema_failure=os.environ.get("RESEARCH_AGENT_FAKE_WEB_SCHEMA_FAILURE") == "1",
+            on_event=_print_web_event,
+            event_delay_seconds=float(os.environ.get("RESEARCH_AGENT_FAKE_WEB_EVENT_DELAY_SECONDS", "0")),
+        )
     try:
         result = service.run_web_research(args.question, runtime=runtime)
     except ResearchError as error:
@@ -180,15 +182,18 @@ def _run_both(args: argparse.Namespace, service: CoreService) -> int:
     if not args.question:
         print("[config_invalid] Research question is required.")
         return 1
-    runtime = FakeWebResearchRuntime(
-        workspace=service.workspace.root,
-        max_retrieval_rounds=int(os.environ.get("RESEARCH_AGENT_FAKE_WEB_MAX_ROUNDS", "3")),
-        produce_findings=os.environ.get("RESEARCH_AGENT_FAKE_WEB_PRODUCE_FINDINGS", "1") != "0",
-        fail_report_write=os.environ.get("RESEARCH_AGENT_FAKE_WEB_REPORT_FAILURE") == "1",
-        schema_failure=os.environ.get("RESEARCH_AGENT_FAKE_WEB_SCHEMA_FAILURE") == "1",
-        on_event=lambda event: _print_web_event({**event, "phase": f"web:{event['phase']}"}),
-        event_delay_seconds=float(os.environ.get("RESEARCH_AGENT_FAKE_WEB_EVENT_DELAY_SECONDS", "0")),
-    )
+    runtime = None
+    if os.environ.get("RESEARCH_AGENT_FAKE_WEB") == "1":
+        from research_agent.web.fake_runtime import FakeWebResearchRuntime
+        runtime = FakeWebResearchRuntime(
+            workspace=service.workspace.root,
+            max_retrieval_rounds=int(os.environ.get("RESEARCH_AGENT_FAKE_WEB_MAX_ROUNDS", "3")),
+            produce_findings=os.environ.get("RESEARCH_AGENT_FAKE_WEB_PRODUCE_FINDINGS", "1") != "0",
+            fail_report_write=os.environ.get("RESEARCH_AGENT_FAKE_WEB_REPORT_FAILURE") == "1",
+            schema_failure=os.environ.get("RESEARCH_AGENT_FAKE_WEB_SCHEMA_FAILURE") == "1",
+            on_event=lambda event: _print_web_event({**event, "phase": f"web:{event['phase']}"}),
+            event_delay_seconds=float(os.environ.get("RESEARCH_AGENT_FAKE_WEB_EVENT_DELAY_SECONDS", "0")),
+        )
     result = service.run_both(args.question, web_runtime=runtime)
     print("Local")
     local = result["local"]

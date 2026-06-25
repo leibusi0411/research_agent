@@ -51,3 +51,4 @@ CLI (cli.py)              Web UI (React/Vite, web/)
 - **Deferred features** tracked in `TODO.md`.
 - **中文优先**: 所有 review 生成的文件（代码审查报告、ADRs 审查等）一律用中文编写。中文翻译版作为主文件（不加 `-zh` 后缀），不保留英文原版。
 - **Review 跟踪**: `REVIEW_TRACKER.md` 是唯一的审查与路线图文件。每次 code review 后将新发现的问题追加到"待修复问题"；每完成一个修复后将其移到"已完成修复"并更新日期。阶段 4 实现进度也在此文件中维护。
+- 配置文件已创建并配置，C:\Users\leibusi\AppData\Roaming\research_agent\config.toml   供测试使用

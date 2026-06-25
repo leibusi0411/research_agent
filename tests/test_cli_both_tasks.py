@@ -39,6 +39,7 @@ def configured_env_with_ready_index(tmp_path: Path) -> tuple[dict[str, str], Pat
     src_path = str(Path(__file__).resolve().parents[1] / "src")
     existing_pythonpath = env.get("PYTHONPATH")
     env["PYTHONPATH"] = src_path if not existing_pythonpath else os.pathsep.join([src_path, existing_pythonpath])
+    env["RESEARCH_AGENT_FAKE_WEB"] = "1"  # CLI subprocess must use fake runtime for offline tests
     return env, workspace
 
 
