@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
+
+logger = logging.getLogger(__name__)
 
 from research_agent.core.config import InitConfigRequest, UserConfig, default_config_path, load_user_config
 from research_agent.core.errors import ResearchError
@@ -15,6 +20,12 @@ from research_agent.core.ids import generate_task_id, utc_now_iso, validate_task
 from research_agent.core.providers import EmbeddingClient, OpenAICompatibleChatModel, build_role_chat_model_config
 from research_agent.core.service import CoreService
 from research_agent.web.provider_runtime import ProviderBackedWebResearchRuntime
+from research_agent.web.tools import (
+    TavilySearchProvider,
+    ToolGateway,
+    ToolRunner,
+    create_default_web_tool_registry,
+)
 
 
 WebRuntimeFactory = Callable[[str], Any]
@@ -28,8 +39,14 @@ def create_app(
     embedding_client_factory: EmbeddingClientFactory | None = None,
 ) -> FastAPI:
     resolved_config_path = Path(config_path) if config_path is not None else default_config_path()
-    app = FastAPI(title="Research Agent")
     executor = ThreadPoolExecutor(max_workers=4)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        yield
+        executor.shutdown(wait=True)
+
+    app = FastAPI(title="Research Agent", lifespan=lifespan)
 
     def service() -> CoreService:
         try:
@@ -73,8 +90,12 @@ def create_app(
         current_service = service()
         lock = current_service.acquire_family_lock("local", task_id)
         lock.__enter__()
-        _create_running_task(current_service, task_id=task_id, mode="local", question=question)
-        executor.submit(lambda: _run_background(lock, lambda: current_service.run_local_research_unlocked(question, task_id=task_id)))
+        try:
+            _create_running_task(current_service, task_id=task_id, mode="local", question=question)
+            executor.submit(lambda: _run_background(lock, lambda: current_service.run_local_research_unlocked(question, task_id=task_id)))
+        except Exception:
+            lock.__exit__(None, None, None)
+            raise
         return JSONResponse({"task_id": task_id, "mode": "local", "status": "running", "question": question}, status_code=202)
 
     @app.post("/api/research/web")
@@ -88,8 +109,12 @@ def create_app(
             runtime = _default_web_runtime(current_service)
         lock = current_service.acquire_family_lock("web", task_id)
         lock.__enter__()
-        _create_running_task(current_service, task_id=task_id, mode="web", question=question)
-        executor.submit(lambda: _run_background(lock, lambda: current_service.run_web_research_unlocked(question, runtime=runtime, task_id=task_id)))
+        try:
+            _create_running_task(current_service, task_id=task_id, mode="web", question=question)
+            executor.submit(lambda: _run_background(lock, lambda: current_service.run_web_research_unlocked(question, runtime=runtime, task_id=task_id)))
+        except Exception:
+            lock.__exit__(None, None, None)
+            raise
         return JSONResponse({"task_id": task_id, "mode": "web", "status": "running", "question": question}, status_code=202)
 
     @app.get("/api/tasks/active")
@@ -162,10 +187,6 @@ def _error_response(error: ResearchError, status_code: int = 400) -> JSONRespons
     return JSONResponse({"error": error.to_dict()}, status_code=status_code)
 
 
-def _public_result(result: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in result.items() if key != "state"}
-
-
 def _read_lock_task_id(lock_path: Path) -> str:
     try:
         payload = json.loads(lock_path.read_text(encoding="utf-8"))
@@ -175,7 +196,7 @@ def _read_lock_task_id(lock_path: Path) -> str:
 
 
 def _stream_events(events_path: Path):
-    deadline = time.time() + 30
+    deadline = time.time() + 600  # 10 minutes max
     offset = 0
     while time.time() < deadline:
         if events_path.exists():
@@ -189,7 +210,10 @@ def _stream_events(events_path: Path):
             result_path = events_path.with_name("result.json")
             if _is_terminal_result(result_path):
                 break
-        time.sleep(0.05)
+        time.sleep(0.1)
+    else:
+        # Deadline reached — send a terminal event so the client knows the stream ended
+        yield f'data: {json.dumps({"event_type": "stream_timeout", "message": "SSE stream timed out."})}\n\n'
 
 
 def _validate_task_id_as_research_error(task_id: str) -> None:
@@ -223,6 +247,8 @@ def _create_running_task(service: CoreService, *, task_id: str, mode: str, quest
 def _run_background(lock, operation) -> None:
     try:
         operation()
+    except Exception as exc:
+        logger.exception("Background task failed: %s", exc)
     finally:
         lock.__exit__(None, None, None)
 
@@ -239,7 +265,14 @@ def _is_terminal_result(result_path: Path) -> bool:
 
 def _default_web_runtime(service: CoreService) -> ProviderBackedWebResearchRuntime:
     config = load_user_config(service.config_path)
+    search_provider = TavilySearchProvider(api_key=config.search.api_key)
+    tool_runner = ToolRunner(config=config.web_tools, search_provider=search_provider)
+    tool_registry = create_default_web_tool_registry()
+    tool_gateway = ToolGateway(registry=tool_registry, runner=tool_runner)
     return ProviderBackedWebResearchRuntime(
         workspace=str(service.workspace.root),
         chat_model=OpenAICompatibleChatModel.from_config(build_role_chat_model_config(config, "planner")),
+        tool_gateway=tool_gateway,
+        max_retrieval_rounds=config.research.max_retrieval_rounds,
+        max_concurrent_subtasks=config.research.max_concurrent_subtasks,
     )

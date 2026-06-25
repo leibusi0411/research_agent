@@ -21,6 +21,22 @@ class EmbeddingClient(Protocol):
         ...
 
 
+def _post_json_request(
+    url: str,
+    payload: dict[str, Any],
+    api_key: str,
+    post_json: PostJson | None = None,
+) -> dict[str, Any]:
+    """Shared POST JSON request helper for OpenAI-compatible models."""
+    headers = _auth_headers(api_key)
+    if post_json is not None:
+        return post_json(url, headers, payload)
+    with httpx.Client(timeout=60) as client:
+        response = client.post(url, headers=headers, json=payload)
+    response.raise_for_status()
+    return dict(response.json())
+
+
 @dataclass
 class OpenAICompatibleChatModel:
     config: ModelConfig
@@ -35,17 +51,13 @@ class OpenAICompatibleChatModel:
             "model": self.config.model,
             "messages": [{"role": "user", "content": prompt}],
         }
-        response = self._post_json(_join_endpoint(self.config.base_url, "chat/completions"), payload)
+        response = _post_json_request(
+            _join_endpoint(self.config.base_url, "chat/completions"),
+            payload,
+            self.config.api_key,
+            self.post_json,
+        )
         return str(response["choices"][0]["message"]["content"])
-
-    def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        headers = _auth_headers(self.config.api_key)
-        if self.post_json is not None:
-            return self.post_json(url, headers, payload)
-        with httpx.Client(timeout=60) as client:
-            response = client.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-        return dict(response.json())
 
 
 @dataclass
@@ -59,17 +71,13 @@ class OpenAICompatibleEmbeddingModel:
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         payload = {"model": self.config.model, "input": texts}
-        response = self._post_json(_join_endpoint(self.config.base_url, "embeddings"), payload)
+        response = _post_json_request(
+            _join_endpoint(self.config.base_url, "embeddings"),
+            payload,
+            self.config.api_key,
+            self.post_json,
+        )
         return [list(item["embedding"]) for item in response["data"]]
-
-    def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        headers = _auth_headers(self.config.api_key)
-        if self.post_json is not None:
-            return self.post_json(url, headers, payload)
-        with httpx.Client(timeout=60) as client:
-            response = client.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-        return dict(response.json())
 
 
 class FakeChatModelClient:

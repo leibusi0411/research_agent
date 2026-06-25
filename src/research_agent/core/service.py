@@ -5,18 +5,25 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Protocol
 
 from research_agent.core.config import InitConfigRequest, init_user_config, load_user_config
 from research_agent.core.errors import ResearchError
 from research_agent.core.ids import generate_task_id
 from research_agent.core.kb import KnowledgeBaseIndex
 from research_agent.core.local_research import run_local_research
-from research_agent.core.providers import OpenAICompatibleChatModel, OpenAICompatibleEmbeddingModel, build_role_chat_model_config
+from research_agent.core.providers import EmbeddingClient, OpenAICompatibleChatModel, OpenAICompatibleEmbeddingModel, build_role_chat_model_config
 from research_agent.core.tasks import TaskStore
 from research_agent.core.workspace import Workspace
 from research_agent.web.fake_runtime import FakeWebResearchRuntime
 from research_agent.web.provider_runtime import ProviderBackedWebResearchRuntime
+from research_agent.web.tools import ToolGateway, ToolRunner, TavilySearchProvider, create_default_web_tool_registry
+
+
+class WebResearchRuntime(Protocol):
+    """Protocol for web research runtime implementations."""
+    def run(self, question: str, task_id: str | None = None) -> dict:
+        ...
 
 
 class CoreService:
@@ -33,27 +40,31 @@ class CoreService:
         self.workspace.ensure()
         return config_path
 
-    def run_local_research(self, *args: object, **kwargs: object) -> None:
-        question = str(args[0] if args else kwargs["question"])
-        task_id = str(kwargs.get("task_id") or generate_task_id())
-        with self._active_family_lock("local", task_id):
-            return self.run_local_research_unlocked(question, task_id=task_id)
+    def run_local_research(self, question: str, *, task_id: str | None = None) -> dict:
+        resolved_task_id = task_id or generate_task_id()
+        with self._active_family_lock("local", resolved_task_id):
+            return self.run_local_research_unlocked(question, task_id=resolved_task_id)
 
-    def run_web_research(self, *args: object, **kwargs: object) -> None:
-        question = str(args[0] if args else kwargs["question"])
-        runtime = kwargs.get("runtime")
-        if runtime is None:
+    def run_web_research(self, question: str, *, runtime: WebResearchRuntime | None = None, chat_model: object | None = None, task_id: str | None = None) -> dict:
+        resolved_task_id = task_id or generate_task_id()
+        resolved_runtime = runtime
+        if resolved_runtime is None:
             config = load_user_config(self.config_path)
-            chat_model = kwargs.get("chat_model")
-            if chat_model is None:
-                chat_model = OpenAICompatibleChatModel.from_config(build_role_chat_model_config(config, "planner"))
-            runtime = ProviderBackedWebResearchRuntime(
+            resolved_model = chat_model
+            if resolved_model is None:
+                resolved_model = OpenAICompatibleChatModel.from_config(build_role_chat_model_config(config, "planner"))
+            search_provider = TavilySearchProvider(api_key=config.search.api_key)
+            tool_runner = ToolRunner(config=config.web_tools, search_provider=search_provider)
+            tool_gateway = ToolGateway(registry=create_default_web_tool_registry(), runner=tool_runner)
+            resolved_runtime = ProviderBackedWebResearchRuntime(
                 workspace=str(self.workspace.root),
-                chat_model=chat_model,
+                chat_model=resolved_model,
+                tool_gateway=tool_gateway,
+                max_retrieval_rounds=config.research.max_retrieval_rounds,
+                max_concurrent_subtasks=config.research.max_concurrent_subtasks,
             )
-        task_id = str(kwargs.get("task_id") or generate_task_id())
-        with self._active_family_lock("web", task_id):
-            return self.run_web_research_unlocked(question, runtime=runtime, task_id=task_id)
+        with self._active_family_lock("web", resolved_task_id):
+            return self.run_web_research_unlocked(question, runtime=resolved_runtime, task_id=resolved_task_id)
 
     def run_local_research_unlocked(self, question: str, *, task_id: str) -> dict:
         return run_local_research(
@@ -64,17 +75,15 @@ class CoreService:
             task_id=task_id,
         )
 
-    def run_web_research_unlocked(self, question: str, *, runtime: object, task_id: str) -> dict:
+    def run_web_research_unlocked(self, question: str, *, runtime: WebResearchRuntime, task_id: str) -> dict:
         return runtime.run(question, task_id=task_id)
 
-    def run_both(self, *args: object, **kwargs: object) -> None:
-        question = str(args[0] if args else kwargs["question"])
-        web_runtime = kwargs.get("web_runtime")
+    def run_both(self, question: str, *, web_runtime: WebResearchRuntime | None = None) -> dict:
         with ThreadPoolExecutor(max_workers=2) as executor:
             local_future = executor.submit(self._run_family_result, "local", question, None)
             web_future = executor.submit(self._run_family_result, "web", question, web_runtime)
-            local_result = local_future.result()
-            web_result = web_future.result()
+            local_result = _safe_future_result(local_future, "local")
+            web_result = _safe_future_result(web_future, "web")
         return {
             "status": "completed" if local_result["status"] == "completed" and web_result["status"] == "completed" else "failed",
             "local": local_result,
@@ -85,11 +94,10 @@ class CoreService:
         self.task_store.initialize()
         return self.task_store.list_finished_tasks()
 
-    def get_kb_status(self, *args: object, **kwargs: object) -> None:
+    def get_kb_status(self) -> dict:
         return KnowledgeBaseIndex(self.workspace, self.config_path).status()
 
-    def rebuild_kb_index(self, *args: object, **kwargs: object) -> None:
-        embedding_client = kwargs.get("embedding_client")
+    def rebuild_kb_index(self, *, embedding_client: EmbeddingClient | None = None) -> dict:
         if embedding_client is None:
             if os.environ.get("RESEARCH_AGENT_FAKE_EMBEDDINGS") == "1":
                 embedding_client = _DeterministicEmbeddingClient()
@@ -98,7 +106,7 @@ class CoreService:
                 embedding_client = OpenAICompatibleEmbeddingModel.from_config(config.embedding_model)
         return KnowledgeBaseIndex(self.workspace, self.config_path, embedding_client=embedding_client).rebuild()
 
-    def _run_family_result(self, family: str, question: str, web_runtime: object | None) -> dict:
+    def _run_family_result(self, family: str, question: str, web_runtime: WebResearchRuntime | None) -> dict:
         try:
             if family == "local":
                 return self.run_local_research(question)
@@ -130,6 +138,13 @@ class CoreService:
 
     def acquire_family_lock(self, family: str, task_id: str):
         return self._active_family_lock(family, task_id)
+
+
+def _safe_future_result(future, family: str) -> dict:
+    try:
+        return future.result()
+    except Exception as exc:
+        return {"mode": family, "status": "failed", "error": {"code": "runtime_error", "message": str(exc)}}
 
 
 def _read_lock(path: Path) -> str:

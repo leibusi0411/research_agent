@@ -128,13 +128,20 @@ def test_role_invocation_fails_after_one_schema_repair_attempt():
 def test_core_service_default_web_runtime_uses_chat_model_with_schema_repair(tmp_path):
     config_path = init_config(tmp_path)
     service = CoreService(default_workspace=tmp_path / "runtime", config_path=config_path)
-    client = FakeChatModelClient(["not json", '{"research_title": "Title", "subtasks": [{"question": "Q"}]}'])
+    client = FakeChatModelClient([
+        "not json",  # Planner initial attempt fails
+        '{"research_title": "Title", "subtasks": [{"question": "Q"}]}',  # Planner repair succeeds
+        '{"tool_calls": [{"name": "web.search", "arguments": {"query": "test", "max_results": 5}}]}',  # Executor tool plan
+        '{"subtask_id": "st_1", "status": "completed", "findings": [{"finding_id": "f_1", "subtask_id": "st_1", "text": "Finding", "source_ids": ["src_1"]}], "sources": [{"source_id": "src_1", "title": "Source", "url": "https://example.com", "fetched_at": "2026-06-25T10:00:00Z"}], "failure_reason": null}',  # Executor synthesis
+        '{"route": "curate", "reason": "Enough evidence.", "next_subtask_ids": [], "skip_subtask_ids": [], "plan_revision_request": null, "research_gaps": [], "saturation": true}',  # Supervisor
+        '{"title": "Title", "summary": "Summary", "findings": [{"finding_id": "f_1", "subtask_id": "st_1", "text": "Finding", "source_ids": ["src_1"]}], "sources": [{"source_id": "src_1", "title": "Source", "url": "https://example.com", "fetched_at": "2026-06-25T10:00:00Z"}]}',  # Curator
+    ])
 
     result = service.run_web_research("question", chat_model=client)
 
-    assert result["status"] == "failed"
-    assert result["error"]["code"] == "runtime_error"
-    assert len(client.prompts) == 2
+    assert result["status"] == "completed"
+    assert result["curator_output"]["title"] == "Title"
+    assert len(client.prompts) == 6  # Planner + repair + tool_plan + synthesis + supervisor + curator
 
 
 def test_core_service_rebuild_uses_configured_embedding_adapter_by_default(tmp_path, monkeypatch):

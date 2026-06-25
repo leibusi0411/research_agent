@@ -91,6 +91,7 @@ class TaskStore:
     def list_finished_tasks(self) -> list[TaskRecord]:
         self.initialize()
         with sqlite3.connect(self.db_path) as connection:
+            connection.row_factory = sqlite3.Row
             rows = connection.execute(
                 """
                 SELECT
@@ -107,4 +108,16 @@ class TaskStore:
                 """
             ).fetchall()
 
-        return [TaskRecord(*row) for row in rows]
+        return [
+            TaskRecord(
+                task_id=row["task_id"],
+                mode=row["mode"],
+                status=row["status"],
+                title_or_question=row["title_or_question"],
+                created_at=row["created_at"],
+                completed_at=row["completed_at"],
+                report_path=row["report_path"],
+                result_path=row["result_path"],
+            )
+            for row in rows
+        ]

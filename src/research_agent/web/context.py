@@ -46,7 +46,12 @@ def build_planner_context(state: WebResearchState, plan_revision_request: str | 
 
 
 def build_executor_context(state: WebResearchState, subtask_id: str) -> ExecutorInput:
-    subtask = next(subtask for subtask in state.subtasks if subtask.subtask_id == subtask_id)
+    subtask = next(
+        (subtask for subtask in state.subtasks if subtask.subtask_id == subtask_id),
+        None,
+    )
+    if subtask is None:
+        raise ValueError(f"Subtask '{subtask_id}' not found in state. Available subtask IDs: {[s.subtask_id for s in state.subtasks]}")
     return ExecutorInput(original_question=state.original_question, subtask=subtask)
 
 

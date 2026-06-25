@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -16,6 +17,8 @@ from research_agent.core.config import load_user_config
 from research_agent.core.ids import utc_now_iso
 from research_agent.core.providers import EmbeddingClient
 from research_agent.core.workspace import Workspace
+
+logger = logging.getLogger(__name__)
 
 
 SUPPORTED_SUFFIXES = {".md", ".txt", ".pdf", ".html", ".htm"}
@@ -186,28 +189,30 @@ def _scan_files(vault_path: Path) -> list[Path]:
 
 
 def _file_signature(files: list[Path]) -> dict[str, dict[str, int]]:
-    return {
-        str(path): {"mtime": int(path.stat().st_mtime_ns), "size": path.stat().st_size}
-        for path in files
-    }
+    result: dict[str, dict[str, int]] = {}
+    for path in files:
+        stat = path.stat()
+        result[str(path)] = {"mtime": int(stat.st_mtime_ns), "size": stat.st_size}
+    return result
 
 
 def _build_manifest(vault_path: Path, parsed_files: list[ParsedFile], chunks: list[Chunk]) -> dict[str, Any]:
+    files = []
+    for parsed in parsed_files:
+        stat = parsed.path.stat()
+        files.append({
+            "path": str(parsed.path),
+            "mtime": int(stat.st_mtime_ns),
+            "size": stat.st_size,
+            **parsed.metadata,
+        })
     return {
         "status": "ready",
         "vault_path": str(vault_path),
         "built_at": utc_now_iso(datetime.now(timezone.utc)),
         "file_count": len(parsed_files),
         "chunk_count": len(chunks),
-        "files": [
-            {
-                "path": str(parsed.path),
-                "mtime": int(parsed.path.stat().st_mtime_ns),
-                "size": parsed.path.stat().st_size,
-                **parsed.metadata,
-            }
-            for parsed in parsed_files
-        ],
+        "files": files,
     }
 
 
@@ -297,7 +302,8 @@ def _extract_text(path: Path) -> str:
 
             reader = PdfReader(str(path))
             return "\n\n".join(page.extract_text() or "" for page in reader.pages)
-        except Exception:
+        except Exception as exc:
+            logger.warning("PDF extraction failed for %s: %s", path, exc)
             return ""
     return ""
 
