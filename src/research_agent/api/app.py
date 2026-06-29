@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 from research_agent.core.config import InitConfigRequest, UserConfig, default_config_path, load_user_config
 from research_agent.core.errors import ResearchError
 from research_agent.core.ids import generate_task_id, utc_now_iso, validate_task_id
-from research_agent.core.providers import EmbeddingClient, OpenAICompatibleChatModel, build_role_chat_model_config
+from research_agent.core.providers import EmbeddingClient, build_chat_models
 from research_agent.core.service import CoreService
 from research_agent.web.provider_runtime import ProviderBackedWebResearchRuntime
 from research_agent.web.tools import (
@@ -271,7 +271,7 @@ def _default_web_runtime(service: CoreService) -> ProviderBackedWebResearchRunti
     tool_gateway = ToolGateway(registry=tool_registry, runner=tool_runner)
     return ProviderBackedWebResearchRuntime(
         workspace=str(service.workspace.root),
-        chat_model=OpenAICompatibleChatModel.from_config(build_role_chat_model_config(config, "planner")),
+        chat_models=build_chat_models(config),
         tool_gateway=tool_gateway,
         max_retrieval_rounds=config.research.max_retrieval_rounds,
         max_concurrent_subtasks=config.research.max_concurrent_subtasks,

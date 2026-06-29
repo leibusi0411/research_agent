@@ -255,6 +255,16 @@ class ResearchExecutor:
                 "message": result.message,
             })
 
+        # Guard: if LLM returned no tool calls, fail early — don't hallucinate from nothing
+        if not tool_results:
+            return ExecutorOutput(
+                subtask_id=subtask_id,
+                status="failed",
+                findings=[],
+                sources=[],
+                failure_reason="Executor LLM returned no tool calls for this subtask.",
+            )
+
         # Step 3: Ask LLM to synthesize findings from tool results
         synthesis_prompt = build_executor_synthesis_prompt(state, subtask_id, tool_results)
         synthesis_schema = json.dumps({
@@ -279,7 +289,7 @@ class StateGraphRunner:
         self,
         *,
         workspace: str,
-        chat_model: ChatModelClient,
+        chat_models: dict[str, ChatModelClient],
         tool_gateway: ToolGateway,
         max_retrieval_rounds: int = 3,
         max_concurrent_subtasks: int = 3,
@@ -287,7 +297,7 @@ class StateGraphRunner:
     ) -> None:
         self.workspace = Workspace(workspace)
         self.task_store = TaskStore(self.workspace.root / "tasks.sqlite")
-        self.chat_model = chat_model
+        self.chat_models = chat_models
         self.tool_gateway = tool_gateway
         self.max_retrieval_rounds = max_retrieval_rounds
         self.max_concurrent_subtasks = max_concurrent_subtasks
@@ -303,11 +313,13 @@ class StateGraphRunner:
         created_at = utc_now_iso()
         state = WebResearchState(original_question=question)
 
-        self.workspace.create_task_folder(
-            task_id,
-            task_metadata={"task_id": task_id, "mode": "web", "question": question, "created_at": created_at},
-            result={"task_id": task_id, "mode": "web", "question": question, "status": "running"},
-        )
+        task_dir = self.workspace.task_dir(task_id)
+        if not task_dir.exists():
+            self.workspace.create_task_folder(
+                task_id,
+                task_metadata={"task_id": task_id, "mode": "web", "question": question, "created_at": created_at},
+                result={"task_id": task_id, "mode": "web", "question": question, "status": "running", "created_at": created_at},
+            )
 
         try:
             return self._run_graph(state, task_id, question, created_at)
@@ -325,7 +337,7 @@ class StateGraphRunner:
             role_name="planner",
             prompt=build_planner_prompt(state),
             target_schema='{"research_title": "string", "subtasks": [{"question": "string"}]}',
-            chat_model=self.chat_model,
+            chat_model=self.chat_models["planner"],
             validator=_validate_planner_payload,
         )
         planner_output = PlannerOutput(
@@ -336,13 +348,22 @@ class StateGraphRunner:
         self._emit(task_id, "web_planning", "completed", f"Plan created with {len(planner_output.subtasks)} subtasks.")
 
         # Step 2: Execute -> Supervise loop
+        _next_target_ids: list[str] | None = None
         while True:
             pending_ids = [s.subtask_id for s in state.subtasks if s.status == "pending"]
             if not pending_ids:
                 break
 
+            # Honor supervisor's next_subtask_ids when provided
+            if _next_target_ids is not None:
+                pending_ids = [sid for sid in pending_ids if sid in _next_target_ids]
+                _next_target_ids = None
+
+            if not pending_ids:
+                break
+
             self._emit(task_id, "web_execution", "started", f"Executing {len(pending_ids)} subtasks.")
-            executor_outputs = self.executor.execute(state, pending_ids, self.chat_model)
+            executor_outputs = self.executor.execute(state, pending_ids, self.chat_models["executor"])
             for output in executor_outputs:
                 state.merge_executor_output(output)
             state.retrieval_round += 1
@@ -360,7 +381,7 @@ class StateGraphRunner:
                 role_name="supervisor",
                 prompt=build_supervisor_prompt(state),
                 target_schema='{"route": "string", "reason": "string", "next_subtask_ids": ["string"], "skip_subtask_ids": ["string"], "plan_revision_request": "string|null", "research_gaps": ["string"], "saturation": false}',
-                chat_model=self.chat_model,
+                chat_model=self.chat_models["supervisor"],
                 validator=_validate_supervisor_payload,
             )
             supervisor_output = _parse_supervisor_output(supervisor_payload)
@@ -371,16 +392,24 @@ class StateGraphRunner:
             route = self._guard_route(state, supervisor_output.route)
 
             if route == "continue_execution":
-                # Continue to next iteration
-                continue
+                # Guard: "continue" with nothing to continue → redirect to termination
+                if not supervisor_output.next_subtask_ids:
+                    route = "curate" if state.findings and state.sources else "fail"
+                    state.route_history.append(route)
+                    # Fall through to curate/fail below
+                else:
+                    _next_target_ids = supervisor_output.next_subtask_ids
+                    continue
             elif route == "revise_plan":
+                # Note: _next_target_ids already consumed above — new subtasks
+                # from re-plan will execute unfiltered next iteration.
                 # Re-plan
                 self._emit(task_id, "web_revision", "started", "Revising plan.")
                 revision_payload = invoke_role_json(
                     role_name="planner",
                     prompt=build_planner_prompt(state, revision=True),
                     target_schema='{"research_title": "string", "subtasks": [{"question": "string"}]}',
-                    chat_model=self.chat_model,
+                    chat_model=self.chat_models["planner"],
                     validator=_validate_planner_payload,
                 )
                 revision_output = PlannerOutput(
@@ -401,10 +430,13 @@ class StateGraphRunner:
         return self._fail(state, task_id, question, created_at)
 
     def _guard_route(self, state: WebResearchState, route: str) -> str:
-        if route == "continue_execution" and state.retrieval_round >= self.max_retrieval_rounds:
-            guarded = "curate" if state.findings and state.sources else "fail"
-            state.route_history.append(guarded)
-            return guarded
+        # At retrieval limit, force termination: both continue_execution and revise_plan
+        # must redirect to curate (if usable findings exist) or fail.
+        if state.retrieval_round >= self.max_retrieval_rounds:
+            if route in ("continue_execution", "revise_plan"):
+                guarded = "curate" if state.findings and state.sources else "fail"
+                state.route_history.append(guarded)
+                return guarded
         state.route_history.append(route)
         return route
 
@@ -414,7 +446,7 @@ class StateGraphRunner:
             role_name="curator",
             prompt=build_curator_prompt(state),
             target_schema='{"title": "string", "summary": "string", "findings": [], "sources": []}',
-            chat_model=self.chat_model,
+            chat_model=self.chat_models["curator"],
             validator=_validate_curator_payload,
         )
         curator_output = _parse_curator_output(curator_payload)

@@ -8,7 +8,7 @@ Read these files when they are relevant to the task:
 
 - `CONTEXT.md` at the repo root for domain language and project boundaries.
 - `docs/adr/` for architecture decision records that affect the area being changed.
-- `FUTURE_UPGRADES.md` for capabilities that were discussed but intentionally deferred from v1.
+- `TODO.md` for capabilities that were discussed but intentionally deferred from v1.
 - GitHub Issue #1, `PRD: Research Agent V1`, for the current v1 product requirements.
 
 If a file is missing, proceed silently instead of creating it preemptively.
@@ -18,7 +18,7 @@ If a file is missing, proceed silently instead of creating it preemptively.
 ```text
 /
   CONTEXT.md
-  FUTURE_UPGRADES.md
+  TODO.md
   docs/
     adr/
 ```

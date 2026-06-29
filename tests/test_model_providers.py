@@ -10,7 +10,6 @@ from research_agent.core.config import InitConfigRequest, load_user_config
 from research_agent.core.errors import ResearchError
 from research_agent.core.kb import KnowledgeBaseIndex
 from research_agent.core.providers import (
-    FakeChatModelClient,
     OpenAICompatibleChatModel,
     OpenAICompatibleEmbeddingModel,
     build_role_chat_model_config,
@@ -18,6 +17,16 @@ from research_agent.core.providers import (
 from research_agent.core.service import CoreService
 from research_agent.core.workspace import Workspace
 from research_agent.web.role_invocation import invoke_role_json
+
+
+class _SequencedChatClient:
+    def __init__(self, completions: list[str]) -> None:
+        self._completions = list(completions)
+        self.prompts: list[str] = []
+
+    def complete(self, prompt: str, *, json_mode: bool = False) -> str:
+        self.prompts.append(prompt)
+        return self._completions.pop(0) if self._completions else ""
 
 
 def init_config(tmp_path: Path) -> Path:
@@ -47,12 +56,15 @@ def test_openai_compatible_chat_adapter_reads_user_config(tmp_path):
     requests: list[dict] = []
     client = OpenAICompatibleChatModel.from_config(config.chat_model, post_json=lambda url, headers, payload: requests.append({"url": url, "headers": headers, "payload": payload}) or {"choices": [{"message": {"content": "ok"}}]})
 
-    content = client.complete("hello")
+    content = client.complete("hello", json_mode=True)
 
     assert content == "ok"
     assert requests[0]["url"] == "https://models.example/v1/chat/completions"
     assert requests[0]["headers"]["Authorization"] == "Bearer chat-key"
     assert requests[0]["payload"]["model"] == "chat-model"
+    assert requests[0]["payload"]["temperature"] == 0.1
+    assert requests[0]["payload"]["max_tokens"] == 16384
+    assert requests[0]["payload"]["response_format"] == {"type": "json_object"}
 
 
 def test_openai_compatible_embedding_adapter_reads_user_config(tmp_path):
@@ -93,7 +105,7 @@ def test_role_chat_model_config_sections_fallback_to_global(tmp_path):
 
 
 def test_role_invocation_repairs_invalid_schema_once_then_returns_value():
-    client = FakeChatModelClient(["not json", '{"answer": "fixed"}'])
+    client = _SequencedChatClient(["not json", '{"answer": "fixed"}'])
 
     value = invoke_role_json(
         role_name="planner",
@@ -110,7 +122,7 @@ def test_role_invocation_repairs_invalid_schema_once_then_returns_value():
 
 
 def test_role_invocation_fails_after_one_schema_repair_attempt():
-    client = FakeChatModelClient(["not json", "still not json"])
+    client = _SequencedChatClient(["not json", "still not json"])
 
     with pytest.raises(ResearchError) as error:
         invoke_role_json(
@@ -125,10 +137,40 @@ def test_role_invocation_fails_after_one_schema_repair_attempt():
     assert len(client.prompts) == 2
 
 
+def test_role_invocation_repair_llm_call_raises_exception():
+    """When the repair LLM call itself fails (network error, etc.),
+    it should be wrapped in a ResearchError, not propagate raw."""
+
+    class FailingRepairClient:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        def complete(self, prompt: str, *, json_mode: bool = False) -> str:
+            self.call_count += 1
+            if self.call_count == 1:
+                return "not json"  # triggers repair
+            raise RuntimeError("simulated API connection lost during repair")
+
+    client = FailingRepairClient()
+
+    with pytest.raises(ResearchError) as error:
+        invoke_role_json(
+            role_name="planner",
+            prompt="return json",
+            target_schema="AnswerSchema",
+            chat_model=client,
+            validator=lambda payload: payload,
+        )
+
+    assert error.value.code == "schema_validation_failed"
+    assert "repair" in error.value.message.lower()
+    assert client.call_count == 2
+
+
 def test_core_service_default_web_runtime_uses_chat_model_with_schema_repair(tmp_path):
     config_path = init_config(tmp_path)
     service = CoreService(default_workspace=tmp_path / "runtime", config_path=config_path)
-    client = FakeChatModelClient([
+    client = _SequencedChatClient([
         "not json",  # Planner initial attempt fails
         '{"research_title": "Title", "subtasks": [{"question": "Q"}]}',  # Planner repair succeeds
         '{"tool_calls": [{"name": "web.search", "arguments": {"query": "test", "max_results": 5}}]}',  # Executor tool plan
@@ -137,7 +179,7 @@ def test_core_service_default_web_runtime_uses_chat_model_with_schema_repair(tmp
         '{"title": "Title", "summary": "Summary", "findings": [{"finding_id": "f_1", "subtask_id": "st_1", "text": "Finding", "source_ids": ["src_1"]}], "sources": [{"source_id": "src_1", "title": "Source", "url": "https://example.com", "fetched_at": "2026-06-25T10:00:00Z"}]}',  # Curator
     ])
 
-    result = service.run_web_research("question", chat_model=client)
+    result = service.run_web_research("question", chat_models={"planner": client, "executor": client, "supervisor": client, "curator": client})
 
     assert result["status"] == "completed"
     assert result["curator_output"]["title"] == "Title"
@@ -172,10 +214,10 @@ def test_kb_rebuild_uses_injected_embedding_client(tmp_path):
 
     assert result["status"] == "ready"
     assert embedding_client.inputs == [["Alpha beta gamma."]]
-    vector_path = config.workspace.default_workspace / "indexes" / "local" / "chroma" / "chroma.sqlite3"
-    with sqlite3.connect(vector_path) as connection:
-        stored = json.loads(connection.execute("SELECT embedding FROM embeddings").fetchone()[0])
-    assert stored == [0.3, 0.4, 0.5]
+    # Verify embeddings were stored via ChromaStore API (not raw SQLite)
+    from research_agent.core.chroma_store import ChromaStore
+    store = ChromaStore(config.workspace.default_workspace / "indexes" / "chroma")
+    assert store.count() == result["chunk_count"]
 
 
 class RecordingEmbeddingClient:

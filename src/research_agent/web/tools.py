@@ -114,26 +114,6 @@ class HttpxHttpClient:
         )
 
 
-class InMemoryHttpClient:
-    def __init__(self, responses: dict[str, FetchResponse]) -> None:
-        self.responses = responses
-
-    def get(self, url: str, *, timeout_seconds: int, max_bytes: int | None = None) -> FetchResponse:
-        try:
-            response = self.responses[url]
-        except KeyError:
-            return FetchResponse(url=url, status_code=404, headers={"content-type": "text/plain"}, content=b"not found")
-        if max_bytes is not None and len(response.content) > max_bytes:
-            return FetchResponse(
-                url=response.url,
-                status_code=response.status_code,
-                headers=response.headers,
-                content=response.content[: max_bytes + 1],
-                truncated=True,
-            )
-        return response
-
-
 class ToolRunner:
     def __init__(
         self,

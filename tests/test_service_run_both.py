@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from research_agent.core.config import InitConfigRequest
 from research_agent.core.service import CoreService
-from tests.fakes import FixedEmbeddingClient
+
+
+class _FixedEmbeddingClient:
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[0.1, 0.2, 0.3] for _text in texts]
 
 
 def _configured_service(tmp_path: Path) -> CoreService:
@@ -29,7 +33,7 @@ def _configured_service(tmp_path: Path) -> CoreService:
             search_api_key="search-key",
         )
     )
-    service.rebuild_kb_index(embedding_client=FixedEmbeddingClient())
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
     return service
 
 
@@ -46,10 +50,15 @@ def test_run_both_survives_unexpected_exception_from_family(tmp_path):
         return original(self, family, question, web_runtime)
 
     with patch.object(CoreService, "_run_family_result", patched_run_family_result):
-        from research_agent.web.fake_runtime import FakeWebResearchRuntime
-
-        runtime = FakeWebResearchRuntime(workspace=service.workspace.root, event_delay_seconds=0)
-        result = service.run_both("test question", web_runtime=runtime)
+        mock_runtime = MagicMock()
+        mock_runtime.run.return_value = {
+            "task_id": "task_test_web", "mode": "web", "question": "test question",
+            "status": "completed", "created_at": "2026-06-28T00:00:00Z",
+            "completed_at": "2026-06-28T00:00:01Z",
+            "curator_output": {"title": "Test", "summary": "Summary", "findings": [], "sources": []},
+            "report_path": "/tmp/report.md",
+        }
+        result = service.run_both("test question", web_runtime=mock_runtime)
 
     assert result["status"] == "failed"
     assert result["local"]["status"] == "failed"

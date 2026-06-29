@@ -7,7 +7,11 @@ from pathlib import Path
 
 from research_agent.core.config import InitConfigRequest
 from research_agent.core.service import CoreService
-from tests.fakes import FixedEmbeddingClient
+
+
+class _FixedEmbeddingClient:
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[0.1, 0.2, 0.3] for _text in texts]
 
 
 def configured_service(tmp_path: Path) -> tuple[CoreService, Path, Path, Path]:
@@ -39,7 +43,7 @@ def test_local_research_returns_source_linked_results_and_persists_task(tmp_path
         "# LangGraph\n\nLangGraph supports state graphs for planner executor supervisor research workflows.",
         encoding="utf-8",
     )
-    service.rebuild_kb_index(embedding_client=FixedEmbeddingClient())
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
 
     result = service.run_local_research("planner supervisor")
 
@@ -72,7 +76,7 @@ def test_local_research_fails_before_retrieval_when_index_missing_or_stale(tmp_p
     assert "kb rebuild" in missing["error"]["message"]
 
     (vault / "note.md").write_text("# Note\n\nInitial local content.", encoding="utf-8")
-    service.rebuild_kb_index(embedding_client=FixedEmbeddingClient())
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
     (vault / "note.md").write_text("# Note\n\nChanged local content.", encoding="utf-8")
 
     stale = service.run_local_research("Changed")
@@ -88,7 +92,7 @@ def test_local_research_fails_before_retrieval_when_index_missing_or_stale(tmp_p
 def test_local_research_cli_success_and_failure_outputs(tmp_path):
     service, config_path, _workspace, vault = configured_service(tmp_path)
     (vault / "note.md").write_text("# CLI\n\nLocal CLI research content about graph planning.", encoding="utf-8")
-    service.rebuild_kb_index(embedding_client=FixedEmbeddingClient())
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
     env = os.environ.copy()
     env["RESEARCH_AGENT_CONFIG_PATH"] = str(config_path)
     env["RESEARCH_AGENT_PROVIDER_CALL_SENTINEL"] = "fail-if-read"
@@ -115,3 +119,84 @@ def test_local_research_cli_success_and_failure_outputs(tmp_path):
     assert "Local CLI research content" in success.stdout
     assert failure.returncode == 1
     assert "[kb_index_stale]" in failure.stdout
+
+
+# ---------------------------------------------------------------------------
+# FTS5 + Chroma hybrid retrieval tests (R-13 / ChromaDB integration)
+# ---------------------------------------------------------------------------
+
+
+def test_fts5_keyword_retrieval_finds_relevant_chunks(tmp_path):
+    """FTS5 MATCH should return ranked results scoped to query terms (R-13 fix)."""
+    service, _config_path, workspace, vault = configured_service(tmp_path)
+    (vault / "alice.md").write_text("# Alice\n\nAlice likes Python async programming.", encoding="utf-8")
+    (vault / "bob.md").write_text("# Bob\n\nBob prefers Rust for systems programming.", encoding="utf-8")
+    (vault / "carol.md").write_text("# Carol\n\nCarol writes async Python frameworks and tools.", encoding="utf-8")
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
+
+    result = service.run_local_research("async Python")
+
+    assert result["status"] == "completed"
+    texts = [item["text"] for item in result["local_results"]]
+    assert any("async Python" in t or "async programming" in t for t in texts)
+    # Bob's Rust article should NOT appear in top results
+    if len(result["local_results"]) >= 2:
+        assert not any("Rust" in t for t in texts[:2])
+
+
+def test_fts5_retrieval_handles_special_characters(tmp_path):
+    """FTS5 should sanitise special characters and still return results."""
+    service, _config_path, workspace, vault = configured_service(tmp_path)
+    (vault / "quotes.md").write_text("# Quotes\n\nHe said: \"Python's async is great for I/O.\"", encoding="utf-8")
+    (vault / "cpp.md").write_text("# C++\n\nC++ supports both sync and async patterns via futures and coroutines.", encoding="utf-8")
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
+
+    result = service.run_local_research("Python's async")
+    assert result["status"] == "completed"
+    assert len(result["local_results"]) >= 1
+
+    # FTS5 special characters like ++ and () should not cause errors
+    result2 = service.run_local_research("C++ async")
+    assert result2["status"] == "completed"
+    assert len(result2["local_results"]) >= 1, "special chars should not break FTS5"
+
+
+def test_hybrid_retrieval_with_embedding_client(tmp_path):
+    """When embedding_client is provided, results combine FTS5 + Chroma via RRF."""
+    service, _config_path, workspace, vault = configured_service(tmp_path)
+    (vault / "semantic.md").write_text(
+        "# Semantic\n\nVector embeddings capture semantic meaning across different wordings.",
+        encoding="utf-8",
+    )
+    (vault / "keyword.md").write_text(
+        "# Keyword\n\nFTS5 matches exact keywords like 'vector' and 'embedding' directly.",
+        encoding="utf-8",
+    )
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
+
+    # Use a simple embedding client that produces varied but deterministic vectors
+    class VariedEmbeddingClient:
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            return [[float(hash(t) % 100) / 100.0 for _ in range(3)] for t in texts]
+
+    result = service.run_local_research(
+        "semantic meaning",
+        embedding_client=VariedEmbeddingClient(),
+    )
+
+    assert result["status"] == "completed"
+    assert len(result["local_results"]) >= 2
+
+
+def test_fts5_only_fallback_works_without_embedding_client(tmp_path):
+    """When no embedding_client is provided, retrieval should use FTS5 only."""
+    service, _config_path, workspace, vault = configured_service(tmp_path)
+    (vault / "note.md").write_text("# Note\n\nThis is about machine learning pipelines.", encoding="utf-8")
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
+
+    # No embedding_client passed → FTS5-only path
+    result = service.run_local_research("machine learning")
+
+    assert result["status"] == "completed"
+    assert len(result["local_results"]) >= 1
+    assert any("machine learning" in item["text"] for item in result["local_results"])

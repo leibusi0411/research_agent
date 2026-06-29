@@ -12,7 +12,7 @@ PostJson = Callable[[str, dict[str, str], dict[str, Any]], dict[str, Any]]
 
 
 class ChatModelClient(Protocol):
-    def complete(self, prompt: str) -> str:
+    def complete(self, prompt: str, *, json_mode: bool = False) -> str:
         ...
 
 
@@ -31,7 +31,7 @@ def _post_json_request(
     headers = _auth_headers(api_key)
     if post_json is not None:
         return post_json(url, headers, payload)
-    with httpx.Client(timeout=60) as client:
+    with httpx.Client(timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=10.0)) as client:
         response = client.post(url, headers=headers, json=payload)
     response.raise_for_status()
     return dict(response.json())
@@ -46,11 +46,15 @@ class OpenAICompatibleChatModel:
     def from_config(cls, config: ModelConfig, *, post_json: PostJson | None = None) -> OpenAICompatibleChatModel:
         return cls(config=config, post_json=post_json)
 
-    def complete(self, prompt: str) -> str:
-        payload = {
+    def complete(self, prompt: str, *, json_mode: bool = False) -> str:
+        payload: dict[str, Any] = {
             "model": self.config.model,
             "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "max_tokens": 16384,
         }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
         response = _post_json_request(
             _join_endpoint(self.config.base_url, "chat/completions"),
             payload,
@@ -80,21 +84,23 @@ class OpenAICompatibleEmbeddingModel:
         return [list(item["embedding"]) for item in response["data"]]
 
 
-class FakeChatModelClient:
-    def __init__(self, completions: list[str]) -> None:
-        self.completions = list(completions)
-        self.prompts: list[str] = []
-
-    def complete(self, prompt: str) -> str:
-        self.prompts.append(prompt)
-        if not self.completions:
-            return ""
-        return self.completions.pop(0)
-
-
 def build_role_chat_model_config(config: UserConfig, role: str) -> ModelConfig:
     role_overrides = config.role_chat_models.get(role)
     return role_overrides or config.chat_model
+
+
+def build_chat_models(config: UserConfig) -> dict[str, ChatModelClient]:
+    """Build per-role ChatModelClient dict from config.
+
+    Currently all roles use the same model (no per-role overrides in default
+    config), but the dict-structured return allows per-role model overrides
+    to take effect automatically once configured in config.toml.
+    """
+    chat_models: dict[str, ChatModelClient] = {}
+    for role in ("planner", "executor", "supervisor", "curator"):
+        role_config = build_role_chat_model_config(config, role)
+        chat_models[role] = OpenAICompatibleChatModel.from_config(role_config)
+    return chat_models
 
 
 def _join_endpoint(base_url: str, endpoint: str) -> str:

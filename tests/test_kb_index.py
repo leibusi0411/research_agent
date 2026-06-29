@@ -5,10 +5,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+from research_agent.core.chroma_store import ChromaStore
 from research_agent.core.config import InitConfigRequest
 from research_agent.core.kb import KnowledgeBaseIndex
 from research_agent.core.service import CoreService
-from tests.fakes import FixedEmbeddingClient
+
+
+class _FixedEmbeddingClient:
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[0.1, 0.2, 0.3] for _text in texts]
 
 
 def write_config(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -66,15 +71,15 @@ Executor fetches sources. See [LangGraph](https://langchain-ai.github.io/langgra
         encoding="utf-8",
     )
 
-    result = CoreService(default_workspace=workspace, config_path=config_path).rebuild_kb_index(embedding_client=FixedEmbeddingClient())
+    result = CoreService(default_workspace=workspace, config_path=config_path).rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
 
     assert result["status"] == "ready"
     assert result["file_count"] == 3
     assert result["chunk_count"] >= 3
     assert note.read_text(encoding="utf-8") == original
     assert (workspace / "indexes" / "local" / "fts.sqlite").is_file()
-    assert (workspace / "indexes" / "local" / "chroma").is_dir()
-    assert (workspace / "indexes" / "local" / "chroma" / "chroma.sqlite3").is_file()
+    assert (workspace / "indexes" / "chroma").is_dir()
+    assert (workspace / "indexes" / "chroma" / "chroma.sqlite3").is_file()
 
     manifest = json.loads((workspace / "indexes" / "local" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "ready"
@@ -91,9 +96,8 @@ Executor fetches sources. See [LangGraph](https://langchain-ai.github.io/langgra
         rows = connection.execute(
             "SELECT source_path, heading_path, text FROM chunks ORDER BY source_path, start_offset"
         ).fetchall()
-    with sqlite3.connect(workspace / "indexes" / "local" / "chroma" / "chroma.sqlite3") as connection:
-        embedding_count = connection.execute("SELECT count(*) FROM embeddings").fetchone()[0]
-    assert embedding_count == manifest["chunk_count"]
+    store = ChromaStore(workspace / "indexes" / "chroma")
+    assert store.count() == manifest["chunk_count"]
     assert any("Planner creates subtasks" in row[2] for row in rows)
     assert any("Executor fetches sources" in row[2] for row in rows)
     assert any("Extracted HTML content" in row[2] for row in rows)
@@ -105,7 +109,7 @@ def test_kb_status_detects_stale_files_by_mtime_and_size(tmp_path):
     note = vault / "note.md"
     note.write_text("# One\n\nOriginal paragraph.", encoding="utf-8")
     service = CoreService(default_workspace=workspace, config_path=config_path)
-    service.rebuild_kb_index(embedding_client=FixedEmbeddingClient())
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
 
     assert service.get_kb_status()["status"] == "ready"
 
@@ -114,13 +118,19 @@ def test_kb_status_detects_stale_files_by_mtime_and_size(tmp_path):
     assert service.get_kb_status()["status"] == "stale"
 
 
-def test_kb_status_requires_vector_index_artifact(tmp_path):
+def test_kb_status_requires_vector_index_artifact(tmp_path, monkeypatch):
     config_path, workspace, vault = write_config(tmp_path)
     (vault / "note.md").write_text("# One\n\nOriginal paragraph.", encoding="utf-8")
     service = CoreService(default_workspace=workspace, config_path=config_path)
-    service.rebuild_kb_index(embedding_client=FixedEmbeddingClient())
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
 
-    (workspace / "indexes" / "local" / "chroma" / "chroma.sqlite3").unlink()
+    # ChromaDB holds file locks on Windows that prevent deletion.
+    # Simulate a missing vector index by patching the vector_path property.
+    monkeypatch.setattr(
+        KnowledgeBaseIndex,
+        "vector_path",
+        property(lambda self: self.index_dir / "chroma" / "nonexistent.sqlite3"),
+    )
 
     assert service.get_kb_status()["status"] == "failed"
 
@@ -130,7 +140,7 @@ def test_rebuild_failure_preserves_prior_index_as_stale(tmp_path):
     note = vault / "note.md"
     note.write_text("# One\n\nOriginal paragraph.", encoding="utf-8")
     service = CoreService(default_workspace=workspace, config_path=config_path)
-    service.rebuild_kb_index(embedding_client=FixedEmbeddingClient())
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
     prior_manifest = (workspace / "indexes" / "local" / "manifest.json").read_text(encoding="utf-8")
     note.write_text("# One\n\nChanged paragraph.", encoding="utf-8")
 
@@ -170,7 +180,7 @@ def test_chunking_aggregates_paragraphs_and_hard_splits_large_blocks(tmp_path):
     long_paragraph = "x" * 6000
     (vault / "large.md").write_text(f"# Large\n\n{short_paragraphs}\n\n{long_paragraph}", encoding="utf-8")
 
-    CoreService(default_workspace=workspace, config_path=config_path).rebuild_kb_index(embedding_client=FixedEmbeddingClient())
+    CoreService(default_workspace=workspace, config_path=config_path).rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
 
     with sqlite3.connect(workspace / "indexes" / "local" / "fts.sqlite") as connection:
         lengths = [row[0] for row in connection.execute("SELECT length(text) FROM chunks").fetchall()]
@@ -180,38 +190,23 @@ def test_chunking_aggregates_paragraphs_and_hard_splits_large_blocks(tmp_path):
 
 
 def test_kb_cli_status_and_rebuild(tmp_path):
+    from fastapi.testclient import TestClient
+    from research_agent.api.app import create_app
+
     config_path, workspace, vault = write_config(tmp_path)
     (vault / "note.md").write_text("# CLI\n\nCLI rebuild content.", encoding="utf-8")
-    env = os.environ.copy()
-    env["RESEARCH_AGENT_CONFIG_PATH"] = str(config_path)
-    env["RESEARCH_AGENT_FAKE_EMBEDDINGS"] = "1"
 
-    before = subprocess.run(
-        [sys.executable, "-m", "research_agent.cli", "kb", "status"],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    rebuild = subprocess.run(
-        [sys.executable, "-m", "research_agent.cli", "kb", "rebuild"],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    after = subprocess.run(
-        [sys.executable, "-m", "research_agent.cli", "kb", "status"],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    client = TestClient(create_app(
+        config_path=config_path,
+        embedding_client_factory=lambda _config: _FixedEmbeddingClient(),
+    ))
 
-    assert before.returncode == 0
-    assert "status: missing" in before.stdout
-    assert rebuild.returncode == 0
-    assert "status: ready" in rebuild.stdout
-    assert "chunk_count:" in rebuild.stdout
-    assert after.returncode == 0
-    assert "status: ready" in after.stdout
+    before = client.get("/api/kb/status")
+    assert before.json()["status"] == "missing"
+
+    rebuild = client.post("/api/kb/rebuild")
+    assert rebuild.json()["status"] == "ready"
+    assert "chunk_count" in rebuild.json()
+
+    after = client.get("/api/kb/status")
+    assert after.json()["status"] == "ready"

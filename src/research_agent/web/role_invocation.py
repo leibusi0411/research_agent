@@ -18,23 +18,43 @@ def invoke_role_json(
     chat_model: ChatModelClient,
     validator: Validator,
 ) -> Any:
-    raw_output = chat_model.complete(prompt)
+    raw_output = chat_model.complete(prompt, json_mode=True)
     try:
         return _parse_and_validate(raw_output, validator)
     except Exception as first_error:  # noqa: BLE001 - converted to one schema repair attempt
-        repair_prompt = build_schema_repair_prompt(
-            role_name=role_name,
-            raw_output=raw_output,
-            validation_error=str(first_error),
-            target_schema=target_schema,
-        )
-        repaired_output = chat_model.complete(repair_prompt)
+        # Save before implicit `del first_error` at end of except block (PEP 3110)
+        _original_error_str = str(first_error)
+        repaired_output: str | None = None
+        try:
+            repair_prompt = build_schema_repair_prompt(
+                role_name=role_name,
+                raw_output=raw_output,
+                validation_error=_original_error_str,
+                target_schema=target_schema,
+            )
+            repaired_output = chat_model.complete(repair_prompt)
+        except Exception as repair_error:  # noqa: BLE001 - LLM call failure during repair
+            raise ResearchError(
+                code="schema_validation_failed",
+                message=(
+                    f"{role_name} schema repair LLM call failed "
+                    f"(original validation error: {_original_error_str[:200]}): {repair_error}"
+                ),
+            ) from repair_error
+        if repaired_output is None:
+            raise ResearchError(
+                code="schema_validation_failed",
+                message=f"{role_name} schema repair produced no output (original error: {_original_error_str[:200]})",
+            )
     try:
         return _parse_and_validate(repaired_output, validator)
     except Exception as second_error:  # noqa: BLE001 - normalized workflow failure
         raise ResearchError(
             code="schema_validation_failed",
-            message=f"{role_name} output failed schema validation after one repair attempt: {second_error}",
+            message=(
+                f"{role_name} output failed schema validation after one repair attempt "
+                f"(original validation error: {_original_error_str[:200]}): {second_error}"
+            ),
         ) from second_error
 
 

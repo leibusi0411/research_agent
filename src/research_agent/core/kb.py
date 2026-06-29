@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from research_agent.core.chroma_store import ChromaStore, _deterministic_embedding
 from research_agent.core.config import load_user_config
 from research_agent.core.ids import utc_now_iso
 from research_agent.core.providers import EmbeddingClient
@@ -68,8 +69,15 @@ class KnowledgeBaseIndex:
         return self.index_dir / "fts.sqlite"
 
     @property
+    def chroma_dir(self) -> Path:
+        """ChromaDB directory — kept outside ``index_dir`` because HNSW
+        segment files hold memory-mapped locks on Windows that prevent
+        the atomic rename of the parent ``index_dir``."""
+        return self.index_dir.parent / "chroma"
+
+    @property
     def vector_path(self) -> Path:
-        return self.index_dir / "chroma" / "chroma.sqlite3"
+        return self.chroma_dir / "chroma.sqlite3"
 
     def status(self) -> dict[str, Any]:
         config = load_user_config(self.config_path)
@@ -123,9 +131,12 @@ class KnowledgeBaseIndex:
         failed_marker = tmp_parent / "local.failed.json"
         building_marker.write_text("building", encoding="utf-8")
         tmp_dir = Path(tempfile.mkdtemp(prefix="local-build-", dir=tmp_parent))
+        chroma_tmp: Path | None = Path(
+            tempfile.mkdtemp(prefix="chroma-build-", dir=tmp_parent)
+        )
         try:
+            # 1. Build FTS5 + manifest in temp dir
             _write_sqlite_index(tmp_dir / "fts.sqlite", chunks)
-            _write_chroma_index(tmp_dir / "chroma", chunks, self.embedding_client)
             manifest = _build_manifest(vault_path, parsed_files, chunks)
             (tmp_dir / "manifest.json").write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2),
@@ -134,6 +145,15 @@ class KnowledgeBaseIndex:
             if self.fail_after_temp_build:
                 raise RuntimeError("simulated rebuild failure")
 
+            # Build ChromaDB in its own temp directory (outside index_dir).
+            # ChromaDB's HNSW segment files hold memory-mapped locks on
+            # Windows that prevent renaming/deleting the directory within
+            # the same process.  Building in a fresh temp dir and then
+            # copying over the old one works because file reads are
+            # allowed even when the target files are locked.
+            _write_chroma_index(chroma_tmp, chunks, self.embedding_client)
+
+            # 2. Atomic swap: move old FTS5+manifest aside, bring new in
             backup_dir = self.index_dir.with_name("local.backup")
             if backup_dir.exists():
                 shutil.rmtree(backup_dir)
@@ -147,6 +167,11 @@ class KnowledgeBaseIndex:
                 raise
             if backup_dir.exists():
                 shutil.rmtree(backup_dir)
+
+            # 3. Copy new ChromaDB over the old one
+            self.chroma_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(chroma_tmp, self.chroma_dir, dirs_exist_ok=True)
+
             building_marker.unlink(missing_ok=True)
             failed_marker.unlink(missing_ok=True)
             return {
@@ -160,6 +185,10 @@ class KnowledgeBaseIndex:
             building_marker.unlink(missing_ok=True)
             if tmp_dir.exists():
                 shutil.rmtree(tmp_dir, ignore_errors=True)
+            # Clean up only the temp chroma build; keep the prior chroma_dir
+            # intact so the previous vector index is preserved.
+            if chroma_tmp is not None and chroma_tmp.exists():
+                shutil.rmtree(chroma_tmp, ignore_errors=True)
             failed_marker.write_text(
                 json.dumps({"error": str(exc), "failed_at": utc_now_iso()}, ensure_ascii=False),
                 encoding="utf-8",
@@ -367,58 +396,9 @@ def _paragraph_chunks(
 
 
 def _write_chroma_index(path: Path, chunks: list[Chunk], embedding_client: EmbeddingClient | None = None) -> None:
-    path.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path / "chroma.sqlite3")
-    cursor = connection.cursor()
-    try:
-        cursor.execute(
-            """
-            CREATE TABLE embeddings (
-              chunk_id TEXT PRIMARY KEY,
-              source_path TEXT NOT NULL,
-              heading_path TEXT NOT NULL,
-              start_offset INTEGER NOT NULL,
-              end_offset INTEGER NOT NULL,
-              embedding TEXT NOT NULL,
-              document TEXT NOT NULL
-            )
-            """
-        )
-        embeddings = (
-            embedding_client.embed([chunk.text for chunk in chunks])
-            if embedding_client is not None
-            else [_deterministic_embedding(chunk.text) for chunk in chunks]
-        )
-        for chunk, embedding in zip(chunks, embeddings, strict=True):
-            cursor.execute(
-                """
-                INSERT INTO embeddings (
-                  chunk_id, source_path, heading_path, start_offset, end_offset, embedding, document
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    chunk.chunk_id,
-                    chunk.source_path,
-                    json.dumps(chunk.heading_path, ensure_ascii=False),
-                    chunk.start_offset,
-                    chunk.end_offset,
-                    json.dumps(embedding),
-                    chunk.text,
-                ),
-            )
-        connection.commit()
-    finally:
-        cursor.close()
-        connection.close()
-
-
-def _deterministic_embedding(text: str) -> list[float]:
-    digest = hashlib.sha256(text.encode("utf-8")).digest()
-    return [
-        int.from_bytes(digest[index : index + 4], "big") / 2**32
-        for index in range(0, 32, 4)
-    ]
+    store = ChromaStore(path)
+    store.build_index(chunks, embedding_client)
+    store.close()  # release SQLite handles; segment files stay mmap'd on Windows
 
 
 def _chunk_id(path: Path, start_offset: int, end_offset: int) -> str:

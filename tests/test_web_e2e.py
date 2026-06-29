@@ -46,6 +46,11 @@ def _create_tool_gateway(config):
     return ToolGateway(registry=create_default_web_tool_registry(), runner=tool_runner)
 
 
+def _make_chat_models(client: object) -> dict[str, object]:
+    """Build per-role chat_models dict, all sharing the same client."""
+    return {"planner": client, "executor": client, "supervisor": client, "curator": client}
+
+
 @pytest.mark.e2e
 def test_web_research_e2e_simple(tmp_path):
     """End-to-end test: simple question with real LLM and search."""
@@ -64,7 +69,7 @@ def test_web_research_e2e_simple(tmp_path):
     # Create runner with minimal rounds for faster test
     runner = StateGraphRunner(
         workspace=str(workspace),
-        chat_model=chat_model,
+        chat_models=_make_chat_models(chat_model),
         tool_gateway=tool_gateway,
         max_retrieval_rounds=1,  # Limit to 1 round for faster test
         max_concurrent_subtasks=2,
@@ -129,7 +134,7 @@ def test_web_research_e2e_with_multiple_subtasks(tmp_path):
 
     runner = StateGraphRunner(
         workspace=str(workspace),
-        chat_model=chat_model,
+        chat_models=_make_chat_models(chat_model),
         tool_gateway=tool_gateway,
         max_retrieval_rounds=2,
         max_concurrent_subtasks=2,

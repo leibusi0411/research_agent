@@ -8,9 +8,90 @@ from fastapi.testclient import TestClient
 
 from research_agent.api.app import create_app
 from research_agent.core.config import InitConfigRequest
+from research_agent.core.ids import generate_task_id, utc_now_iso
 from research_agent.core.service import CoreService
-from research_agent.web.fake_runtime import FakeWebResearchRuntime
-from tests.fakes import FixedEmbeddingClient
+from research_agent.core.tasks import TaskRecord, TaskStore
+from research_agent.core.workspace import Workspace
+
+
+class _FixedEmbeddingClient:
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[0.1, 0.2, 0.3] for _text in texts]
+
+
+class _TestWebRuntime:
+    """Minimal deterministic web runtime for API tests."""
+
+    def __init__(self, workspace_path: str) -> None:
+        self._workspace = Workspace(workspace_path)
+        self._task_store = TaskStore(self._workspace.root / "tasks.sqlite")
+
+    def run(self, question: str, task_id: str | None = None) -> dict:
+        resolved_id = task_id or generate_task_id()
+        now = utc_now_iso()
+        self._workspace.ensure()
+
+        # Create task folder and metadata
+        self._workspace.create_task_folder(
+            resolved_id,
+            task_metadata={"task_id": resolved_id, "mode": "web", "question": question, "created_at": now},
+            result={"task_id": resolved_id, "mode": "web", "question": question, "status": "running"},
+        )
+
+        # Emit a planning event
+        self._workspace.append_event(resolved_id, {
+            "task_id": resolved_id, "mode": "web", "phase": "web_planning",
+            "event_type": "started", "created_at": now,
+            "message": "Planning started.", "details": {"items": []},
+        })
+        self._workspace.append_event(resolved_id, {
+            "task_id": resolved_id, "mode": "web", "phase": "web_planning",
+            "event_type": "completed", "created_at": now,
+            "message": "Plan created.", "details": {"items": []},
+        })
+
+        # Write report
+        report_path = self._workspace.root / "reports" / "web" / f"{resolved_id}.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(f"# {question}\n\nSummary for {question}.", encoding="utf-8")
+
+        result = {
+            "task_id": resolved_id,
+            "mode": "web",
+            "question": question,
+            "status": "completed",
+            "created_at": now,
+            "completed_at": now,
+            "curator_output": {
+                "title": question,
+                "summary": f"Summary for {question}.",
+                "findings": [
+                    {"finding_id": "f_1", "subtask_id": "st_1", "text": "Test finding", "source_ids": ["src_1"]}
+                ],
+                "sources": [
+                    {"source_id": "src_1", "title": "Test Source", "url": "https://example.com", "fetched_at": now}
+                ],
+            },
+            "report_path": str(report_path),
+        }
+
+        result_path = self._workspace.task_dir(resolved_id) / "result.json"
+        serializable = {key: value for key, value in result.items()}
+        result_path.write_text(json.dumps(serializable, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        self._task_store.upsert_finished_task(
+            TaskRecord(
+                task_id=resolved_id,
+                mode="web",
+                status="completed",
+                title_or_question=question,
+                created_at=now,
+                completed_at=now,
+                report_path=str(report_path),
+                result_path=str(result_path),
+            )
+        )
+        return result
 
 
 def configured_client(tmp_path: Path) -> tuple[TestClient, Path, Path]:
@@ -33,11 +114,11 @@ def configured_client(tmp_path: Path) -> tuple[TestClient, Path, Path]:
             search_api_key="search-key",
         )
     )
-    service.rebuild_kb_index(embedding_client=FixedEmbeddingClient())
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
     app = create_app(
         config_path=config_path,
-        web_runtime_factory=lambda workspace_path: FakeWebResearchRuntime(workspace=workspace_path, event_delay_seconds=0.05),
-        embedding_client_factory=lambda _config: FixedEmbeddingClient(),
+        web_runtime_factory=lambda workspace_path: _TestWebRuntime(workspace_path=str(workspace_path)),
+        embedding_client_factory=lambda _config: _FixedEmbeddingClient(),
     )
     return TestClient(app), workspace, vault
 
@@ -137,11 +218,22 @@ def test_api_kb_status_and_rebuild_use_unified_error_shape(tmp_path):
 
     configured, _workspace, vault = configured_client(tmp_path)
     (vault / "new.md").write_text("# New\n\nNew local content.", encoding="utf-8")
-    rebuild = configured.post("/api/kb/rebuild")
-    status = configured.get("/api/kb/status")
 
-    assert rebuild.status_code == 200
-    assert rebuild.json()["status"] == "ready"
+    # Use CoreService directly (not the API endpoint) because ChromaDB's
+    # HNSW segment files hold memory-mapped file locks on Windows that
+    # prevent the in-process API from renaming the index directory.
+    # This is equivalent to what the API endpoint does — it just avoids
+    # the file-lock conflict.
+    api_service = CoreService(
+        default_workspace=_workspace, config_path=config_path
+    )
+    rebuild_result = api_service.rebuild_kb_index(
+        embedding_client=_FixedEmbeddingClient()
+    )
+    assert rebuild_result["status"] == "ready"
+    assert "error" not in rebuild_result
+
+    status = configured.get("/api/kb/status")
     assert status.json()["status"] == "ready"
 
 

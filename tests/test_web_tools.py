@@ -9,7 +9,6 @@ from research_agent.core.config import WebToolsConfig
 from research_agent.web.tools import (
     FetchResponse,
     HttpxHttpClient,
-    InMemoryHttpClient,
     SearchProvider,
     ToolGateway,
     ToolRegistry,
@@ -17,6 +16,22 @@ from research_agent.web.tools import (
     ToolRunner,
     create_default_web_tool_registry,
 )
+
+
+class _InMemoryHttpClient:
+    def __init__(self, responses: dict[str, FetchResponse]) -> None:
+        self._responses = responses
+
+    def get(self, url: str, *, timeout_seconds: int, max_bytes: int | None = None) -> FetchResponse:
+        resp = self._responses.get(url)
+        if resp is None:
+            return FetchResponse(url=url, status_code=404, headers={"content-type": "text/plain"}, content=b"not found")
+        if max_bytes is not None and len(resp.content) > max_bytes:
+            return FetchResponse(
+                url=resp.url, status_code=resp.status_code,
+                headers=resp.headers, content=resp.content[: max_bytes + 1], truncated=True,
+            )
+        return resp
 
 
 def web_tools_config(**overrides: int) -> WebToolsConfig:
@@ -146,7 +161,7 @@ def test_web_search_uses_search_provider_and_result_limit_defaults():
 
 
 def test_fetch_extract_accepts_http_html_and_respects_response_size_limit():
-    http_client = InMemoryHttpClient(
+    http_client = _InMemoryHttpClient(
         {
             "https://example.com/page": FetchResponse(
                 url="https://example.com/page",
@@ -181,7 +196,7 @@ def test_fetch_extract_accepts_http_html_and_respects_response_size_limit():
 
 
 def test_fetch_extract_uses_declared_charset():
-    http_client = InMemoryHttpClient(
+    http_client = _InMemoryHttpClient(
         {
             "https://example.com/latin1": FetchResponse(
                 url="https://example.com/latin1",
@@ -221,7 +236,7 @@ def test_httpx_client_stops_reading_after_configured_byte_limit():
 
 
 def test_download_pdf_accepts_pdf_and_extracts_text_with_size_limit():
-    http_client = InMemoryHttpClient(
+    http_client = _InMemoryHttpClient(
         {
             "https://example.com/report.pdf": FetchResponse(
                 url="https://example.com/report.pdf",

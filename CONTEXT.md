@@ -57,7 +57,7 @@ Structured metadata stored at the top of a Markdown note. It carries note-level 
 _Avoid_: header, properties
 
 **Derived Index**:
-A rebuildable retrieval or query structure generated from the Markdown Vault, such as SQLite FTS5 full-text indexes, Chroma vector indexes, chunk records, or query acceleration tables. It is not the canonical source of knowledge.
+A rebuildable retrieval or query structure generated from the Markdown Vault, such as SQLite FTS5 full-text indexes and a ChromaDB persistent vector index (stored under ``indexes/chroma/``). It is not the canonical source of knowledge.
 _Avoid_: source of truth, knowledge store
 
 **Knowledge Base Ingestion**:
@@ -209,7 +209,7 @@ Retrieval-augmented generation used to retrieve relevant source material from th
 _Avoid_: knowledge base, search
 
 **Hybrid Retrieval**:
-The initial Local RAG retrieval strategy that combines SQLite FTS5 full-text search and Chroma vector search, then returns fused, traceable Chunks. It does not require complex reranking or agentic query rewriting in v1.
+The initial Local RAG retrieval strategy that combines SQLite FTS5 full-text search (keyword) and ChromaDB vector search (semantic), fuses results via Reciprocal Rank Fusion (RRF, k=60), and returns the top-10 fused, traceable Chunks. Falls back to FTS5-only when no embedding client is available. Does not require complex reranking or agentic query rewriting in v1.
 _Avoid_: semantic search, reranking
 
 **Planner**:

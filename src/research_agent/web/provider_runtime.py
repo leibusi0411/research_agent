@@ -13,14 +13,14 @@ class ProviderBackedWebResearchRuntime:
         self,
         *,
         workspace: str,
-        chat_model: ChatModelClient,
+        chat_models: dict[str, ChatModelClient],
         tool_gateway: ToolGateway,
         max_retrieval_rounds: int = 3,
         max_concurrent_subtasks: int = 3,
         on_event: Any | None = None,
     ) -> None:
         self.workspace = Workspace(workspace)
-        self.chat_model = chat_model
+        self.chat_models = chat_models
         self.tool_gateway = tool_gateway
         self.max_retrieval_rounds = max_retrieval_rounds
         self.max_concurrent_subtasks = max_concurrent_subtasks
@@ -29,7 +29,7 @@ class ProviderBackedWebResearchRuntime:
     def run(self, question: str, task_id: str | None = None) -> dict[str, Any]:
         runner = StateGraphRunner(
             workspace=str(self.workspace.root),
-            chat_model=self.chat_model,
+            chat_models=self.chat_models,
             tool_gateway=self.tool_gateway,
             max_retrieval_rounds=self.max_retrieval_rounds,
             max_concurrent_subtasks=self.max_concurrent_subtasks,

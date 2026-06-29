@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import os
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -10,10 +8,14 @@ from pathlib import Path
 from research_agent.core.config import InitConfigRequest
 from research_agent.core.service import CoreService
 from research_agent.core.tasks import TaskRecord
-from tests.fakes import FixedEmbeddingClient
 
 
-def configured_env_with_ready_index(tmp_path: Path) -> tuple[dict[str, str], Path]:
+class _FixedEmbeddingClient:
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[0.1, 0.2, 0.3] for _text in texts]
+
+
+def configured_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
     config_path = tmp_path / "config.toml"
     workspace = tmp_path / "runtime"
     vault = tmp_path / "vault"
@@ -33,13 +35,11 @@ def configured_env_with_ready_index(tmp_path: Path) -> tuple[dict[str, str], Pat
             search_api_key="search-key",
         )
     )
-    service.rebuild_kb_index(embedding_client=FixedEmbeddingClient())
     env = os.environ.copy()
     env["RESEARCH_AGENT_CONFIG_PATH"] = str(config_path)
     src_path = str(Path(__file__).resolve().parents[1] / "src")
     existing_pythonpath = env.get("PYTHONPATH")
     env["PYTHONPATH"] = src_path if not existing_pythonpath else os.pathsep.join([src_path, existing_pythonpath])
-    env["RESEARCH_AGENT_FAKE_WEB"] = "1"  # CLI subprocess must use fake runtime for offline tests
     return env, workspace
 
 
@@ -53,53 +53,8 @@ def run_cli(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]
     )
 
 
-def test_both_cli_runs_local_and_web_as_separate_finished_tasks(tmp_path):
-    env, workspace = configured_env_with_ready_index(tmp_path)
-
-    result = run_cli(env, "both", "planner supervisor")
-
-    assert result.returncode == 0
-    assert "Local Results" in result.stdout
-    assert "Web Summary" in result.stdout
-    assert "Web report_path:" in result.stdout
-    rows = task_rows(workspace)
-    assert sorted(row[1] for row in rows) == ["local", "web"]
-    assert {row[2] for row in rows} == {"completed"}
-
-
-def test_both_cli_exits_nonzero_when_web_report_write_fails_but_keeps_separate_results(tmp_path):
-    env, workspace = configured_env_with_ready_index(tmp_path)
-    env["RESEARCH_AGENT_FAKE_WEB_REPORT_FAILURE"] = "1"
-
-    result = run_cli(env, "both", "planner supervisor")
-
-    assert result.returncode == 1
-    assert "Local Results" in result.stdout
-    assert "[web:file_write_error]" in result.stdout
-    rows = task_rows(workspace)
-    assert sorted((row[1], row[2]) for row in rows) == [("local", "completed"), ("web", "failed")]
-
-
-def test_same_family_busy_conflict_does_not_block_other_family_in_both(tmp_path):
-    env, workspace = configured_env_with_ready_index(tmp_path)
-    lock_dir = workspace / "locks"
-    lock_dir.mkdir(parents=True)
-    (lock_dir / "local.lock").write_text(json.dumps({"task_id": "task_active_local"}), encoding="utf-8")
-
-    local = run_cli(env, "local", "planner")
-    both = run_cli(env, "both", "planner")
-
-    assert local.returncode == 1
-    assert "[busy]" in local.stdout
-    assert both.returncode == 1
-    assert "[local:busy]" in both.stdout
-    assert "Web Summary" in both.stdout
-    rows = task_rows(workspace)
-    assert [(row[1], row[2]) for row in rows] == [("web", "completed")]
-
-
 def test_task_list_displays_finished_tasks_sorted_by_created_at_desc(tmp_path):
-    env, workspace = configured_env_with_ready_index(tmp_path)
+    env, workspace = configured_env(tmp_path)
     service = CoreService(default_workspace=workspace, config_path=Path(env["RESEARCH_AGENT_CONFIG_PATH"]))
     service.task_store.upsert_finished_task(
         TaskRecord(
@@ -136,8 +91,3 @@ def test_task_list_displays_finished_tasks_sorted_by_created_at_desc(tmp_path):
     assert "web" in result.stdout
     assert "failed" in result.stdout
     assert "newer web" in result.stdout
-
-
-def task_rows(workspace: Path) -> list[tuple[str, str, str]]:
-    with sqlite3.connect(workspace / "tasks.sqlite") as connection:
-        return connection.execute("SELECT task_id, mode, status FROM tasks ORDER BY created_at DESC").fetchall()

@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
 from research_agent.core.config import InitConfigRequest, default_config_path, load_user_config
 from research_agent.core.errors import ResearchError
 from research_agent.core.service import CoreService
+
+
+def _format_error_message(exc: Exception) -> str:
+    if isinstance(exc, ResearchError):
+        return f"[{exc.code}] {exc.message}"
+    return f"[runtime_error] Unexpected error: {exc}"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,6 +50,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     _configure_stdio()
+    try:
+        return _main(argv)
+    except ResearchError as error:
+        print(f"[{error.code}] {error.message}")
+        return 1
+    except Exception as exc:  # noqa: BLE001 - CLI top-level catch-all
+        print(_format_error_message(exc))
+        return 1
+
+
+def _main(argv: list[str] | None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
@@ -90,24 +106,34 @@ def _run_init(args: argparse.Namespace) -> int:
     except ResearchError as error:
         print(f"[{error.code}] {error.message}")
         return 1
+    except Exception as exc:  # noqa: BLE001 - CLI fallback
+        print(_format_error_message(exc))
+        return 1
     print(f"Config written: {written_path}")
     return 0
 
 
 def _run_kb(args: argparse.Namespace, service: CoreService) -> int:
-    if args.kb_command == "status":
-        status = service.get_kb_status()
-    elif args.kb_command == "rebuild":
-        status = service.rebuild_kb_index()
-    else:
-        print("[runtime_error] Missing kb subcommand.")
+    try:
+        if args.kb_command == "status":
+            status = service.get_kb_status()
+        elif args.kb_command == "rebuild":
+            status = service.rebuild_kb_index()
+        else:
+            print("[runtime_error] Missing kb subcommand.")
+            return 1
+        for key in ["status", "vault_path", "file_count", "chunk_count", "last_indexed_at"]:
+            print(f"{key}: {status.get(key)}")
+        if "error" in status:
+            print(f"error: {status['error']}")
+            return 1
+        return 0
+    except ResearchError as error:
+        print(f"[{error.code}] {error.message}")
         return 1
-    for key in ["status", "vault_path", "file_count", "chunk_count", "last_indexed_at"]:
-        print(f"{key}: {status.get(key)}")
-    if "error" in status:
-        print(f"error: {status['error']}")
+    except Exception as exc:  # noqa: BLE001 - CLI fallback
+        print(_format_error_message(exc))
         return 1
-    return 0
 
 
 def _run_local(args: argparse.Namespace, service: CoreService) -> int:
@@ -118,6 +144,9 @@ def _run_local(args: argparse.Namespace, service: CoreService) -> int:
         result = service.run_local_research(args.question)
     except ResearchError as error:
         print(f"[{error.code}] {error.message}")
+        return 1
+    except Exception as exc:  # noqa: BLE001 - CLI fallback
+        print(_format_error_message(exc))
         return 1
     return _print_local_result(result)
 
@@ -140,22 +169,13 @@ def _run_web(args: argparse.Namespace, service: CoreService) -> int:
     if not args.question:
         print("[config_invalid] Web research question is required.")
         return 1
-    runtime = None
-    if os.environ.get("RESEARCH_AGENT_FAKE_WEB") == "1":
-        from research_agent.web.fake_runtime import FakeWebResearchRuntime
-        runtime = FakeWebResearchRuntime(
-            workspace=service.workspace.root,
-            max_retrieval_rounds=int(os.environ.get("RESEARCH_AGENT_FAKE_WEB_MAX_ROUNDS", "3")),
-            produce_findings=os.environ.get("RESEARCH_AGENT_FAKE_WEB_PRODUCE_FINDINGS", "1") != "0",
-            fail_report_write=os.environ.get("RESEARCH_AGENT_FAKE_WEB_REPORT_FAILURE") == "1",
-            schema_failure=os.environ.get("RESEARCH_AGENT_FAKE_WEB_SCHEMA_FAILURE") == "1",
-            on_event=_print_web_event,
-            event_delay_seconds=float(os.environ.get("RESEARCH_AGENT_FAKE_WEB_EVENT_DELAY_SECONDS", "0")),
-        )
     try:
-        result = service.run_web_research(args.question, runtime=runtime)
+        result = service.run_web_research(args.question, on_event=_print_web_event)
     except ResearchError as error:
         print(f"[{error.code}] {error.message}")
+        return 1
+    except Exception as exc:  # noqa: BLE001 - CLI fallback
+        print(_format_error_message(exc))
         return 1
     return _print_web_result(result)
 
@@ -178,23 +198,22 @@ def _print_web_result(result: dict, *, heading_prefix: str = "") -> int:
     return 0
 
 
+def _print_both_web_event(event: dict) -> None:
+    _print_web_event({**event, "phase": f"web:{event['phase']}"})
+
+
 def _run_both(args: argparse.Namespace, service: CoreService) -> int:
     if not args.question:
         print("[config_invalid] Research question is required.")
         return 1
-    runtime = None
-    if os.environ.get("RESEARCH_AGENT_FAKE_WEB") == "1":
-        from research_agent.web.fake_runtime import FakeWebResearchRuntime
-        runtime = FakeWebResearchRuntime(
-            workspace=service.workspace.root,
-            max_retrieval_rounds=int(os.environ.get("RESEARCH_AGENT_FAKE_WEB_MAX_ROUNDS", "3")),
-            produce_findings=os.environ.get("RESEARCH_AGENT_FAKE_WEB_PRODUCE_FINDINGS", "1") != "0",
-            fail_report_write=os.environ.get("RESEARCH_AGENT_FAKE_WEB_REPORT_FAILURE") == "1",
-            schema_failure=os.environ.get("RESEARCH_AGENT_FAKE_WEB_SCHEMA_FAILURE") == "1",
-            on_event=lambda event: _print_web_event({**event, "phase": f"web:{event['phase']}"}),
-            event_delay_seconds=float(os.environ.get("RESEARCH_AGENT_FAKE_WEB_EVENT_DELAY_SECONDS", "0")),
-        )
-    result = service.run_both(args.question, web_runtime=runtime)
+    try:
+        result = service.run_both(args.question, on_event=_print_both_web_event)
+    except ResearchError as error:
+        print(f"[{error.code}] {error.message}")
+        return 1
+    except Exception as exc:  # noqa: BLE001 - CLI fallback
+        print(_format_error_message(exc))
+        return 1
     print("Local")
     local = result["local"]
     if local["status"] == "failed":
@@ -215,14 +234,21 @@ def _run_both(args: argparse.Namespace, service: CoreService) -> int:
 
 
 def _run_task(args: argparse.Namespace, service: CoreService) -> int:
-    if args.task_command != "list":
-        print("[runtime_error] Unsupported task subcommand in v1.")
+    try:
+        if args.task_command != "list":
+            print("[runtime_error] Unsupported task subcommand in v1.")
+            return 1
+        records = service.list_finished_tasks()
+        print("task_id mode status title_or_question created_at")
+        for record in records:
+            print(f"{record.task_id} {record.mode} {record.status} {record.title_or_question} {record.created_at}")
+        return 0
+    except ResearchError as error:
+        print(f"[{error.code}] {error.message}")
         return 1
-    records = service.list_finished_tasks()
-    print("task_id mode status title_or_question created_at")
-    for record in records:
-        print(f"{record.task_id} {record.mode} {record.status} {record.title_or_question} {record.created_at}")
-    return 0
+    except Exception as exc:  # noqa: BLE001 - CLI fallback
+        print(_format_error_message(exc))
+        return 1
 
 
 def _print_web_event(event: dict) -> None:
