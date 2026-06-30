@@ -15,8 +15,10 @@ Common Web UI commands:
 
 ```text
 cd web
-npm run dev
-npm test
+npm run dev         # Vite dev server (frontend only, needs backend on :8001)
+npm run dev:all     # concurrently starts backend :8001 + frontend :5173
+npm run build       # production build → dist/
+npm test            # Vitest unit tests
 ```
 
 This keeps the Python backend and React frontend separated while avoiding extra workspace tooling before the product boundaries are implemented.
