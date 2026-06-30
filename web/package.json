@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "dev:all": "concurrently -n api,web -c blue,green \"uv run uvicorn research_agent.api.app:create_app --factory --host 127.0.0.1 --port 8001\" \"vite --host 127.0.0.1\"",
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "test:e2e": "playwright test"
@@ -24,6 +25,7 @@
     "@testing-library/user-event": "^14.5.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
+    "concurrently": "^9.1.0",
     "jsdom": "^25.0.1",
     "vitest": "^2.1.8"
   }

@@ -330,34 +330,30 @@ Web UI 有三个页面：
 
 #### 启动方式
 
-需要**同时启动两个进程**：
-
-**终端 1 — 启动后端 API 服务器（端口 8001）：**
+**推荐：一条命令启动前后端**
 
 ```bash
-# 在项目根目录
-uv run uvicorn research_agent.api.app:create_app --factory --host 127.0.0.1 --port 8001
-```
-
-**终端 2 — 启动前端 Vite 开发服务器（端口 5173）：**
-
-```bash
-# 进入 web 目录
 cd web
-
-# 安装依赖（首次）
-npm install
-
-# 启动开发服务器
-npm run dev
+npm install        # 首次安装依赖（含 concurrently）
+npm run dev:all    # 同时启动后端 API (8001) + 前端 Vite (5173)
 ```
 
-浏览器打开 **http://localhost:5173** 进行前端开发和测试。
+浏览器打开 **http://localhost:5173** 即可进行前端开发和测试。
+
+`concurrently` 会用一个终端同时运行两个服务，`-n api,web` 给每个进程加了前缀标签方便区分日志来源。
+
+**备选：两个终端分别启动**（不想装 concurrently 时使用）
+
+| 终端 | 命令 |
+|------|------|
+| 终端 1（后端） | `uv run uvicorn research_agent.api.app:create_app --factory --host 127.0.0.1 --port 8001` |
+| 终端 2（前端） | `cd web && npm run dev` |
 
 #### 开发模式说明
 
 | 特性 | 说明 |
 |------|------|
+| **一键启动** | `npm run dev:all` 通过 concurrently 同时启动前后端 |
 | **热更新 (HMR)** | 修改 `web/src/` 下的代码，浏览器自动刷新，无需手动构建 |
 | **API 代理** | Vite 自动将 `/api/*` 请求代理到后端 `http://127.0.0.1:8001` |
 | **端口** | 前端 `5173`，后端 `8001`（与生产模式的 `8000` 不同，避免冲突） |
