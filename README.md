@@ -15,6 +15,12 @@
 - [核心特性](#核心特性)
 - [系统架构](#系统架构)
 - [快速开始](#快速开始)
+- [详细使用教程](#详细使用教程)
+  - [1. 环境准备](#1-环境准备)
+  - [2. 初始化配置](#2-初始化配置)
+  - [3. CLI 命令行使用](#3-cli-命令行使用)
+  - [4. Web UI 使用](#4-web-ui-使用)
+  - [5. 前端开发模式](#5-前端开发模式)
 - [工作流说明](#工作流说明)
   - [Local RAG（本地知识库检索）](#local-rag本地知识库检索)
   - [Web Research（网络调研）](#web-research网络调研)
@@ -25,6 +31,7 @@
   - [技术栈](#技术栈)
   - [测试](#测试)
   - [开发约定](#开发约定)
+- [常见问题](#常见问题)
 - [ADR（架构决策记录）](#adr架构决策记录)
 - [项目路线图](#项目路线图)
 - [License](#license)
@@ -53,7 +60,7 @@
 - **离线测试**：所有 104 个测试均离线运行，使用确定性 fake 实现，无需网络或 API key
 - **双界面**：CLI（argparse）+ Web UI（React + Vite），通过统一 FastAPI 接入
 - **任务锁**：同一 family（local/web）同时只允许一个活跃任务，防止资源冲突
-- **SSE 流式推送**：实时推送任务进度事件，支持 10 分钟超时
+- **SSE 流式推送**：实时推送任务进度事件，支持 30 分钟超时
 - **TOML 配置**：支持全局和 per-role 模型配置，配置路径可环境变量覆盖
 
 ---
@@ -114,8 +121,9 @@
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/)（推荐）或 pip
-- Tavily API key（Web Research 功能需要）
-- OpenAI 兼容的 LLM API endpoint（支持 chat + embedding）
+- Node.js 18+（仅 Web UI 需要）
+- Tavily API key（[获取地址](https://tavily.com/)，Web Research 功能需要）
+- OpenAI 兼容的 LLM API endpoint（支持 chat + embedding，推荐 [DeepSeek](https://platform.deepseek.com/)）
 
 ### 安装
 
@@ -124,8 +132,11 @@
 git clone https://github.com/leibusi0411/research_agent.git
 cd research_agent
 
-# 安装依赖
+# 安装 Python 依赖
 uv sync
+
+# 安装前端依赖（仅使用 Web UI 时需要）
+cd web && npm install && cd ..
 ```
 
 ### 初始化配置
@@ -148,30 +159,246 @@ uv run research-agent init
 
 可通过环境变量 `RESEARCH_AGENT_CONFIG_PATH` 覆盖路径。
 
-### 运行任务
+---
+
+## 详细使用教程
+
+### 1. 环境准备
+
+#### 获取 API Keys
+
+Research Agent 需要两个外部 API 才能发挥全部功能：
+
+| API | 用途 | 获取地址 | 是否必需 |
+|-----|------|----------|----------|
+| **LLM API** (OpenAI 兼容) | 驱动 Web Research 的 Planner/Executor/Supervisor/Curator | [DeepSeek](https://platform.deepseek.com/)、[OpenAI](https://platform.openai.com/) 等 | Web Research 必需 |
+| **Embedding API** (OpenAI 兼容) | 为 Local RAG 生成向量嵌入 | 同上 | Local RAG 必需 |
+| **Tavily Search API** | Web Research 的网络搜索工具 | [tavily.com](https://tavily.com/) | Web Research 必需 |
+
+> **推荐配置**：使用 DeepSeek 的 chat + embedding API（性价比高），配合 Tavily 免费额度即可跑通全部功能。
+
+#### 准备知识库目录（可选，仅 Local RAG 需要）
+
+创建一个 Markdown vault 目录，放入你的 `.md`、`.txt`、`.pdf`、`.html` 文件：
 
 ```bash
-# 本地知识库检索
+mkdir ~/my_knowledge_vault
+# 将你的笔记、文档、PDF 等放入此目录
+```
+
+### 2. 初始化配置
+
+有三种方式完成初始化配置：
+
+#### 方式 A：CLI 交互式初始化（推荐）
+
+```bash
+uv run research-agent init
+```
+
+按提示依次输入各项配置。已有配置文件时会显示当前值，直接回车保留不变。
+
+#### 方式 B：通过 Web UI 初始化
+
+启动服务器后（见下方），浏览器打开 `http://localhost:8000`，如果未配置会自动跳转到 Setup 页面，填写表单提交即可。
+
+#### 方式 C：手动创建配置文件
+
+在配置路径创建 `config.toml`（完整示例见[配置说明](#配置说明)）。
+
+### 3. CLI 命令行使用
+
+#### 基本命令
+
+```bash
+# 查看帮助
+uv run research-agent --help
+
+# 查看版本
+uv run research-agent --version
+```
+
+#### 本地知识库检索（Local RAG）
+
+从你的 Markdown vault 中检索信息，不调用 LLM：
+
+```bash
+# 基础检索
 uv run research-agent local "What is LangGraph?"
 
-# 网络调研
-uv run research-agent web "Latest developments in AI agents"
+# 中文检索
+uv run research-agent local "什么是 RAG 系统？"
 
-# 同时运行本地检索 + 网络调研
+# 检索多个关键词（FTS5 MATCH 语法）
+uv run research-agent local "machine learning OR deep learning"
+```
+
+检索结果包含：
+- 匹配的文本片段（chunk）
+- 来源文件路径（source_path）
+- 标题路径（heading_path，如 `机器学习 > 深度学习 > Transformer`）
+
+#### 网络调研（Web Research）
+
+启动多角色流水线进行网络调研：
+
+```bash
+# 基础调研
+uv run research-agent web "Latest developments in AI agents 2025"
+
+# 深度调研（自动搜索、抓取、分析、合成报告）
+uv run research-agent web "Compare LangGraph, CrewAI, and AutoGen frameworks"
+
+# 技术调研
+uv run research-agent web "Best practices for RAG systems in production"
+```
+
+Web Research 执行流程：
+1. **Planner** 分析问题，制定调研计划（拆分为若干子任务）
+2. **Executor** 逐个执行子任务：规划工具调用 → 搜索/抓取 → 合成发现
+3. **Supervisor** 评估进度，决定继续/修订/完成
+4. **Curator** 整合所有发现，生成最终 Markdown 报告
+
+执行完成后，报告保存在工作区目录的 `tasks/<task_id>/` 下。
+
+#### 同时运行两种检索
+
+```bash
 uv run research-agent both "AI agent frameworks comparison"
 ```
 
-### 启动 Web UI
+这将并行启动 Local RAG 和 Web Research，同时获得本地知识和网络信息。
 
-```bash
-# 构建前端（首次需要）
-cd web && npm install && npm run build && cd ..
+#### 查看结果
 
-# 启动 API 服务器（同时服务前端静态文件）
-uv run uvicorn research_agent.api.app:create_app --factory --port 8000
+CLI 会在终端直接输出结果。完整的 Markdown 报告保存在：
+```
+<workspace>/tasks/<task_id>/report.md       # Web Research 报告
+<workspace>/tasks/<task_id>/result.json     # 结构化结果
+<workspace>/tasks/<task_id>/events.jsonl    # 进度事件日志
 ```
 
-浏览器打开 `http://localhost:8000` 即可使用 Web UI。
+### 4. Web UI 使用
+
+Web UI 提供可视化的研究界面，支持任务管理、实时进度查看和结果浏览。
+
+#### 构建并启动（生产模式）
+
+```bash
+# 步骤 1：构建前端（首次或前端代码变更后需要）
+cd web
+npm run build
+cd ..
+
+# 步骤 2：启动后端服务器（同时服务前端静态文件 + API）
+uv run uvicorn research_agent.api.app:create_app --factory --host 127.0.0.1 --port 8000
+```
+
+浏览器打开 **http://localhost:8000** 即可使用。
+
+> **说明**：`--factory` 参数表示 `create_app` 是一个工厂函数（返回 FastAPI 实例），而非直接是 FastAPI 实例。
+
+Web UI 有三个页面：
+
+| 页面 | 功能 |
+|------|------|
+| **Research** | 主界面 — 输入问题，启动 Local RAG 或 Web Research，实时查看进度和结果 |
+| **Tasks** | 查看历史任务列表，点击可查看详情（结果 + 进度事件） |
+| **Knowledge Base** | 查看知识库索引状态，重建索引 |
+
+#### 首次使用 Web UI
+
+如果尚未配置，打开浏览器后会自动跳转到 Setup 页面。填写以下信息：
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| `default_workspace` | 工作区目录 | `C:\Users\xxx\research_data` |
+| `knowledge_base_path` | 知识库 vault 目录 | `C:\Users\xxx\vault` |
+| `chat_base_url` | LLM API 地址 | `https://api.deepseek.com/v1` |
+| `chat_api_key` | LLM API Key | `sk-xxx` |
+| `chat_model` | 模型名称 | `deepseek-chat` |
+| `embedding_base_url` | Embedding API 地址 | `https://api.deepseek.com/v1` |
+| `embedding_api_key` | Embedding API Key | `sk-xxx` |
+| `embedding_model` | Embedding 模型名称 | `deepseek-embedding` |
+| `search_api_key` | Tavily Search API Key | `tvly-xxx` |
+
+提交后自动保存配置并跳转到 Research 页面。
+
+### 5. 前端开发模式
+
+如果你需要修改前端代码并进行实时测试，使用 Vite 开发服务器：
+
+#### 启动方式
+
+需要**同时启动两个进程**：
+
+**终端 1 — 启动后端 API 服务器（端口 8001）：**
+
+```bash
+# 在项目根目录
+uv run uvicorn research_agent.api.app:create_app --factory --host 127.0.0.1 --port 8001
+```
+
+**终端 2 — 启动前端 Vite 开发服务器（端口 5173）：**
+
+```bash
+# 进入 web 目录
+cd web
+
+# 安装依赖（首次）
+npm install
+
+# 启动开发服务器
+npm run dev
+```
+
+浏览器打开 **http://localhost:5173** 进行前端开发和测试。
+
+#### 开发模式说明
+
+| 特性 | 说明 |
+|------|------|
+| **热更新 (HMR)** | 修改 `web/src/` 下的代码，浏览器自动刷新，无需手动构建 |
+| **API 代理** | Vite 自动将 `/api/*` 请求代理到后端 `http://127.0.0.1:8001` |
+| **端口** | 前端 `5173`，后端 `8001`（与生产模式的 `8000` 不同，避免冲突） |
+
+#### 前端项目结构
+
+```
+web/
+├── src/
+│   ├── App.tsx          # 主应用组件（Research / Tasks / KB 三页面）
+│   ├── api.ts           # API 客户端（类型定义 + 请求函数 + SSE 订阅）
+│   └── main.tsx         # React 入口
+├── tests/
+│   └── setup.ts         # Vitest 测试配置
+├── dist/                # 构建产物（npm run build 生成，API 自动服务）
+├── index.html           # HTML 入口
+├── vite.config.ts       # Vite 配置（插件、代理、测试）
+├── tsconfig.json        # TypeScript 配置
+└── package.json         # npm 依赖与脚本
+```
+
+#### 可用的前端脚本
+
+```bash
+cd web
+
+npm run dev           # 启动 Vite 开发服务器（端口 5173，热更新）
+npm run build         # TypeScript 检查 + Vite 生产构建 → dist/
+npm run test          # 运行 Vitest 单元测试
+npm run test:e2e      # 运行 Playwright E2E 测试
+```
+
+#### 前端测试
+
+```bash
+# 单元测试（Vitest）
+cd web && npm run test
+
+# E2E 测试（Playwright，需要先启动后端服务）
+cd web && npm run test:e2e
+```
 
 ---
 
@@ -399,7 +626,15 @@ research_agent/
 │   └── test_web_tools.py
 ├── web/                         # React + Vite 前端
 │   ├── src/
+│   │   ├── App.tsx              # 主组件
+│   │   ├── api.ts               # API 客户端 + 类型
+│   │   └── main.tsx             # 入口
+│   ├── tests/
+│   │   └── setup.ts
 │   ├── dist/                    # 构建产物（API 服务）
+│   ├── index.html
+│   ├── vite.config.ts
+│   ├── tsconfig.json
 │   └── package.json
 ├── docs/
 │   └── adr/                     # 43 个架构决策记录
@@ -418,7 +653,7 @@ research_agent/
 | **语言** | Python 3.11+ |
 | **包管理** | uv |
 | **API 框架** | FastAPI |
-| **前端** | React 18 + Vite |
+| **前端** | React 18 + Vite + TypeScript |
 | **数据库** | SQLite（FTS5 全文搜索 + 向量存储） |
 | **HTTP 客户端** | httpx |
 | **HTML 提取** | trafilatura |
@@ -433,6 +668,10 @@ uv run pytest                          # 运行全部 104 个测试
 uv run pytest -x                       # 首次失败即停止
 uv run pytest -k "state_graph"         # 按关键字筛选
 uv run pytest tests/test_web_state_graph.py  # 单个文件
+
+# 前端测试
+cd web && npm run test                 # Vitest 单元测试
+cd web && npm run test:e2e             # Playwright E2E 测试
 ```
 
 **测试设计原则**：
@@ -449,6 +688,63 @@ uv run pytest tests/test_web_state_graph.py  # 单个文件
 - **显式参数**：方法签名使用显式类型参数，不使用 `*args, **kwargs`
 - **Schema 修复**：`invoke_role_json` 在 LLM 输出不合规时自动进行一次修复重试
 - **REVIEW_TRACKER.md**：唯一的审查与路线图文件，问题修复后及时更新
+
+---
+
+## 常见问题
+
+### 配置相关
+
+**Q: 配置文件在哪里？**
+- Windows: `%APPDATA%/research_agent/config.toml`
+- Linux/macOS: `~/.config/research_agent/config.toml`
+- 可通过环境变量 `RESEARCH_AGENT_CONFIG_PATH` 自定义路径
+
+**Q: 如何更换 LLM 提供商？**
+修改 `config.toml` 中 `[chat_model]` 和 `[embedding_model]` 的 `base_url`、`api_key`、`model`。任何 OpenAI 兼容的 API 均可使用（如 Ollama、vLLM、DeepSeek、OpenAI 等）。
+
+**Q: 如何查看当前配置？**
+```bash
+# CLI 初始化时会显示当前值
+uv run research-agent init
+
+# 或直接查看配置文件
+cat ~/.config/research_agent/config.toml  # Linux/macOS
+type %APPDATA%\research_agent\config.toml  # Windows
+```
+
+### 前端相关
+
+**Q: 前端启动后页面空白？**
+1. 确认后端服务器已启动且端口正确（开发模式 8001，生产模式 8000）
+2. 检查浏览器控制台是否有报错（F12 → Console）
+3. 确认 `npm install` 已执行且无报错
+
+**Q: 前端热更新不生效？**
+1. 确认使用的是 `npm run dev` 而非 `npm run build` 的产物
+2. 尝试刷新浏览器（Ctrl+Shift+R 强制刷新）
+3. 重启 Vite 开发服务器
+
+**Q: API 请求报 404？**
+1. 确认后端服务器正在运行
+2. 开发模式检查 `vite.config.ts` 中 proxy 配置是否指向正确的后端端口
+3. 生产模式确认 `web/dist/` 已构建（`npm run build`）
+
+### 运行相关
+
+**Q: Web Research 执行时间很长？**
+Web Research 涉及多轮 LLM 调用 + 网络搜索/抓取，通常需要 2-10 分钟。复杂话题可能需要更长时间。进度可通过 SSE 事件实时查看。
+
+**Q: Local RAG 检索不到内容？**
+1. 确认知识库已索引：`curl http://localhost:8000/api/kb/status` 检查 `file_count > 0`
+2. 如未索引，运行 `uv run research-agent init` 或调用 `POST /api/kb/rebuild`
+3. 尝试更具体的关键词（FTS5 使用关键词匹配，不是语义搜索）
+
+**Q: 如何清理旧任务数据？**
+```bash
+# 删除工作区目录下的任务文件夹
+rm -rf <workspace>/tasks/task_<old_task_id>/
+```
 
 ---
 
