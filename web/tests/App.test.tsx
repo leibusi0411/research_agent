@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import { App } from "../src/App";
 import { ResearchResult } from "../src/api";
 
@@ -31,6 +32,45 @@ const webEvents =
 const localEvents =
   'data: {"task_id":"task_20260624_000000_aaaaaa","mode":"local","phase":"local_rag","event_type":"completed","created_at":"now","message":"Local RAG completed.","details":{"items":[]}}\n\n';
 
+// Helper: parse SSE text into JSON event objects
+function parseSseText(text: string): Record<string, unknown>[] {
+  return text
+    .split("\n\n")
+    .filter((b) => b.trim())
+    .map((b) => JSON.parse(b.trim().replace(/^data:\s*/, "")));
+}
+
+// Stub EventSource: emits events based on the task_id in the URL.
+// The events map is populated by mockConfiguredFetch.
+let _sseEventMap: Record<string, Record<string, unknown>[]> = {};
+// Collect all EventSource instances so tests can inspect close() calls.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _esInstances: any[] = [];
+
+function stubEventSource() {
+  _esInstances = [];
+  const MockES = vi.fn(function (this: { readyState: number; close: () => void; onmessage: ((msg: { data: string }) => void) | null; onerror: (() => void) | null }, url: string) {
+    this.readyState = 1; // OPEN
+    this.close = vi.fn();
+    this.onmessage = null;
+    this.onerror = null;
+    _esInstances.push(this);
+    // Find which task's events to emit
+    const events = Object.entries(_sseEventMap).find(([tid]) => url.includes(tid))?.[1] ?? [];
+    queueMicrotask(() => {
+      if (this.onmessage) {
+        for (const evt of events) {
+          this.onmessage({ data: JSON.stringify(evt) });
+        }
+      }
+    });
+  });
+  (MockES as unknown as Record<string, unknown>).CONNECTING = 0;
+  (MockES as unknown as Record<string, unknown>).CLOSED = 2;
+  (MockES as unknown as Record<string, unknown>).OPEN = 1;
+  vi.stubGlobal("EventSource", MockES as unknown as typeof EventSource);
+}
+
 beforeEach(() => {
   vi.restoreAllMocks();
 });
@@ -44,7 +84,7 @@ describe("App", () => {
       { status: "missing", vault_path: "D:/vault", file_count: 0, chunk_count: 0, last_indexed_at: null }
     ]);
 
-    render(<App />);
+    render(<MemoryRouter><App /></MemoryRouter>);
 
     expect(await screen.findByText("Research Agent Setup")).toBeInTheDocument();
     for (const input of screen.getAllByRole("textbox")) {
@@ -60,7 +100,7 @@ describe("App", () => {
 
   it("runs local and web research and renders results", async () => {
     mockConfiguredFetch();
-    render(<App />);
+    render(<MemoryRouter><App /></MemoryRouter>);
 
     await screen.findByRole("heading", { name: "Research" });
     await userEvent.type(screen.getAllByRole("textbox")[0], "local question");
@@ -76,10 +116,10 @@ describe("App", () => {
 
   it("lists tasks and opens the mode-specific result view", async () => {
     mockConfiguredFetch();
-    render(<App />);
+    render(<MemoryRouter><App /></MemoryRouter>);
 
     await screen.findByRole("heading", { name: "Research" });
-    await userEvent.click(screen.getByRole("button", { name: "Tasks" }));
+    await userEvent.click(screen.getByRole("link", { name: "Tasks" }));
     await userEvent.click(await screen.findByText("web question"));
 
     expect(await screen.findByText("Web Report")).toBeInTheDocument();
@@ -92,14 +132,37 @@ describe("App", () => {
 
   it("shows knowledge base status and rebuild action", async () => {
     mockConfiguredFetch();
-    render(<App />);
+    render(<MemoryRouter><App /></MemoryRouter>);
 
     await screen.findByRole("heading", { name: "Research" });
-    await userEvent.click(screen.getByRole("button", { name: "Knowledge Base" }));
+    await userEvent.click(screen.getByRole("link", { name: "Knowledge Base" }));
 
     expect(await screen.findByText("Knowledge Base Index")).toBeInTheDocument();
     expect(screen.getByText("ready")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Rebuild" })).toBeInTheDocument();
+  });
+
+  it("closes previous EventSource when starting a new task (P2 fix)", async () => {
+    mockConfiguredFetch();
+    render(<MemoryRouter><App /></MemoryRouter>);
+
+    await screen.findByRole("heading", { name: "Research" });
+
+    // Start local research — creates one EventSource
+    await userEvent.type(screen.getAllByRole("textbox")[0], "local q1");
+    await userEvent.click(screen.getByRole("button", { name: "Run Local" }));
+    await waitFor(() => expect(screen.getByText("Local content")).toBeInTheDocument());
+
+    const firstEsCount = _esInstances.length;
+    expect(firstEsCount).toBeGreaterThanOrEqual(1);
+
+    // Start another local research — should close the previous EventSource
+    await userEvent.type(screen.getAllByRole("textbox")[0], "local q2");
+    await userEvent.click(screen.getByRole("button", { name: "Run Local" }));
+    await waitFor(() => expect(_esInstances.length).toBeGreaterThan(firstEsCount));
+
+    // First EventSource should have been closed
+    expect(_esInstances[0].close).toHaveBeenCalled();
   });
 
   it("renders web report write failures as failed with file_write_error", async () => {
@@ -112,7 +175,7 @@ describe("App", () => {
         error: { code: "file_write_error", message: "Failed to write Web Report File." }
       }
     });
-    render(<App />);
+    render(<MemoryRouter><App /></MemoryRouter>);
 
     await screen.findByRole("heading", { name: "Research" });
     await userEvent.type(screen.getAllByRole("textbox")[1], "web question");
@@ -125,6 +188,36 @@ describe("App", () => {
 
 function mockConfiguredFetch(options: { webResultOverride?: ResearchResult } = {}) {
   const resolvedWebResult = options.webResultOverride ?? webResult;
+  const webStatus: "completed" | "failed" = resolvedWebResult.status === "failed" ? "failed" : "completed";
+
+  // Build SSE event map for EventSource mock
+  _sseEventMap = {};
+  _sseEventMap[localResult.task_id] = [
+    ...parseSseText(localEvents),
+    {
+      task_id: localResult.task_id,
+      mode: "local",
+      phase: "local_rag",
+      event_type: "task_result",
+      created_at: "now",
+      message: "Task completed.",
+      details: { items: [{ kind: "status", task_id: localResult.task_id, status: "completed", mode: "local" }] },
+    },
+  ];
+  _sseEventMap[webResult.task_id] = [
+    ...parseSseText(webEvents),
+    {
+      task_id: webResult.task_id,
+      mode: "web",
+      phase: "web_curation",
+      event_type: "task_result",
+      created_at: "now",
+      message: `Task ${webStatus}.`,
+      details: { items: [{ kind: "status", task_id: webResult.task_id, status: webStatus, mode: "web" }] },
+    },
+  ];
+  stubEventSource();
+
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -154,7 +247,7 @@ function mockConfiguredFetch(options: { webResultOverride?: ResearchResult } = {
       } else if (url.endsWith("/api/kb/status") || url.endsWith("/api/kb/rebuild")) {
         body = { status: "ready", vault_path: "D:/vault", file_count: 2, chunk_count: 4, last_indexed_at: "now" };
       } else if (url.endsWith("/api/research/local") && init?.method === "POST") {
-        body = localResult;
+        body = { ...localResult, status: "running" };
       } else if (url.endsWith("/api/research/web") && init?.method === "POST") {
         body = { ...resolvedWebResult, status: "running" };
       } else if (url.endsWith(`/api/tasks/${localResult.task_id}/events`)) {

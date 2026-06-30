@@ -8,6 +8,7 @@ dependencies = [
     "chromadb>=1.5.9",
     "fastapi>=0.115.0",
     "httpx>=0.27.0",
+    "janus>=2.0.0",
     "pypdf>=4.0.0",
     "trafilatura>=1.9.0",
     "uvicorn>=0.30.0",
@@ -19,6 +20,7 @@ research-agent = "research_agent.cli:main"
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pytest-asyncio>=1.4.0",
 ]
 
 [build-system]

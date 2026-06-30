@@ -574,6 +574,13 @@ class StateGraphRunner:
         }
 
         self._persist_result(task_id, question, created_at, result)
+        # Emit task_result event so SSE consumers can stop polling and fetch the result once.
+        self._emit(
+            task_id, "web_curation", "task_result",
+            f"Task {result['status']}.",
+            items=[{"kind": "status", "task_id": task_id, "status": result["status"], "mode": "web"}],
+        )
+        self._close_event_queue()
         return result
 
     def _fail(self, state: WebResearchState, task_id: str, question: str, created_at: str) -> dict[str, Any]:
@@ -591,6 +598,13 @@ class StateGraphRunner:
             "error": error.to_dict(),
         }
         self._persist_result(task_id, question, created_at, result)
+        # Emit task_result event so SSE consumers can stop polling and fetch the result once.
+        self._emit(
+            task_id, "web_curation", "task_result",
+            f"Task {result['status']}.",
+            items=[{"kind": "status", "task_id": task_id, "status": result["status"], "mode": "web"}],
+        )
+        self._close_event_queue()
         return result
 
     def _persist_result(self, task_id: str, question: str, created_at: str, result: dict[str, Any]) -> None:
@@ -693,6 +707,15 @@ class StateGraphRunner:
         events_path = self.workspace.task_dir(self._task_id) / "events.jsonl"
         last_seq = -1
 
+        # R-88: If the task has already completed (flag set by _close_event_queue
+        # before the consumer connected), push the sentinel now so the loop
+        # can terminate after file replay.
+        if getattr(self, "_event_queue_closed", False):
+            try:
+                self._event_queue.sync_q.put_nowait(None)
+            except Exception:
+                pass
+
         try:
             # Phase 1: replay persisted events from file
             if events_path.exists():
@@ -710,6 +733,8 @@ class StateGraphRunner:
             # Phase 2: consume live events from queue (skip already-replayed)
             while True:
                 evt = await self._event_queue.async_q.get()
+                if evt is None:
+                    break  # R-88: sentinel — task is complete, stream finished
                 if evt.get("_seq", -1) <= last_seq:
                     continue  # already yielded during file replay
                 yield evt
@@ -720,6 +745,22 @@ class StateGraphRunner:
             # completion.  Cleanup of the runner registry is handled by
             # _cleanup_background in the API layer after the task finishes.
             self._event_queue = None
+
+    def _close_event_queue(self) -> None:
+        """R-88: Signal the events() consumer that the task is complete.
+
+        Called after the final ``task_result`` event is emitted.  If the
+        consumer is already connected, pushes a sentinel (None) into the
+        queue so the ``while True`` loop exits cleanly.  If no consumer is
+        connected yet, sets a flag so ``events()`` can push the sentinel
+        when it creates the queue.
+        """
+        object.__setattr__(self, "_event_queue_closed", True)
+        if self._event_queue is not None:
+            try:
+                self._event_queue.sync_q.put(None, timeout=5)
+            except Exception:
+                logger.warning("Failed to push event queue sentinel; consumer may hang until disconnect.")
 
     def _emit(self, task_id: str, phase: str, event_type: str, message: str, items: list[dict[str, Any]] | None = None, *, event_subtype: str | None = None) -> None:
         self._event_seq += 1

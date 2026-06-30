@@ -290,3 +290,16 @@ def _persist_task(
             result_path=str(task_dir / "result.json"),
         )
     )
+    # Emit task_result event so SSE consumers can stop polling and fetch the result once.
+    workspace.append_event(
+        task_id,
+        {
+            "task_id": task_id,
+            "mode": "local",
+            "phase": "local_rag",
+            "event_type": "task_result",
+            "created_at": utc_now_iso(),
+            "message": f"Task {result['status']}.",
+            "details": {"items": [{"kind": "status", "task_id": task_id, "status": result["status"], "mode": "local"}]},
+        },
+    )

@@ -117,8 +117,16 @@ The shared Web Research state around which research roles coordinate. Planner wr
 _Avoid_: chat history, shared prompt
 
 **LangGraph Checkpoint**:
-The runtime checkpoint that allows the LangGraph execution position and graph state to resume after interruption. It is distinct from Research Task State, which carries product-level research semantics.
+The runtime checkpoint that records LangGraph execution position and full graph state after each node completes. It is stored via `SqliteSaver` in a SQLite database (`checkpoints.sqlite`) under the task workspace, replacing the V1 manual per-round `blackboard_snapshot.json`. Checkpoints enable pause/resume across process restarts. They are distinct from Research Task State, which carries product-level research semantics, and from `events.jsonl`, which is the append-only progress display log.
 _Avoid_: task state, task history
+
+**LangGraph StateGraph**:
+The declarative graph definition that replaces the manual `while` loop in the Web Research runner. Nodes represent role invocations (`plan_node`, `execute_node`, `supervise_node`, `plan_revision_node`, `curate_node`); edges represent data flow and conditional routing based on `SupervisorOutput.route`. The route guard (retrieval limit enforcement) moves from inline code to `config.recursion_limit`. Node functions continue to call `_emit` for progress events — the graph layer is orthogonal to the EventStream.
+_Avoid_: while loop, runner loop
+
+**State Reducer**:
+A function attached to each field of the LangGraph `TypedDict` state that defines how concurrent or sequential updates to that field are merged. V1 uses `operator.add` for list-append fields (`subtasks`, `findings`, `sources`, `research_gaps`, `route_history`, `planner_outputs`) and last-write-wins for scalar fields (`original_question`, `research_title`, `curator_output`, `retrieval_round`). Reducers replace the current `@dataclass` mutation methods (`add_planner_output`, `merge_executor_output`, `apply_supervisor_output`).
+_Avoid_: merge strategy, state mutation
 
 **Context Builder**:
 The internal component that constructs role-specific context slices from Research Task State. It centralizes context selection so research roles do not each hand-roll state access.
@@ -169,8 +177,24 @@ The real-time product progress view of a currently running Research Task. It is 
 _Avoid_: graph status, node status
 
 **Research Progress Stream**:
-The real-time product progress stream emitted while a Research Task runs. It is phase-based: each streamed record is anchored by `phase`, with `event_type` limited to that phase's progress state (`started`, `progress`, `completed`, or `failed`). Each `events.jsonl` line stores one append-only progress display record with top-level `task_id`, `mode`, `phase`, `event_type`, `created_at`, `message`, and `details`; v1 does not add `event_id` or an outer `subtask_id`. Web UI consumes it through SSE, and CLI uses it to display live progress until completion without requiring a v1 daemon concept.
+The real-time product progress stream emitted while a Research Task runs. It is phase-based: each streamed record is anchored by `phase`, with `event_type` limited to that phase's progress state (`started`, `progress`, `completed`, or `failed`). Each `events.jsonl` line stores one append-only progress display record with top-level `task_id`, `mode`, `phase`, `event_type`, optional `event_subtype`, `created_at`, `message`, `_seq`, and `details`; v1 does not add `event_id` or an outer `subtask_id`. Web UI consumes it through SSE, and CLI uses it to display live progress until completion without requiring a v1 daemon concept.
 _Avoid_: daemon, raw logs
+
+**EventStream**:
+The shared in-process event channel that transports Research Progress Stream records from the runner to consumers (SSE endpoint and CLI). It is backed by a `janus.Queue` (sync/async dual-faced queue) with a max capacity of 1024 events. The runner pushes events via `_emit` to both the queue and `events.jsonl`; consumers read from the queue via `async for`. Events carry a monotonically increasing `_seq` integer for deduplication when the consumer first replays missed events from `events.jsonl` before switching to live queue consumption. The queue is created lazily when the first consumer connects and destroyed when the runner finishes. `events.jsonl` remains the persistence and replay layer—it is no longer the transport layer.
+_Avoid_: callback, polling, file-watcher
+
+**Progress Event Subtype**:
+An optional `event_subtype` field on Research Progress Stream records that classifies progress-scoped events for direct UI rendering without digging into `details.items`. Values include `tool_call`, `finding`, `source`, `subtask_started`, `subtask_completed`, and `subtask_failed`. Phase-boundary events (`started`, `completed`, `failed`) omit `event_subtype`. CLI uses `event_subtype` to select output format; Web UI uses it to pick the appropriate detail card without branching on `details.items[].kind`.
+_Avoid_: nested discrimination, item kind parsing
+
+**Event Sequence**:
+A monotonically increasing integer `_seq` assigned by `_emit` to every Research Progress Stream record. It is prefixed with underscore to mark it as an internal field not part of the public display schema. Consumers use it to deduplicate events when the EventStream first replays persisted events from `events.jsonl` and then switches to live queue consumption—any event whose `_seq` was already yielded during file replay is skipped from the queue. The counter is per-runner, not global.
+_Avoid_: event_id, timestamp ordering
+
+**Runner Registry**:
+An in-memory mapping from `task_id` to `StateGraphRunner` held at the API module level. It allows the SSE endpoint (`GET /api/tasks/{task_id}/events`) to look up the live runner for an active task and obtain its `EventStream`. The registry entry is removed via an `on_done` callback invoked when the runner's `run()` method completes. When a task is not found in the registry (already finished or never existed), the SSE endpoint falls back to serving `events.jsonl` as a static file stream.
+_Avoid_: global service registry, daemon process
 
 **Progress Item**:
 A minimal display-only item inside a Research Progress Stream record's `details.items`. V1 supports `tool_call` with `name` and user-facing `input`, `source` with either `title` plus `url` or a local `path`, and `finding` with `text`. Progress Items are not the source of truth for recovery, routing, Supervisor judgment, or report generation.

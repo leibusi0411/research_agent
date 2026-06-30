@@ -14,6 +14,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
+# R-75: Runner registry for SSE EventStream lookup.
+# Maps task_id -> ProviderBackedWebResearchRuntime so the SSE endpoint
+# can access runtime.runner.events() when available, falling back to
+# events.jsonl polling for tasks that started before the upgrade or
+# whose runner hasn't been created yet.
+_active_runtimes: dict[str, Any] = {}
+
 from research_agent.core.config import InitConfigRequest, UserConfig, default_config_path, load_user_config
 from research_agent.core.errors import ResearchError
 from research_agent.core.ids import generate_task_id, utc_now_iso, validate_task_id
@@ -112,11 +119,12 @@ def create_app(
         if runtime is None:
             # Use CoreService's default provider-backed runtime construction when no test/runtime override is supplied.
             runtime = _default_web_runtime(current_service)
+        _active_runtimes[task_id] = runtime
         lock = current_service.acquire_family_lock("web", task_id)
         lock.__enter__()
         try:
             _create_running_task(current_service, task_id=task_id, mode="web", question=question)
-            executor.submit(lambda: _run_background(lock, lambda: current_service.run_web_research_unlocked(question, runtime=runtime, task_id=task_id)))
+            executor.submit(lambda: _cleanup_background(lock, task_id, lambda: current_service.run_web_research_unlocked(question, runtime=runtime, task_id=task_id)))
         except Exception:
             lock.__exit__(None, None, None)
             raise
@@ -149,10 +157,14 @@ def create_app(
         }
 
     @app.get("/api/tasks/{task_id}/events")
-    def task_events(task_id: str) -> StreamingResponse:
+    async def task_events(task_id: str) -> StreamingResponse:
         _validate_task_id_as_research_error(task_id)
         events_path = service().workspace.task_dir(task_id) / "events.jsonl"
-        return StreamingResponse(_stream_events(events_path), media_type="text/event-stream")
+        runtime = _active_runtimes.get(task_id)
+        return StreamingResponse(
+            _stream_events(events_path, runtime.runner if runtime is not None else None),
+            media_type="text/event-stream",
+        )
 
     @app.get("/api/tasks/{task_id}/result")
     def task_result(task_id: str) -> JSONResponse:
@@ -200,8 +212,22 @@ def _read_lock_task_id(lock_path: Path) -> str:
         return "unknown"
 
 
-def _stream_events(events_path: Path):
-    deadline = time.time() + 1800  # 30 minutes max (matches web research task duration)
+async def _stream_events(events_path: Path, runner=None):
+    """Stream task progress events as SSE.
+
+    When a live runner is available, iterates its EventStream (janus.Queue
+    backed AsyncIterator) for real-time delivery.  Falls back to polling
+    events.jsonl otherwise (e.g. historical tasks or tasks whose runner
+    hasn't started yet).
+    """
+    if runner is not None:
+        # EventStream path — real-time, no polling
+        async for event in runner.events():
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        return
+
+    # Fallback: poll events.jsonl every 100 ms
+    deadline = time.time() + 1800  # 30 minutes max
     offset = 0
     while time.time() < deadline:
         if events_path.exists():
@@ -217,7 +243,6 @@ def _stream_events(events_path: Path):
                 break
         time.sleep(0.1)
     else:
-        # Deadline reached — send a terminal event so the client knows the stream ended
         yield f'data: {json.dumps({"event_type": "stream_timeout", "message": "SSE stream timed out."})}\n\n'
 
 
@@ -256,6 +281,17 @@ def _run_background(lock, operation) -> None:
         logger.exception("Background task failed: %s", exc)
     finally:
         lock.__exit__(None, None, None)
+
+
+def _cleanup_background(lock, task_id: str, operation) -> None:
+    """Run background operation then clean up the runner registry entry."""
+    try:
+        operation()
+    except Exception as exc:
+        logger.exception("Background task failed: %s", exc)
+    finally:
+        lock.__exit__(None, None, None)
+        _active_runtimes.pop(task_id, None)
 
 
 def _is_terminal_result(result_path: Path) -> bool:

@@ -9,7 +9,7 @@ ExecutorStatus = Literal["completed", "failed"]
 SupervisorRoute = Literal["continue_execution", "revise_plan", "curate", "fail"]
 ProgressMode = Literal["local", "web"]
 ProgressPhase = Literal["local_rag", "web_planning", "web_execution", "web_supervision", "web_revision", "web_curation"]
-ProgressEventType = Literal["started", "progress", "completed", "failed"]
+ProgressEventType = Literal["started", "progress", "completed", "failed", "task_result"]
 
 
 @dataclass(frozen=True)
@@ -107,6 +107,8 @@ class ProgressEvent:
     created_at: str
     message: str
     details: dict
+    _seq: int = 0
+    event_subtype: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -114,8 +116,10 @@ class ProgressEvent:
             "mode": self.mode,
             "phase": self.phase,
             "event_type": self.event_type,
+            "event_subtype": self.event_subtype,
             "created_at": self.created_at,
             "message": self.message,
+            "_seq": self._seq,
             "details": self.details,
         }
 

@@ -307,6 +307,121 @@ class TestEmitDualWrite:
         assert q_event["_seq"] == 1
 
 
+class TestTaskResultEvent:
+    """T1: task_result event type — schema, emission, and persistence."""
+
+    def test_task_result_event_type_in_schema(self):
+        """ProgressEvent accepts event_type='task_result' and serialises correctly."""
+        created_at = utc_now_iso()
+        event = ProgressEvent(
+            task_id="t1",
+            mode="web",
+            phase="web_curation",
+            event_type="task_result",
+            created_at=created_at,
+            message="Task completed.",
+            details={
+                "items": [{"kind": "status", "task_id": "t1", "status": "completed", "mode": "web"}]
+            },
+            _seq=99,
+            event_subtype=None,
+        )
+        d = event.to_dict()
+        assert d["event_type"] == "task_result"
+        assert d["phase"] == "web_curation"
+        assert d["_seq"] == 99
+        assert d["details"]["items"][0]["kind"] == "status"
+        assert d["details"]["items"][0]["status"] == "completed"
+
+    def test_emit_task_result_writes_to_file(self, tmp_path):
+        """_emit with event_type='task_result' persists to events.jsonl correctly."""
+        _, workspace = _configured_workspace(tmp_path)
+        runner = _make_runner(workspace)
+
+        task_id = generate_task_id()
+        workspace.create_task_folder(
+            task_id,
+            task_metadata={"task_id": task_id, "mode": "web", "question": "q", "created_at": utc_now_iso()},
+            result={"task_id": task_id, "mode": "web", "question": "q", "status": "running", "created_at": utc_now_iso()},
+        )
+        runner._task_id = task_id
+
+        runner._emit(task_id, "web_curation", "task_result", "Task completed.",
+                     items=[{"kind": "status", "task_id": task_id, "status": "completed", "mode": "web"}])
+
+        task_dir = workspace.task_dir(task_id)
+        events_text = (task_dir / "events.jsonl").read_text(encoding="utf-8")
+        events = [json.loads(line) for line in events_text.strip().splitlines()]
+        assert events[-1]["event_type"] == "task_result"
+        assert events[-1]["message"] == "Task completed."
+        assert events[-1]["details"]["items"][0]["status"] == "completed"
+
+    def test_local_persist_task_emits_task_result(self, tmp_path):
+        """local_research._persist_task emits a task_result event as the last line."""
+        from research_agent.core.local_research import _persist_task
+        from research_agent.core.tasks import TaskStore
+
+        _, workspace = _configured_workspace(tmp_path)
+        task_store = TaskStore(workspace.root / "task_store.db")
+        task_id = generate_task_id()
+        created_at = utc_now_iso()
+        question = "test question"
+        result = {
+            "task_id": task_id,
+            "mode": "local",
+            "question": question,
+            "status": "completed",
+            "created_at": created_at,
+            "completed_at": utc_now_iso(),
+            "local_results": [],
+        }
+
+        _persist_task(workspace, task_store, task_id, question, created_at, result,
+                      completed_items=[{"kind": "source", "path": "/vault/note.md"}])
+
+        task_dir = workspace.task_dir(task_id)
+        events_text = (task_dir / "events.jsonl").read_text(encoding="utf-8")
+        events = [json.loads(line) for line in events_text.strip().splitlines()]
+        # The last event should be task_result
+        assert events[-1]["event_type"] == "task_result"
+        assert events[-1]["mode"] == "local"
+        # The completed event should still be present
+        completed_events = [e for e in events if e["event_type"] == "completed"]
+        assert len(completed_events) == 1
+
+
+    @pytest.mark.asyncio
+    async def test_events_sentinel_terminates_loop(self, tmp_path):
+        """R-88: _close_event_queue sends a sentinel that breaks the events() while-True loop."""
+        _, workspace = _configured_workspace(tmp_path)
+        runner = _make_runner(workspace)
+
+        task_id = generate_task_id()
+        workspace.create_task_folder(
+            task_id,
+            task_metadata={"task_id": task_id, "mode": "web", "question": "q", "created_at": utc_now_iso()},
+            result={"task_id": task_id, "mode": "web", "question": "q", "status": "running", "created_at": utc_now_iso()},
+        )
+        runner._task_id = task_id
+
+        # Emit a task_result event, then push sentinel to close the queue
+        runner._emit(task_id, "web_curation", "task_result", "Task completed.",
+                     items=[{"kind": "status", "task_id": task_id, "status": "completed", "mode": "web"}])
+        runner._close_event_queue()
+
+        # Consumer should receive the task_result event then terminate
+        async_gen = runner.events()
+        collected = []
+        async for evt in async_gen:
+            collected.append(evt)
+
+        # Should have exactly 1 event (the task_result), loop terminated by sentinel
+        assert len(collected) == 1
+        assert collected[0]["event_type"] == "task_result"
+        # async_q should have the sentinel consumed, queue reference cleaned up
+        # The finally block nulls the queue, so a new consumer would start fresh
+
+
 class TestPrintWebEvent:
     """R-83: CLI output formatting for _print_web_event and _first_item."""
 

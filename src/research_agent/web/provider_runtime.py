@@ -31,9 +31,10 @@ class ProviderBackedWebResearchRuntime:
         self.max_retrieval_rounds = max_retrieval_rounds
         self.max_concurrent_subtasks = max_concurrent_subtasks
         self.on_event = on_event
+        self.runner: StateGraphRunner | None = None
 
     def run(self, question: str, task_id: str | None = None) -> dict[str, Any]:
-        runner = StateGraphRunner(
+        self.runner = StateGraphRunner(
             workspace=str(self._workspace_obj.root),
             chat_models=self.chat_models,
             tool_gateway=self.tool_gateway,
@@ -43,4 +44,4 @@ class ProviderBackedWebResearchRuntime:
             workspace_obj=self._workspace_obj,
             task_store=self._task_store,
         )
-        return runner.run(question, task_id)
+        return self.runner.run(question, task_id)

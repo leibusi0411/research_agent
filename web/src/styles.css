@@ -5,6 +5,10 @@
   background: #f6f8fb;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  /* R-91: define CSS custom properties used by components */
+  --muted: #7a8b9a;
+  --border: #dde3ea;
+  --accent: #3b82f6;
 }
 
 * {
@@ -269,6 +273,56 @@ code {
 .kv dd {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+/* ── Connection Badge ── */
+.connection-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+}
+.connection-dot {
+  font-size: 0.7rem;
+  line-height: 1;
+}
+.connection-label {
+  color: var(--muted);
+}
+
+/* ── Tool status (badge inside panel header) ── */
+.tool-status {
+  margin-left: auto;
+  font-weight: 400;
+}
+
+/* ── Phase Indicator ── */
+.phase-indicator {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.phase-dot {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--border);
+  color: var(--muted);
+  text-transform: capitalize;
+}
+.phase-dot.active {
+  background: var(--accent);
+  color: white;
+}
+
+/* ── Event Enter Animation ── */
+@keyframes event-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.process section .event-enter {
+  animation: event-fade-in 0.3s ease-out;
 }
 
 @media (max-width: 900px) {

@@ -68,6 +68,8 @@ export type ProgressEvent = {
   message: string;
   created_at: string;
   details: { items: Array<Record<string, unknown>> };
+  _seq?: number;
+  event_subtype?: string | null;
 };
 
 export type KbStatus = {
@@ -137,16 +139,31 @@ export function parseSseEvents(text: string): ProgressEvent[] {
 export function subscribeTaskEvents(
   taskId: string,
   onEvent: (event: ProgressEvent) => void,
-  onDone: () => void
+  onResult: (event: ProgressEvent) => void,
+  onError: () => void
 ): () => void {
-  const eventSource = new EventSource(`/api/tasks/${taskId}/events`);
+  let eventSource: EventSource;
+  try {
+    eventSource = new EventSource(`/api/tasks/${taskId}/events`);
+  } catch {
+    // EventSource constructor may throw (e.g. network unavailable).
+    // Treat as permanent error — no reconnection possible.
+    onError();
+    return () => {};
+  }
 
   eventSource.onmessage = (msg) => {
     try {
       const event = JSON.parse(msg.data) as ProgressEvent;
+      // S2: task_result event signals task completion — fetch result once, stop stream.
+      if (event.event_type === "task_result") {
+        eventSource.close();
+        onResult(event);
+        return;
+      }
       if (event.event_type === "stream_timeout") {
         eventSource.close();
-        onDone();
+        onError();
         return;
       }
       onEvent(event);
@@ -161,7 +178,7 @@ export function subscribeTaskEvents(
     // EventSource.CLOSED (2) means the connection is permanently dead.
     if (eventSource.readyState === EventSource.CLOSED) {
       eventSource.close();
-      onDone();
+      onError();
     }
     // Otherwise (CONNECTING), the browser will auto-reconnect; let it retry.
   };
