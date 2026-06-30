@@ -17,15 +17,9 @@ logger = logging.getLogger(__name__)
 from research_agent.core.config import InitConfigRequest, UserConfig, default_config_path, load_user_config
 from research_agent.core.errors import ResearchError
 from research_agent.core.ids import generate_task_id, utc_now_iso, validate_task_id
-from research_agent.core.providers import EmbeddingClient, build_chat_models
-from research_agent.core.service import CoreService
+from research_agent.core.providers import EmbeddingClient
+from research_agent.core.service import CoreService, create_provider_runtime
 from research_agent.web.provider_runtime import ProviderBackedWebResearchRuntime
-from research_agent.web.tools import (
-    TavilySearchProvider,
-    ToolGateway,
-    ToolRunner,
-    create_default_web_tool_registry,
-)
 
 
 WebRuntimeFactory = Callable[[str], Any]
@@ -48,12 +42,23 @@ def create_app(
 
     app = FastAPI(title="Research Agent", lifespan=lifespan)
 
+    _cached_service: CoreService | None = None
+
     def service() -> CoreService:
+        """Return a cached CoreService instance (fixes R-71).
+
+        The instance is created once and reused across requests so that
+        config is loaded only once per process lifetime.
+        """
+        nonlocal _cached_service
+        if _cached_service is not None:
+            return _cached_service
         try:
             config = load_user_config(resolved_config_path)
-            return CoreService(default_workspace=config.workspace.default_workspace, config_path=resolved_config_path)
+            _cached_service = CoreService(default_workspace=config.workspace.default_workspace, config_path=resolved_config_path)
         except ResearchError:
-            return CoreService(default_workspace=Path.cwd() / ".research_agent", config_path=resolved_config_path)
+            _cached_service = CoreService(default_workspace=Path.cwd() / ".research_agent", config_path=resolved_config_path)
+        return _cached_service
 
     @app.exception_handler(ResearchError)
     async def research_error_handler(_request, exc: ResearchError):
@@ -196,7 +201,7 @@ def _read_lock_task_id(lock_path: Path) -> str:
 
 
 def _stream_events(events_path: Path):
-    deadline = time.time() + 600  # 10 minutes max
+    deadline = time.time() + 1800  # 30 minutes max (matches web research task duration)
     offset = 0
     while time.time() < deadline:
         if events_path.exists():
@@ -264,15 +269,11 @@ def _is_terminal_result(result_path: Path) -> bool:
 
 
 def _default_web_runtime(service: CoreService) -> ProviderBackedWebResearchRuntime:
-    config = load_user_config(service.config_path)
-    search_provider = TavilySearchProvider(api_key=config.search.api_key)
-    tool_runner = ToolRunner(config=config.web_tools, search_provider=search_provider)
-    tool_registry = create_default_web_tool_registry()
-    tool_gateway = ToolGateway(registry=tool_registry, runner=tool_runner)
-    return ProviderBackedWebResearchRuntime(
-        workspace=str(service.workspace.root),
-        chat_models=build_chat_models(config),
-        tool_gateway=tool_gateway,
-        max_retrieval_rounds=config.research.max_retrieval_rounds,
-        max_concurrent_subtasks=config.research.max_concurrent_subtasks,
-    )
+    """Create a provider-backed runtime using the shared factory (fixes R-20, R-44).
+
+    The ``on_event`` callback is intentionally omitted here because the API
+    layer pushes events through SSE (``_stream_events`` polls ``events.jsonl``),
+    not through the in-process callback.  CLI callers that need live progress
+    pass ``on_event`` via ``CoreService.run_web_research(on_event=...)``.
+    """
+    return create_provider_runtime(service.config_path, str(service.workspace.root))

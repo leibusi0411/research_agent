@@ -10,6 +10,15 @@ from research_agent.web.schemas import CuratorOutput
 
 WINDOWS_ILLEGAL = '<>:"/\\|?*'
 
+# Characters that have special meaning in Markdown inline context and should
+# be escaped when embedding user-generated text in a Markdown report (R-49).
+_MARKDOWN_SPECIAL = re.compile(r'([\\`*_{}\[\]<>#+\-!|~])')
+
+
+def _escape_markdown_text(text: str) -> str:
+    """Escape Markdown special characters in plain text embedded in a report."""
+    return _MARKDOWN_SPECIAL.sub(r'\\\1', text)
+
 
 def slugify_report_topic(topic: str) -> str:
     cleaned = topic.lower()
@@ -32,7 +41,7 @@ def render_web_report(task_id: str, created_at: str, output: CuratorOutput) -> s
         "",
         "## Summary",
         "",
-        output.summary,
+        _escape_markdown_text(output.summary),
         "",
         "## Findings",
         "",
@@ -40,10 +49,10 @@ def render_web_report(task_id: str, created_at: str, output: CuratorOutput) -> s
     for finding in output.findings:
         refs = " ".join(f"[{source_numbers[source_id]}]" for source_id in finding.source_ids if source_id in source_numbers)
         suffix = f" {refs}" if refs else ""
-        lines.append(f"- {finding.text}{suffix}")
+        lines.append(f"- {_escape_markdown_text(finding.text)}{suffix}")
     lines.extend(["", "## Sources", ""])
     for index, source in enumerate(output.sources, start=1):
-        lines.append(f"{index}. {source.title} - {source.url}")
+        lines.append(f"{index}. {_escape_markdown_text(source.title)} - {source.url}")
     lines.append("")
     return "\n".join(lines)
 

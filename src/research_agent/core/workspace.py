@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from research_agent.core.ids import validate_task_id
+
+logger = logging.getLogger(__name__)
 
 
 class Workspace:
@@ -63,6 +66,9 @@ class Workspace:
     def append_event(self, task_id: str, event: dict[str, Any]) -> None:
         task_dir = self.task_dir(task_id)
         task_dir.mkdir(parents=True, exist_ok=True)
-        with (task_dir / "events.jsonl").open("a", encoding="utf-8") as events_file:
-            events_file.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")))
-            events_file.write("\n")
+        try:
+            with (task_dir / "events.jsonl").open("a", encoding="utf-8") as events_file:
+                events_file.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")))
+                events_file.write("\n")
+        except OSError as exc:
+            logger.warning("Failed to append event for task %s: %s", task_id, exc)

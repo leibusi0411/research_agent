@@ -6,7 +6,7 @@ from research_agent.web.context import (
 )
 from research_agent.web.prompt_builders import (
     build_curator_prompt,
-    build_executor_prompt,
+    build_executor_tool_plan_prompt,
     build_planner_prompt,
     build_supervisor_prompt,
 )
@@ -38,10 +38,10 @@ def test_build_planner_prompt_for_revision_contains_existing_plan():
     assert "revise" in prompt.lower()
 
 
-def test_build_executor_prompt_contains_subtask_question():
+def test_build_executor_tool_plan_prompt_contains_subtask_question():
     state = WebResearchState(original_question="What is LangGraph?")
     state.add_planner_output(PlannerOutput("LangGraph Research", [PlannerSubtaskDraft("Find architecture overview.")]))
-    prompt = build_executor_prompt(state, "st_1")
+    prompt = build_executor_tool_plan_prompt(state, "st_1")
     assert "Find architecture overview." in prompt
     assert "search" in prompt.lower()
     assert "fetch" in prompt.lower()
@@ -92,10 +92,10 @@ def test_build_planner_prompt_for_revision_requests_1_to_3_subtasks():
     assert "1-3" in prompt or "1 to 3" in prompt
 
 
-def test_build_executor_prompt_includes_tool_descriptions():
+def test_build_executor_tool_plan_prompt_includes_tool_descriptions():
     state = WebResearchState(original_question="What is LangGraph?")
     state.add_planner_output(PlannerOutput("LangGraph Research", [PlannerSubtaskDraft("Find architecture overview.")]))
-    prompt = build_executor_prompt(state, "st_1")
+    prompt = build_executor_tool_plan_prompt(state, "st_1")
     assert "web.search" in prompt
     assert "web.fetch_extract" in prompt
     assert "web.download_pdf" in prompt

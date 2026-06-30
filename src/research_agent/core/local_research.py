@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,20 @@ def run_local_research(
         _persist_task(workspace, task_store, task_id, question, created_at, result)
         return result
 
+    # Emit progress: retrieval started
+    workspace.append_event(
+        task_id,
+        {
+            "task_id": task_id,
+            "mode": "local",
+            "phase": "local_rag",
+            "event_type": "progress",
+            "created_at": utc_now_iso(),
+            "message": "Searching local knowledge base...",
+            "details": {"items": []},
+        },
+    )
+
     local_results = _retrieve_hybrid(
         sqlite_path=workspace.local_index_dir / "fts.sqlite",
         chroma_path=workspace.local_index_dir.parent / "chroma",
@@ -40,6 +55,15 @@ def run_local_research(
         embedding_client=embedding_client,
     )
     completed_at = utc_now_iso()
+
+    # Build source items for completed event
+    source_items: list[dict[str, Any]] = []
+    for r in local_results:
+        source_items.append({
+            "kind": "source",
+            "path": r.get("source_path", ""),
+            "title": r.get("source_path", ""),
+        })
     result = {
         "task_id": task_id,
         "mode": "local",
@@ -49,7 +73,7 @@ def run_local_research(
         "completed_at": completed_at,
         "local_results": local_results,
     }
-    _persist_task(workspace, task_store, task_id, question, created_at, result)
+    _persist_task(workspace, task_store, task_id, question, created_at, result, completed_items=source_items, result_count=len(local_results))
     return result
 
 
@@ -76,12 +100,11 @@ def _search_fts5(
     # Quote every term so reserved words / special chars are literal.
     # Implicit AND between terms gives better precision than OR on
     # typical user questions.
-    fts_query = " ".join(
-        f'"{term}"' if " " not in term else _fts5_phrase(term) for term in terms
-    )
+    fts_query = " ".join(f'"{term}"' for term in terms)
 
     try:
         with sqlite3.connect(sqlite_path) as connection:
+            connection.row_factory = sqlite3.Row
             rows = connection.execute(
                 """
                 SELECT c.source_path, c.heading_path, c.start_offset, c.end_offset, c.text
@@ -98,13 +121,18 @@ def _search_fts5(
 
     results: list[dict[str, Any]] = []
     for row in rows:
+        source_path = row["source_path"]
+        start_offset = row["start_offset"]
+        end_offset = row["end_offset"]
         results.append(
             {
-                "text": row[4],
-                "source_path": row[0],
-                "heading_path": json.loads(row[1]),
-                "start_offset": row[2],
-                "end_offset": row[3],
+                "chunk_id": f"{source_path}:{start_offset}:{end_offset}",
+                "text": row["text"],
+                "source_path": source_path,
+                "heading_path": json.loads(row["heading_path"]),
+                "start_offset": start_offset,
+                "end_offset": end_offset,
+                "score": None,  # R-63: normalize with Chroma results (FTS5 has no score)
             }
         )
     return results
@@ -132,8 +160,10 @@ def _retrieve_hybrid(
     if embedding_client is not None:
         query_embedding = embedding_client.embed([question])[0]
         store = ChromaStore(chroma_path)
-        chroma_results = store.query(query_embedding, n_results=fetch_k)
-        store.close()
+        try:
+            chroma_results = store.query(query_embedding, n_results=fetch_k)
+        finally:
+            store.close()
 
     if not fts5_results and not chroma_results:
         return []
@@ -168,22 +198,13 @@ def _dedup_key(item: dict[str, Any]) -> str:
 
 # Characters that FTS5 interprets as operators or syntax.  Stripping them
 # from user queries avoids syntax errors on inputs like "C++" or "(async)".
-_FTS5_SPECIAL_RE = __import__("re").compile(r'[\(\)\*\"\+\\\-\^\{\}\[\]~!@#\$%^&:,;<>?/|]+')
-
-# FTS5 reserved words that must be quoted to be treated as literal terms.
-_FTS5_RESERVED = frozenset({"AND", "OR", "NOT", "NEAR"})
+_FTS5_SPECIAL_RE = re.compile(r'[\(\)\*\"\+\\\-\^\{\}\[\]~!@#\$%^&:,;<>?/|]+')
 
 
 def _fts5_terms(question: str) -> list[str]:
     """Split *question* into safe, non-empty FTS5 search terms."""
     sanitized = _FTS5_SPECIAL_RE.sub(" ", question).replace("'", " ")
     return [t.strip() for t in sanitized.split() if t.strip()]
-
-
-def _fts5_phrase(term: str) -> str:
-    """Wrap a multi-word term as an FTS5 phrase, escaping internal quotes."""
-    escaped = term.replace('"', '""')
-    return f'"{escaped}"'
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +249,9 @@ def _persist_task(
     question: str,
     created_at: str,
     result: dict[str, Any],
+    *,
+    completed_items: list[dict[str, Any]] | None = None,
+    result_count: int = 0,
 ) -> None:
     task_dir = workspace.create_task_folder(
         task_id,
@@ -239,6 +263,9 @@ def _persist_task(
         },
         result=result,
     )
+    message = result["status"]
+    if result_count:
+        message = f"{result['status']} — {result_count} results"
     workspace.append_event(
         task_id,
         {
@@ -247,8 +274,8 @@ def _persist_task(
             "phase": "local_rag",
             "event_type": "completed",
             "created_at": utc_now_iso(),
-            "message": result["status"],
-            "details": {"items": []},
+            "message": message,
+            "details": {"items": completed_items or []},
         },
     )
     task_store.upsert_finished_task(

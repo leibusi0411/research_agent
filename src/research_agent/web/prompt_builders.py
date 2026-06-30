@@ -22,11 +22,6 @@ def build_planner_prompt(state: WebResearchState, *, revision: bool = False) -> 
     return _build_initial_planner_prompt(context)
 
 
-def build_executor_prompt(state: WebResearchState, subtask_id: str) -> str:
-    context = build_executor_context(state, subtask_id)
-    return _render_executor_prompt(context)
-
-
 def build_executor_tool_plan_prompt(state: WebResearchState, subtask_id: str) -> str:
     """Build prompt for the executor to plan which tools to call."""
     context = build_executor_context(state, subtask_id)
@@ -99,43 +94,6 @@ def _build_revision_planner_prompt(context: PlannerInput) -> str:
         '    {"question": "New subtask question 2"}\n'
         "  ]\n"
         "}\n"
-    )
-
-
-def _render_executor_prompt(context: ExecutorInput) -> str:
-    return (
-        "You are a Research Executor for a web research task.\n"
-        "Your job is to gather information for a specific subtask by using web tools.\n\n"
-        f"Original research question: {context.original_question}\n"
-        f"Your subtask: {context.subtask.question}\n\n"
-        "Available tools:\n"
-        '1. web.search - Search the web. Arguments: {"query": "search query", "max_results": 5}\n'
-        '2. web.fetch_extract - Fetch and extract text from a URL. Arguments: {"url": "https://..."}\n'
-        '3. web.download_pdf - Download and extract text from a PDF. Arguments: {"url": "https://..."}\n\n'
-        "Use these tools to gather evidence. You may make multiple tool calls.\n"
-        "When done, return ONLY valid JSON with this exact structure (no markdown, no extra text):\n"
-        "{\n"
-        '  "subtask_id": "' + context.subtask.subtask_id + '",\n'
-        '  "status": "completed",\n'
-        '  "findings": [\n'
-        '    {\n'
-        '      "finding_id": "f_1",\n'
-        '      "subtask_id": "' + context.subtask.subtask_id + '",\n'
-        '      "text": "What you discovered",\n'
-        '      "source_ids": ["src_1"]\n'
-        "    }\n"
-        "  ],\n"
-        '  "sources": [\n'
-        '    {\n'
-        '      "source_id": "src_1",\n'
-        '      "title": "Page title",\n'
-        '      "url": "https://example.com/page",\n'
-        '      "fetched_at": "ISO 8601 timestamp"\n'
-        "    }\n"
-        "  ],\n"
-        '  "failure_reason": null\n'
-        "}\n\n"
-        'If you cannot find relevant information, set status to "failed" and provide a failure_reason.\n'
     )
 
 

@@ -317,7 +317,7 @@ def test_continue_execution_with_empty_next_subtask_ids_in_loop(tmp_path):
         chat_models=_make_chat_models(mock_chat),
         tool_gateway=mock_gateway,
         max_retrieval_rounds=3,
-        max_concurrent_subtasks=3,
+        max_concurrent_subtasks=1,  # single-threaded: _SequencedChatClient is not thread-safe
     )
 
     result = runner.run("test question")

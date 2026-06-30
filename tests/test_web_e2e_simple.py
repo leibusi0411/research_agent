@@ -9,7 +9,7 @@ from research_agent.core.config import load_user_config
 from research_agent.core.providers import OpenAICompatibleChatModel
 from research_agent.web.prompt_builders import (
     build_planner_prompt,
-    build_executor_prompt,
+    build_executor_tool_plan_prompt,
     build_supervisor_prompt,
     build_curator_prompt,
 )
@@ -102,8 +102,8 @@ def test_executor_prompt_with_real_llm(tmp_path):
         subtasks=[PlannerSubtaskDraft(question="What is Python's GIL?")],
     ))
 
-    # Build executor prompt
-    prompt = build_executor_prompt(state, "st_1")
+    # Build executor tool plan prompt
+    prompt = build_executor_tool_plan_prompt(state, "st_1")
 
     # Call LLM
     response = chat_model.complete(prompt)
@@ -117,7 +117,7 @@ def test_executor_prompt_with_real_llm(tmp_path):
             json_str = response.split("```")[1].split("```")[0]
 
         data = json.loads(json_str)
-        print(f"\n[PASS] Executor prompt works with real LLM!")
+        print(f"\n[PASS] Executor tool plan prompt works with real LLM!")
         print(f"   Status: {data.get('status', 'N/A')}")
         print(f"   Findings: {len(data.get('findings', []))}")
     except json.JSONDecodeError:

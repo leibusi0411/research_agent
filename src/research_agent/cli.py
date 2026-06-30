@@ -70,10 +70,13 @@ def _main(argv: list[str] | None) -> int:
         return _run_init(args)
     try:
         config = load_user_config(default_config_path())
+        service = CoreService(default_workspace=config.workspace.default_workspace, config_path=default_config_path())
     except ResearchError as error:
         print(f"[{error.code}] {error.message}")
         return 1
-    service = CoreService(default_workspace=config.workspace.default_workspace, config_path=default_config_path())
+    except Exception as exc:  # noqa: BLE001 - CLI fallback
+        print(_format_error_message(exc))
+        return 1
     if args.command == "local":
         return _run_local(args, service)
     if args.command == "web":
@@ -152,16 +155,17 @@ def _run_local(args: argparse.Namespace, service: CoreService) -> int:
 
 
 def _print_local_result(result: dict) -> int:
-    if result["status"] == "failed":
-        error = result["error"]
-        print(f"[{error['code']}] {error['message']}")
+    if result.get("status") == "failed":
+        error = result.get("error", {})
+        print(f"[{error.get('code', 'unknown')}] {error.get('message', 'Unknown error')}")
         return 1
     print("Local Results")
-    for index, item in enumerate(result["local_results"], start=1):
-        print(f"{index}. {item['text']}")
-        print(f"source_path: {item['source_path']}")
-        if item.get("heading_path"):
-            print(f"heading_path: {' > '.join(item['heading_path'])}")
+    for index, item in enumerate(result.get("local_results", []), start=1):
+        print(f"{index}. {item.get('text', '')}")
+        print(f"source_path: {item.get('source_path', '')}")
+        heading = item.get("heading_path")
+        if heading:
+            print(f"heading_path: {' > '.join(heading)}")
     return 0
 
 
@@ -181,20 +185,22 @@ def _run_web(args: argparse.Namespace, service: CoreService) -> int:
 
 
 def _print_web_result(result: dict, *, heading_prefix: str = "") -> int:
-    if result["status"] == "failed":
-        error = result["error"]
-        print(f"[{error['code']}] {error['message']}")
+    if result.get("status") == "failed":
+        error = result.get("error", {})
+        print(f"[{error.get('code', 'unknown')}] {error.get('message', 'Unknown error')}")
         return 1
-    output = result["curator_output"]
+    output = result.get("curator_output", {})
     print(f"{heading_prefix}Summary")
-    print(output["summary"])
+    print(output.get("summary", ""))
     print(f"{heading_prefix}Findings")
-    for finding in output["findings"]:
-        print(f"- {finding['text']}")
+    for finding in output.get("findings", []):
+        print(f"- {finding.get('text', '')}")
     print(f"{heading_prefix}Sources")
-    for source in output["sources"]:
-        print(f"- {source['title']} - {source['url']}")
-    print(f"{heading_prefix}report_path: {result['report_path']}")
+    for source in output.get("sources", []):
+        print(f"- {source.get('title', '')} - {source.get('url', '')}")
+    report_path = result.get("report_path", "")
+    if report_path:
+        print(f"{heading_prefix}report_path: {report_path}")
     return 0
 
 
@@ -215,18 +221,18 @@ def _run_both(args: argparse.Namespace, service: CoreService) -> int:
         print(_format_error_message(exc))
         return 1
     print("Local")
-    local = result["local"]
-    if local["status"] == "failed":
-        error = local["error"]
-        print(f"[local:{error['code']}] {error['message']}")
+    local = result.get("local", {})
+    if local.get("status") == "failed":
+        error = local.get("error", {})
+        print(f"[local:{error.get('code', 'unknown')}] {error.get('message', 'Unknown error')}")
         local_code = 1
     else:
         local_code = _print_local_result(local)
     print("Web")
-    web = result["web"]
-    if web["status"] == "failed":
-        error = web["error"]
-        print(f"[web:{error['code']}] {error['message']}")
+    web = result.get("web", {})
+    if web.get("status") == "failed":
+        error = web.get("error", {})
+        print(f"[web:{error.get('code', 'unknown')}] {error.get('message', 'Unknown error')}")
         web_code = 1
     else:
         web_code = _print_web_result(web, heading_prefix="Web ")
@@ -253,16 +259,6 @@ def _run_task(args: argparse.Namespace, service: CoreService) -> int:
 
 def _print_web_event(event: dict) -> None:
     print(f"{event['phase']}: {event['message']}", flush=True)
-
-
-def _print_web_events(events_path: Path) -> None:
-    if not events_path.exists():
-        return
-    import json
-
-    for line in events_path.read_text(encoding="utf-8").splitlines():
-        event = json.loads(line)
-        print(f"{event['phase']}: {event['message']}")
 
 
 def _configure_stdio() -> None:

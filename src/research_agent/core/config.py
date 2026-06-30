@@ -306,4 +306,22 @@ def _render_config_toml(
 
 
 def _toml_string(value: object) -> str:
-    return str(value).replace("\\", "\\\\").replace('"', '\\"')
+    """Escape a value for use inside a TOML basic string (double-quoted).
+
+    Escapes backslash, double-quote, and control characters (U+0000–U+001F)
+    per the TOML v1.0 spec.  Paths with backslashes and API keys with
+    special characters are handled correctly (fixes R-52).
+    """
+    s = str(value)
+    result: list[str] = []
+    for ch in s:
+        cp = ord(ch)
+        if ch == '\\':
+            result.append('\\\\')
+        elif ch == '"':
+            result.append('\\"')
+        elif cp <= 0x1f:
+            result.append(f'\\u{cp:04x}')
+        else:
+            result.append(ch)
+    return ''.join(result)

@@ -323,7 +323,8 @@ def _extract_text(path: Path) -> str:
             import trafilatura
 
             return trafilatura.extract(raw) or ""
-        except Exception:
+        except Exception as exc:
+            logger.warning("HTML extraction via trafilatura failed for %s: %s — falling back to regex strip", path, exc)
             return re.sub(r"<[^>]+>", " ", raw)
     if suffix == ".pdf":
         try:
@@ -334,6 +335,7 @@ def _extract_text(path: Path) -> str:
         except Exception as exc:
             logger.warning("PDF extraction failed for %s: %s", path, exc)
             return ""
+    logger.warning("Unsupported file type for extraction: %s (suffix: %s)", path, suffix)
     return ""
 
 

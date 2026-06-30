@@ -1,6 +1,6 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { BookOpen, Database, FileText, RefreshCw, Search, Settings, Wifi } from "lucide-react";
-import { api, KbStatus, ProgressEvent, ResearchResult, SetupPayload, TaskSummary } from "./api";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { BookOpen, Database, FileText, Link, RefreshCw, Search, Settings, Wifi, Wrench } from "lucide-react";
+import { api, KbStatus, ProgressEvent, ResearchResult, SetupPayload, subscribeTaskEvents, TaskSummary } from "./api";
 
 type Page = "research" | "tasks" | "kb";
 
@@ -63,12 +63,33 @@ export function App() {
 
   async function runLocal(event: FormEvent) {
     event.preventDefault();
+    setLocalEvents([]);
     setBusy("local");
     try {
       const started = await api.runLocal(localQuestion);
-      const events = await api.taskEvents(started.task_id);
-      const result = started.status === "running" ? await waitForTerminalResult(started.task_id) : started;
-      setLocalEvents(events);
+      if (started.status !== "running") {
+        setLocalResult(started);
+        setSelectedResult(started);
+        await refreshTasks();
+        return;
+      }
+      const collected: ProgressEvent[] = [];
+      const unsubscribe = subscribeTaskEvents(
+        started.task_id,
+        (evt) => {
+          collected.push(evt);
+          setLocalEvents([...collected]);
+        },
+        async () => {
+          // SSE stream ended — fetch final result immediately
+          const finalResult = await api.taskResult(started.task_id);
+          setLocalResult(finalResult);
+          setSelectedResult(finalResult);
+        }
+      );
+      // Fallback polling (SSE-matched timeout window; local RAG returns in seconds)
+      const result = await waitForTerminalResult(started.task_id);
+      unsubscribe();
       setLocalResult(result);
       setSelectedResult(result);
       await refreshTasks();
@@ -81,12 +102,33 @@ export function App() {
 
   async function runWeb(event: FormEvent) {
     event.preventDefault();
+    setWebEvents([]);
     setBusy("web");
     try {
       const started = await api.runWeb(webQuestion);
-      const events = await api.taskEvents(started.task_id);
-      const result = started.status === "running" ? await waitForTerminalResult(started.task_id) : started;
-      setWebEvents(events);
+      if (started.status !== "running") {
+        setWebResult(started);
+        setSelectedResult(started);
+        await refreshTasks();
+        return;
+      }
+      const collected: ProgressEvent[] = [];
+      const unsubscribe = subscribeTaskEvents(
+        started.task_id,
+        (evt) => {
+          collected.push(evt);
+          setWebEvents([...collected]);
+        },
+        async () => {
+          // SSE stream ended — fetch final result immediately
+          const finalResult = await api.taskResult(started.task_id);
+          setWebResult(finalResult);
+          setSelectedResult(finalResult);
+        }
+      );
+      // Fallback polling (SSE-matched timeout window; web research may take 5-30 min)
+      const result = await waitForTerminalResult(started.task_id);
+      unsubscribe();
       setWebResult(result);
       setSelectedResult(result);
       await refreshTasks();
@@ -189,12 +231,14 @@ export function App() {
 }
 
 async function waitForTerminalResult(taskId: string): Promise<ResearchResult> {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  // 720 attempts × 2.5s = 1800s (30 min), matching backend SSE stream timeout.
+  // Local RAG tasks return in seconds; web research may take 5-30 min.
+  for (let attempt = 0; attempt < 720; attempt += 1) {
     const result = await api.taskResult(taskId);
     if (result.status !== "running") {
       return result;
     }
-    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    await new Promise((resolve) => window.setTimeout(resolve, 2500));
   }
   return api.taskResult(taskId);
 }
@@ -383,12 +427,73 @@ function ProcessView({ groupedEvents }: { groupedEvents: Record<string, Progress
         <section key={phase}>
           <h3>{phase}</h3>
           {phaseEvents.map((event) => (
-            <p key={`${event.created_at}-${event.message}`}>{event.message}</p>
+            <div key={`${event.created_at}-${event.message}`}>
+              <p className="event-message">{event.message}</p>
+              {event.details?.items?.length > 0 && (
+                <ul className="event-items">
+                  {event.details.items.map((item, idx) => (
+                    <DetailItem key={idx} item={item} />
+                  ))}
+                </ul>
+              )}
+            </div>
           ))}
         </section>
       ))}
     </div>
   );
+}
+
+function DetailItem({ item }: { item: Record<string, unknown> }) {
+  const kind = String(item.kind ?? "");
+  switch (kind) {
+    case "tool_call":
+      return (
+        <li className="detail-tool-call">
+          <Wrench size={12} />
+          <span className="tool-name">{String(item.name ?? "")}</span>
+          {item.input ? <code>{String(item.input).slice(0, 120)}</code> : null}
+        </li>
+      );
+    case "source": {
+      const url = item.url ? String(item.url) : null;
+      const path = item.path ? String(item.path) : null;
+      const title = String(item.title ?? item.path ?? "");
+      return (
+        <li className="detail-source">
+          <Link size={12} />
+          {url ? (
+            <a href={url} target="_blank" rel="noopener noreferrer">{title || url}</a>
+          ) : (
+            <code>{path || title}</code>
+          )}
+        </li>
+      );
+    }
+    case "finding":
+      return (
+        <li className="detail-finding">
+          <span className="finding-text">{String(item.text ?? "").slice(0, 200)}</span>
+          {item.subtask_id ? <small>{String(item.subtask_id)}</small> : null}
+        </li>
+      );
+    case "subtask_completed":
+      return (
+        <li className="detail-subtask">
+          <span>{String(item.question ?? item.subtask_id ?? "")}</span>
+          <small>{item.status ? String(item.status) : ""} · {item.finding_count ? `${item.finding_count} findings` : ""}{item.source_count ? `, ${item.source_count} sources` : ""}</small>
+        </li>
+      );
+    case "subtask_failed":
+      return (
+        <li className="detail-subtask failed">
+          <span>{String(item.question ?? item.subtask_id ?? "")}</span>
+          <small>failed: {String(item.error ?? "").slice(0, 100)}</small>
+        </li>
+      );
+    default:
+      return null;
+  }
 }
 
 function StatusLine({ result }: { result: ResearchResult }) {

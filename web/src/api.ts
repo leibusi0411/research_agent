@@ -117,10 +117,54 @@ async function requestText(path: string): Promise<string> {
 }
 
 export function parseSseEvents(text: string): ProgressEvent[] {
-  return text
-    .split("\n\n")
-    .map((block) => block.trim())
-    .filter(Boolean)
-    .map((block) => block.replace(/^data:\s*/, ""))
-    .map((line) => JSON.parse(line) as ProgressEvent);
+  const events: ProgressEvent[] = [];
+  const blocks = text.split("\n\n");
+  for (const block of blocks) {
+    const trimmed = block.trim();
+    if (!trimmed) continue;
+    const line = trimmed.replace(/^data:\s*/, "");
+    try {
+      events.push(JSON.parse(line) as ProgressEvent);
+    } catch {
+      // R-73: Skip unparseable lines instead of discarding all events.
+      // A malformed line should not invalidate the entire stream.
+      console.warn("Failed to parse SSE event line:", line.slice(0, 120));
+    }
+  }
+  return events;
+}
+
+export function subscribeTaskEvents(
+  taskId: string,
+  onEvent: (event: ProgressEvent) => void,
+  onDone: () => void
+): () => void {
+  const eventSource = new EventSource(`/api/tasks/${taskId}/events`);
+
+  eventSource.onmessage = (msg) => {
+    try {
+      const event = JSON.parse(msg.data) as ProgressEvent;
+      if (event.event_type === "stream_timeout") {
+        eventSource.close();
+        onDone();
+        return;
+      }
+      onEvent(event);
+    } catch {
+      // Skip unparseable events
+    }
+  };
+
+  eventSource.onerror = () => {
+    // R-72: Distinguish transient from permanent errors.
+    // EventSource.CONNECTING (0) means the browser will auto-retry — do NOT close.
+    // EventSource.CLOSED (2) means the connection is permanently dead.
+    if (eventSource.readyState === EventSource.CLOSED) {
+      eventSource.close();
+      onDone();
+    }
+    // Otherwise (CONNECTING), the browser will auto-reconnect; let it retry.
+  };
+
+  return () => eventSource.close();
 }

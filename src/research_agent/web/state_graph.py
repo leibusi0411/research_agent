@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, Callable
 
 from research_agent.core.errors import ResearchError
 from research_agent.core.ids import generate_task_id, utc_now_iso
@@ -170,9 +170,11 @@ class ResearchExecutor:
         *,
         tool_gateway: ToolGateway,
         max_concurrent_subtasks: int = 3,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.tool_gateway = tool_gateway
         self.max_concurrent_subtasks = max_concurrent_subtasks
+        self.on_progress = on_progress
 
     def execute(
         self,
@@ -191,9 +193,19 @@ class ResearchExecutor:
             }
             for future in as_completed(futures):
                 subtask_id = futures[future]
+                subtask_question = next((s.question for s in state.subtasks if s.subtask_id == subtask_id), subtask_id)
                 try:
                     output = future.result()
                     outputs.append(output)
+                    if self.on_progress:
+                        self.on_progress({
+                            "kind": "subtask_completed",
+                            "subtask_id": subtask_id,
+                            "question": subtask_question,
+                            "status": output.status,
+                            "finding_count": len(output.findings),
+                            "source_count": len(output.sources),
+                        })
                 except Exception as exc:
                     logger.exception("Subtask %s failed", subtask_id)
                     outputs.append(ExecutorOutput(
@@ -203,6 +215,13 @@ class ResearchExecutor:
                         sources=[],
                         failure_reason=str(exc),
                     ))
+                    if self.on_progress:
+                        self.on_progress({
+                            "kind": "subtask_failed",
+                            "subtask_id": subtask_id,
+                            "question": subtask_question,
+                            "error": str(exc),
+                        })
 
         return outputs
 
@@ -242,18 +261,43 @@ class ResearchExecutor:
             validator=_validate_tool_plan_payload,
         )
 
+        # R-47: Validate tool names against the registry before executing.
+        # The schema validator only checks that "name" is a string; we also
+        # need to ensure the tool is registered.
+        unknown_tools = [
+            tc.get("name", "unknown")
+            for tc in tool_plan.get("tool_calls", [])
+            if isinstance(tc.get("name"), str) and not self.tool_gateway.registry.has(tc["name"])
+        ]
+        if unknown_tools:
+            return ExecutorOutput(
+                subtask_id=subtask_id,
+                status="failed",
+                findings=[],
+                sources=[],
+                failure_reason=f"Unknown tool(s) in plan: {', '.join(unknown_tools)}",
+            )
+
         # Step 2: Execute tool calls and collect results
         tool_results: list[dict[str, Any]] = []
         for tc in tool_plan.get("tool_calls", []):
+            tool_name = tc.get("name", "unknown")
+            tool_input = tc.get("arguments", {})
             result = self.tool_gateway.call("web_research", tc)
             tool_results.append({
-                "tool": tc.get("name", "unknown"),
-                "arguments": tc.get("arguments", {}),
+                "tool": tool_name,
+                "arguments": tool_input,
                 "status": result.status,
                 "data": result.data,
                 "error": result.error,
                 "message": result.message,
             })
+            if self.on_progress:
+                self.on_progress({
+                    "kind": "tool_call",
+                    "name": tool_name,
+                    "input": tool_input.get("query", tool_input.get("url", str(tool_input))),
+                })
 
         # Guard: if LLM returned no tool calls, fail early — don't hallucinate from nothing
         if not tool_results:
@@ -281,7 +325,21 @@ class ResearchExecutor:
             chat_model=chat_model,
             validator=_validate_executor_payload,
         )
-        return _parse_executor_output(payload, subtask_id)
+        executor_output = _parse_executor_output(payload, subtask_id)
+        if self.on_progress:
+            for f in executor_output.findings:
+                self.on_progress({
+                    "kind": "finding",
+                    "text": f.text,
+                    "subtask_id": subtask_id,
+                })
+            for s in executor_output.sources:
+                self.on_progress({
+                    "kind": "source",
+                    "title": s.title,
+                    "url": s.url,
+                })
+        return executor_output
 
 
 class StateGraphRunner:
@@ -294,22 +352,30 @@ class StateGraphRunner:
         max_retrieval_rounds: int = 3,
         max_concurrent_subtasks: int = 3,
         on_event: Any | None = None,
+        workspace_obj: Workspace | None = None,
+        task_store: TaskStore | None = None,
     ) -> None:
-        self.workspace = Workspace(workspace)
-        self.task_store = TaskStore(self.workspace.root / "tasks.sqlite")
+        # R-24: Accept optional pre-existing Workspace/TaskStore to reduce
+        # duplicate instances in the call chain (CoreService → Runtime → Runner).
+        # When omitted, new instances are created from the workspace path.
+        self.workspace = workspace_obj if workspace_obj is not None else Workspace(workspace)
+        self.task_store = task_store if task_store is not None else TaskStore(self.workspace.root / "tasks.sqlite")
         self.chat_models = chat_models
         self.tool_gateway = tool_gateway
         self.max_retrieval_rounds = max_retrieval_rounds
         self.max_concurrent_subtasks = max_concurrent_subtasks
         self.on_event = on_event
+        self._task_id: str | None = None
         self.executor = ResearchExecutor(
             tool_gateway=tool_gateway,
             max_concurrent_subtasks=max_concurrent_subtasks,
+            on_progress=lambda item: self._emit_progress_item(item),
         )
 
     def run(self, question: str, task_id: str | None = None) -> dict[str, Any]:
         self.workspace.ensure()
         task_id = task_id or generate_task_id()
+        self._task_id = task_id
         created_at = utc_now_iso()
         state = WebResearchState(original_question=question)
 
@@ -333,13 +399,15 @@ class StateGraphRunner:
     def _run_graph(self, state: WebResearchState, task_id: str, question: str, created_at: str) -> dict[str, Any]:
         # Step 1: Plan
         self._emit(task_id, "web_planning", "started", "Planning web research.")
+        planner_prompt = build_planner_prompt(state)
         planner_payload = invoke_role_json(
             role_name="planner",
-            prompt=build_planner_prompt(state),
+            prompt=planner_prompt,
             target_schema='{"research_title": "string", "subtasks": [{"question": "string"}]}',
             chat_model=self.chat_models["planner"],
             validator=_validate_planner_payload,
         )
+        self._save_llm_call_artifact(task_id, "planner", planner_prompt, planner_payload, round_num=0)
         planner_output = PlannerOutput(
             research_title=planner_payload["research_title"],
             subtasks=[PlannerSubtaskDraft(question=s["question"]) for s in planner_payload["subtasks"]],
@@ -349,6 +417,7 @@ class StateGraphRunner:
 
         # Step 2: Execute -> Supervise loop
         _next_target_ids: list[str] | None = None
+        _last_supervisor_route: str | None = None
         while True:
             pending_ids = [s.subtask_id for s in state.subtasks if s.status == "pending"]
             if not pending_ids:
@@ -377,16 +446,24 @@ class StateGraphRunner:
 
             # Supervise
             self._emit(task_id, "web_supervision", "started", "Evaluating research progress.")
+            supervisor_prompt = build_supervisor_prompt(state)
             supervisor_payload = invoke_role_json(
                 role_name="supervisor",
-                prompt=build_supervisor_prompt(state),
+                prompt=supervisor_prompt,
                 target_schema='{"route": "string", "reason": "string", "next_subtask_ids": ["string"], "skip_subtask_ids": ["string"], "plan_revision_request": "string|null", "research_gaps": ["string"], "saturation": false}',
                 chat_model=self.chat_models["supervisor"],
                 validator=_validate_supervisor_payload,
             )
+            self._save_llm_call_artifact(task_id, "supervisor", supervisor_prompt, supervisor_payload, round_num=state.retrieval_round)
             supervisor_output = _parse_supervisor_output(supervisor_payload)
             state.apply_supervisor_output(supervisor_output)
-            self._emit(task_id, "web_supervision", "completed", supervisor_output.reason)
+            _last_supervisor_route = supervisor_output.route
+            supervisor_items: list[dict[str, Any]] = []
+            if supervisor_output.research_gaps:
+                supervisor_items.extend(
+                    {"kind": "finding", "text": gap} for gap in supervisor_output.research_gaps
+                )
+            self._emit(task_id, "web_supervision", "completed", supervisor_output.reason, items=supervisor_items)
 
             # Route guard
             route = self._guard_route(state, supervisor_output.route)
@@ -405,13 +482,15 @@ class StateGraphRunner:
                 # from re-plan will execute unfiltered next iteration.
                 # Re-plan
                 self._emit(task_id, "web_revision", "started", "Revising plan.")
+                revision_prompt = build_planner_prompt(state, revision=True)
                 revision_payload = invoke_role_json(
                     role_name="planner",
-                    prompt=build_planner_prompt(state, revision=True),
+                    prompt=revision_prompt,
                     target_schema='{"research_title": "string", "subtasks": [{"question": "string"}]}',
                     chat_model=self.chat_models["planner"],
                     validator=_validate_planner_payload,
                 )
+                self._save_llm_call_artifact(task_id, "planner_revision", revision_prompt, revision_payload, round_num=state.retrieval_round)
                 revision_output = PlannerOutput(
                     research_title=revision_payload["research_title"],
                     subtasks=[PlannerSubtaskDraft(question=s["question"]) for s in revision_payload["subtasks"]],
@@ -424,7 +503,14 @@ class StateGraphRunner:
             else:  # fail
                 return self._fail(state, task_id, question, created_at)
 
-        # If we exit the loop without curating, try to curate anyway
+        # R-37: Loop-exit fallback — reference the supervisor's last route
+        # instead of a blind heuristic.  If the supervisor last said "curate"
+        # or "fail", honour that decision.  Otherwise fall back to the
+        # findings/sources heuristic.
+        if _last_supervisor_route == "curate":
+            return self._curate(state, task_id, question, created_at)
+        if _last_supervisor_route == "fail":
+            return self._fail(state, task_id, question, created_at)
         if state.findings and state.sources:
             return self._curate(state, task_id, question, created_at)
         return self._fail(state, task_id, question, created_at)
@@ -442,13 +528,15 @@ class StateGraphRunner:
 
     def _curate(self, state: WebResearchState, task_id: str, question: str, created_at: str) -> dict[str, Any]:
         self._emit(task_id, "web_curation", "started", "Curating findings.")
+        curator_prompt = build_curator_prompt(state)
         curator_payload = invoke_role_json(
             role_name="curator",
-            prompt=build_curator_prompt(state),
+            prompt=curator_prompt,
             target_schema='{"title": "string", "summary": "string", "findings": [], "sources": []}',
             chat_model=self.chat_models["curator"],
             validator=_validate_curator_payload,
         )
+        self._save_llm_call_artifact(task_id, "curator", curator_prompt, curator_payload, round_num=state.retrieval_round)
         curator_output = _parse_curator_output(curator_payload)
         state.curator_output = curator_output
 
@@ -463,7 +551,13 @@ class StateGraphRunner:
             self._emit(task_id, "web_curation", "failed", error.message)
             return self._persist_failed(task_id, question, created_at, error)
 
-        self._emit(task_id, "web_curation", "completed", "Curation completed.")
+        curate_items: list[dict[str, Any]] = []
+        for s in curator_output.sources:
+            curate_items.append({"kind": "source", "title": s.title, "url": s.url})
+        curate_items.append({"kind": "finding", "text": f"Report: {curator_output.title} — {curator_output.summary[:200]}"})
+        if report_path:
+            curate_items.append({"kind": "source", "path": str(report_path)})
+        self._emit(task_id, "web_curation", "completed", "Curation completed.", items=curate_items)
 
         result = {
             "task_id": task_id,
@@ -527,16 +621,59 @@ class StateGraphRunner:
             "route_history": state.route_history,
         }
         snapshot_path = self.workspace.task_dir(task_id) / "blackboard_snapshot.json"
-        snapshot_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            snapshot_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Failed to save blackboard snapshot: %s", exc)
+
+    def _save_llm_call_artifact(
+        self,
+        task_id: str,
+        role_name: str,
+        prompt: str,
+        output: dict[str, Any],
+        *,
+        round_num: int = 0,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        """Persist an LLM invocation record to artifacts/llm_calls/ (R-07)."""
+        artifacts_dir = self.workspace.task_dir(task_id) / "artifacts" / "llm_calls"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        idx = len(list(artifacts_dir.glob("*.json")))
+        record = {
+            "index": idx,
+            "role": role_name,
+            "round": round_num,
+            "timestamp": utc_now_iso(),
+            "prompt": prompt,
+            "output": output,
+        }
+        if extra:
+            record["metadata"] = extra
+        record_path = artifacts_dir / f"{idx:04d}_{role_name}_round{round_num:02d}.json"
+        try:
+            record_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Failed to save LLM call artifact: %s", exc)
 
     def _save_source_snapshots(self, task_id: str, state: WebResearchState) -> None:
         sources_dir = self.workspace.task_dir(task_id) / "artifacts" / "web_sources"
         sources_dir.mkdir(parents=True, exist_ok=True)
+        # R-28: Only write new sources (incremental), not all sources every round.
+        # Track saved IDs to avoid rewriting files that haven't changed.
+        saved: set[str] = getattr(self, "_saved_source_ids", set())
         for source in state.sources:
+            if source.source_id in saved:
+                continue
             source_path = sources_dir / f"{source.source_id}.json"
-            source_path.write_text(json.dumps(source.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+            try:
+                source_path.write_text(json.dumps(source.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+                saved.add(source.source_id)
+            except OSError as exc:
+                logger.warning("Failed to save source snapshot %s: %s", source.source_id, exc)
+        object.__setattr__(self, "_saved_source_ids", saved)
 
-    def _emit(self, task_id: str, phase: str, event_type: str, message: str) -> None:
+    def _emit(self, task_id: str, phase: str, event_type: str, message: str, items: list[dict[str, Any]] | None = None) -> None:
         event = ProgressEvent(
             task_id=task_id,
             mode="web",
@@ -544,9 +681,15 @@ class StateGraphRunner:
             event_type=event_type,
             created_at=utc_now_iso(),
             message=message,
-            details={"items": []},
+            details={"items": items or []},
         )
         event_dict = event.to_dict()
         self.workspace.append_event(task_id, event_dict)
         if self.on_event is not None:
             self.on_event(event_dict)
+
+    def _emit_progress_item(self, item: dict[str, Any]) -> None:
+        """Emit a progress event with a single details item (e.g. tool_call, finding, source)."""
+        if self._task_id is None:
+            return
+        self._emit(self._task_id, "web_execution", "progress", item.get("kind", "progress"), items=[item])

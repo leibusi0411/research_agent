@@ -206,7 +206,12 @@ class ToolRunner:
                 metadata={"pdf_bytes": len(response.content)},
             )
         media_type = _media_type(_content_type_header(response.headers))
-        if media_type != "application/pdf" and not urlparse(response.url).path.lower().endswith(".pdf"):
+        # R-31: Validate MIME type first; only fall back to URL suffix for
+        # ambiguous content types (e.g. servers that serve PDF as octet-stream).
+        if media_type == "application/octet-stream":
+            if not urlparse(response.url).path.lower().endswith(".pdf"):
+                return ToolResult(status="error", error="permanent_error", message=f"Unsupported PDF content type: {media_type}")
+        elif media_type != "application/pdf":
             return ToolResult(status="error", error="permanent_error", message=f"Unsupported PDF content type: {media_type}")
         reader = PdfReader(io.BytesIO(response.content))
         pages = [page.extract_text() or "" for page in reader.pages]
@@ -238,9 +243,9 @@ class ToolGateway:
             return ToolResult(status="error", error="validation_error", message=schema_error)
 
         result = self.runner.run(tool_name, arguments)
-        attempts = 0
-        while result.status == "error" and result.error == "transient_error" and attempts < self.tool_retries:
-            attempts += 1
+        retries = 0
+        while result.status == "error" and result.error == "transient_error" and retries < self.tool_retries:
+            retries += 1
             result = self.runner.run(tool_name, arguments)
         return result
 

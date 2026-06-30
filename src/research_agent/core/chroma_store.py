@@ -38,9 +38,15 @@ class ChromaStore:
         segment files so the persist directory can be moved or deleted
         on all platforms.
         """
-        if self._client is not None and not self._client._closed:
+        if self._client is None:
+            return
+        try:
+            already_closed = self._client._closed
+        except AttributeError:
+            already_closed = False
+        if not already_closed:
             self._client.close()
-            self._client = None  # type: ignore[assignment]
+        self._client = None  # type: ignore[assignment]
 
     # ------------------------------------------------------------------
     # Index build
@@ -51,14 +57,19 @@ class ChromaStore:
         chunks: list[Any],
         embedding_client: EmbeddingClient | None,
     ) -> None:
-        """Rebuild the Chroma collection from scratch."""
+        """Rebuild the Chroma collection from scratch.
+
+        If the store has been closed, the client is transparently re-opened
+        so that repeated build → close → build cycles work without forcing
+        the caller to create a new instance (fixes R-62).
+        """
         if self._client is None:
-            raise RuntimeError("ChromaStore has been closed — create a new instance")
+            self._client = chromadb.PersistentClient(path=str(self._persist_path))
 
         try:
             self._client.delete_collection(name=self.COLLECTION_NAME)
-        except Exception:
-            pass
+        except (ValueError, chromadb.errors.NotFoundError):
+            pass  # Collection does not exist yet — safe to proceed
 
         if not chunks:
             self._client.get_or_create_collection(name=self.COLLECTION_NAME)
@@ -96,7 +107,7 @@ class ChromaStore:
     ) -> list[dict[str, Any]]:
         """Semantic search: return nearest-neighbour chunks by cosine distance."""
         if self._client is None:
-            return []
+            self._client = chromadb.PersistentClient(path=str(self._persist_path))
         try:
             collection = self._client.get_collection(name=self.COLLECTION_NAME)
         except Exception:
@@ -118,20 +129,23 @@ class ChromaStore:
         for idx, chunk_id in enumerate(ids_batch[0]):
             # Defensive access: ChromaDB may omit metadata/documents/distances
             # for some results.  Build safe defaults per index.
-            meta = _safe_nth(results.get("metadatas"), idx, {})
-            doc = _safe_nth(results.get("documents"), idx, "")
-            distance = _safe_nth(results.get("distances"), idx, 0.0)
-            items.append(
-                {
-                    "chunk_id": chunk_id,
-                    "text": doc or "",
-                    "source_path": str(meta.get("source_path", "")),
-                    "heading_path": json.loads(meta.get("heading_path", "[]")),
-                    "start_offset": int(meta.get("start_offset", 0)),
-                    "end_offset": int(meta.get("end_offset", 0)),
-                    "score": float(distance),
-                }
-            )
+            try:
+                meta = _safe_nth(results.get("metadatas"), idx, {}) or {}
+                doc = _safe_nth(results.get("documents"), idx, "")
+                distance = _safe_nth(results.get("distances"), idx, 0.0)
+                items.append(
+                    {
+                        "chunk_id": chunk_id,
+                        "text": doc or "",
+                        "source_path": str(meta.get("source_path", "")),
+                        "heading_path": json.loads(meta.get("heading_path", "[]")),
+                        "start_offset": int(meta.get("start_offset", 0)),
+                        "end_offset": int(meta.get("end_offset", 0)),
+                        "score": float(distance),
+                    }
+                )
+            except (json.JSONDecodeError, TypeError, AttributeError, ValueError):
+                continue
         return items
 
     # ------------------------------------------------------------------
@@ -148,10 +162,11 @@ class ChromaStore:
 
 
 def _safe_nth(batch: list[list[Any]] | None, idx: int, default: Any) -> Any:
-    """Return ``batch[0][idx]`` safely, or *default* if out of range."""
+    """Return ``batch[0][idx]`` safely, or *default* if missing/None."""
     if not batch or not batch[0] or idx >= len(batch[0]):
         return default
-    return batch[0][idx]
+    val = batch[0][idx]
+    return default if val is None else val
 
 
 def _deterministic_embedding(text: str) -> list[float]:

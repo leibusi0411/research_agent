@@ -200,3 +200,170 @@ def test_fts5_only_fallback_works_without_embedding_client(tmp_path):
     assert result["status"] == "completed"
     assert len(result["local_results"]) >= 1
     assert any("machine learning" in item["text"] for item in result["local_results"])
+
+
+# ---------------------------------------------------------------------------
+# P0 fix tests: R-57, R-58, R-59
+# ---------------------------------------------------------------------------
+
+
+def test_chroma_store_close_is_idempotent(tmp_path):
+    """R-57: Calling close() twice should not raise."""
+    from research_agent.core.chroma_store import ChromaStore
+
+    store = ChromaStore(tmp_path / "chroma")
+    store.close()
+    store.close()  # second call should be a no-op
+
+
+def test_chroma_store_build_index_after_close_reopens(tmp_path):
+    """R-62: build_index() after close() should transparently re-open, not crash."""
+    from research_agent.core.chroma_store import ChromaStore
+
+    store = ChromaStore(tmp_path / "chroma")
+    store.close()
+
+    # Should not raise — ChromaStore transparently re-opens the client
+    store.build_index([], None)
+
+    # Clean up
+    store.close()
+
+
+def test_chroma_store_query_after_close_reopens(tmp_path):
+    """R-62: query() after close() should transparently re-open, not crash."""
+    from research_agent.core.chroma_store import ChromaStore
+
+    store = ChromaStore(tmp_path / "chroma")
+    store.close()
+
+    # Should not crash — ChromaStore transparently re-opens the client
+    result = store.query([0.1, 0.2, 0.3])
+    assert result == []
+
+    # Clean up
+    store.close()
+
+
+def test_chroma_store_count_returns_zero_after_close(tmp_path):
+    """R-57: count() after close() should return 0."""
+    from research_agent.core.chroma_store import ChromaStore
+
+    store = ChromaStore(tmp_path / "chroma")
+    store.close()
+
+    assert store.count() == 0
+
+
+def test_chroma_store_query_empty_collection(tmp_path):
+    """R-58: query() on empty collection should return empty list."""
+    from research_agent.core.chroma_store import ChromaStore
+
+    store = ChromaStore(tmp_path / "chroma")
+    store.build_index([], None)  # create empty collection
+
+    assert store.query([0.1, 0.2, 0.3]) == []
+
+
+def test_chroma_store_query_returns_results_with_metadata(tmp_path):
+    """R-58: query() should correctly extract metadata fields."""
+    from research_agent.core.chroma_store import ChromaStore
+
+    store = ChromaStore(tmp_path / "chroma")
+
+    class FakeChunk:
+        def __init__(self, cid, text, path, heading, start, end):
+            self.chunk_id = cid
+            self.text = text
+            self.source_path = path
+            self.heading_path = heading
+            self.start_offset = start
+            self.end_offset = end
+
+    chunks = [
+        FakeChunk("c1", "hello world", "/doc.md", ["Intro"], 0, 11),
+        FakeChunk("c2", "foo bar", "/doc.md", ["Section"], 12, 19),
+    ]
+
+    class FakeEmbedding:
+        def embed(self, texts):
+            return [[float(i), 0.0, 0.0] for i, _ in enumerate(texts)]
+
+    store.build_index(chunks, FakeEmbedding())
+    results = store.query([0.0, 0.0, 0.0], n_results=2)
+
+    assert len(results) >= 1
+    first = results[0]
+    assert "chunk_id" in first
+    assert "text" in first
+    assert "source_path" in first
+    assert "heading_path" in first
+    assert "score" in first
+
+
+def test_fts5_reserved_words_do_not_cause_operational_error(tmp_path):
+    """R-59: AND, OR, NOT as standalone query terms should not break FTS5."""
+    service, _config_path, workspace, vault = configured_service(tmp_path)
+    (vault / "logic.md").write_text(
+        "# Logic\n\nAND and OR are boolean operators. NOT is a negation operator.",
+        encoding="utf-8",
+    )
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
+
+    # Each reserved word as a standalone query
+    for word in ("AND", "OR", "NOT"):
+        result = service.run_local_research(word)
+        assert result["status"] == "completed", f"FTS5 failed for reserved word: {word}"
+
+
+def test_fts5_only_special_characters_returns_empty(tmp_path):
+    """R-59: Query with only special characters should return empty, not error."""
+    service, _config_path, workspace, vault = configured_service(tmp_path)
+    (vault / "note.md").write_text("# Note\n\nSome content here.", encoding="utf-8")
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
+
+    result = service.run_local_research("**++()")
+    assert result["status"] == "completed"
+    assert result["local_results"] == []
+
+
+def test_fts5_parentheses_in_query(tmp_path):
+    """R-59: Parentheses in query like (async) should not cause errors."""
+    service, _config_path, workspace, vault = configured_service(tmp_path)
+    (vault / "async.md").write_text(
+        "# Async\n\nThe async keyword enables asynchronous programming in Python.",
+        encoding="utf-8",
+    )
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
+
+    result = service.run_local_research("(async) programming")
+    assert result["status"] == "completed"
+    assert len(result["local_results"]) >= 1
+
+
+def test_fts5_asterisk_in_query(tmp_path):
+    """R-59: Asterisk * in query should be stripped, not treated as FTS5 wildcard."""
+    service, _config_path, workspace, vault = configured_service(tmp_path)
+    (vault / "glob.md").write_text(
+        "# Glob\n\nWildcard patterns use star to match any sequence of characters.",
+        encoding="utf-8",
+    )
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
+
+    result = service.run_local_research("wildcard * match")
+    assert result["status"] == "completed"
+    assert len(result["local_results"]) >= 1
+
+
+def test_fts5_mixed_reserved_and_normal_terms(tmp_path):
+    """R-59: Mix of reserved words and normal terms should work correctly."""
+    service, _config_path, workspace, vault = configured_service(tmp_path)
+    (vault / "search.md").write_text(
+        "# Search\n\nBoolean search uses AND OR NOT operators for filtering results.",
+        encoding="utf-8",
+    )
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
+
+    result = service.run_local_research("Boolean AND search")
+    assert result["status"] == "completed"
+    assert len(result["local_results"]) >= 1
