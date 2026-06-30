@@ -366,6 +366,9 @@ class StateGraphRunner:
         self.max_concurrent_subtasks = max_concurrent_subtasks
         self.on_event = on_event
         self._task_id: str | None = None
+        self._event_seq: int = 0
+        self._event_queue: Any = None  # janus.Queue | None (lazy)
+        self._on_done: Any = None  # callback for registry cleanup
         self.executor = ResearchExecutor(
             tool_gateway=tool_gateway,
             max_concurrent_subtasks=max_concurrent_subtasks,
@@ -673,7 +676,53 @@ class StateGraphRunner:
                 logger.warning("Failed to save source snapshot %s: %s", source.source_id, exc)
         object.__setattr__(self, "_saved_source_ids", saved)
 
-    def _emit(self, task_id: str, phase: str, event_type: str, message: str, items: list[dict[str, Any]] | None = None) -> None:
+    async def events(self):
+        """Yield ProgressEvents for this runner, first replaying from file then live from queue.
+
+        Creates the janus.Queue immediately so that emits during file replay
+        are captured in the queue and deduplicated when the consumer switches
+        to live consumption.
+
+        Raises RuntimeError if ``run()`` has not been called yet (``_task_id`` is None).
+        """
+        if self._task_id is None:
+            raise RuntimeError("Cannot stream events: task_id is not set. Call run() first.")
+        import janus
+
+        self._event_queue = janus.Queue(maxsize=1024)
+        events_path = self.workspace.task_dir(self._task_id) / "events.jsonl"
+        last_seq = -1
+
+        try:
+            # Phase 1: replay persisted events from file
+            if events_path.exists():
+                for line in events_path.read_text(encoding="utf-8").splitlines():
+                    if not line.strip():
+                        continue
+                    try:
+                        evt = json.loads(line)
+                    except Exception:
+                        logger.warning("Failed to parse event line in %s: %s", events_path, line[:100])
+                        continue
+                    yield evt
+                    last_seq = max(last_seq, evt.get("_seq", -1))
+
+            # Phase 2: consume live events from queue (skip already-replayed)
+            while True:
+                evt = await self._event_queue.async_q.get()
+                if evt.get("_seq", -1) <= last_seq:
+                    continue  # already yielded during file replay
+                yield evt
+        finally:
+            # R-79: Only clean up the queue reference here.  _on_done is
+            # intentionally NOT called from this finally block because it
+            # fires on consumer disconnect (e.g. SSE timeout), not on task
+            # completion.  Cleanup of the runner registry is handled by
+            # _cleanup_background in the API layer after the task finishes.
+            self._event_queue = None
+
+    def _emit(self, task_id: str, phase: str, event_type: str, message: str, items: list[dict[str, Any]] | None = None, *, event_subtype: str | None = None) -> None:
+        self._event_seq += 1
         event = ProgressEvent(
             task_id=task_id,
             mode="web",
@@ -682,9 +731,16 @@ class StateGraphRunner:
             created_at=utc_now_iso(),
             message=message,
             details={"items": items or []},
+            _seq=self._event_seq,
+            event_subtype=event_subtype,
         )
         event_dict = event.to_dict()
         self.workspace.append_event(task_id, event_dict)
+        if self._event_queue is not None:
+            try:
+                self._event_queue.sync_q.put(event_dict, timeout=5)
+            except Exception:
+                logger.warning("Failed to push event to live queue (seq=%d); event is persisted to disk.", self._event_seq)
         if self.on_event is not None:
             self.on_event(event_dict)
 
@@ -692,4 +748,5 @@ class StateGraphRunner:
         """Emit a progress event with a single details item (e.g. tool_call, finding, source)."""
         if self._task_id is None:
             return
-        self._emit(self._task_id, "web_execution", "progress", item.get("kind", "progress"), items=[item])
+        kind = item.get("kind", "progress")
+        self._emit(self._task_id, "web_execution", "progress", kind, items=[item], event_subtype=kind)

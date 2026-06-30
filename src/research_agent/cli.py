@@ -174,6 +174,10 @@ def _run_web(args: argparse.Namespace, service: CoreService) -> int:
         print("[config_invalid] Web research question is required.")
         return 1
     try:
+        # on_event callback IS the CLI's EventStream consumer.
+        # It is threaded through create_provider_runtime -> ProviderBackedWebResearchRuntime
+        # -> StateGraphRunner._emit -> self.on_event (see R-33 fix).
+        # Events carry _seq and event_subtype for rich formatting.
         result = service.run_web_research(args.question, on_event=_print_web_event)
     except ResearchError as error:
         print(f"[{error.code}] {error.message}")
@@ -202,10 +206,6 @@ def _print_web_result(result: dict, *, heading_prefix: str = "") -> int:
     if report_path:
         print(f"{heading_prefix}report_path: {report_path}")
     return 0
-
-
-def _print_both_web_event(event: dict) -> None:
-    _print_web_event({**event, "phase": f"web:{event['phase']}"})
 
 
 def _run_both(args: argparse.Namespace, service: CoreService) -> int:
@@ -257,8 +257,53 @@ def _run_task(args: argparse.Namespace, service: CoreService) -> int:
         return 1
 
 
+def _first_item(event: dict) -> dict:
+    """Safely extract the first details item as a dict.
+
+    Returns an empty dict when items is empty or its first element is not a dict
+    (defensive against malformed event data; R-82).
+    """
+    items = event.get("details", {}).get("items", [])
+    item0 = items[0] if items else None
+    return item0 if isinstance(item0, dict) else {}
+
+
 def _print_web_event(event: dict) -> None:
-    print(f"{event['phase']}: {event['message']}", flush=True)
+    phase = event.get("phase", "")
+    subtype = event.get("event_subtype")
+    msg = event.get("message", "")
+    if subtype == "tool_call":
+        item = _first_item(event)
+        tool_name = item.get("name", "?")
+        tool_input = item.get("input", "")[:80]
+        print(f"[{phase}] {tool_name}: {tool_input}", flush=True)
+    elif subtype == "finding":
+        item = _first_item(event)
+        text = item.get("text", "")[:120] or msg
+        print(f"[{phase}] finding: {text}", flush=True)
+    elif subtype == "source":
+        item = _first_item(event)
+        title = item.get("title", "")
+        url = item.get("url", "")[:80]
+        print(f"[{phase}] source: {title} ({url})", flush=True)
+    elif subtype == "subtask_completed":
+        item = _first_item(event)
+        if item:
+            n_findings = item.get("finding_count", 0)
+            n_sources = item.get("source_count", 0)
+            print(f"[{phase}] subtask_done: {n_findings} findings, {n_sources} sources", flush=True)
+        else:
+            print(f"[{phase}] {msg}", flush=True)
+    elif subtype == "subtask_failed":
+        item = _first_item(event)
+        error = item.get("error", "?")[:100]
+        print(f"[{phase}] subtask_failed: {error}", flush=True)
+    else:
+        print(f"[{phase}] {msg}", flush=True)
+
+
+def _print_both_web_event(event: dict) -> None:
+    _print_web_event({**event, "phase": f"web:{event.get('phase', '')}"})
 
 
 def _configure_stdio() -> None:
