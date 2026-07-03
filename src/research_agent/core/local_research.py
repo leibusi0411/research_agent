@@ -10,7 +10,7 @@ from research_agent.core.chroma_store import ChromaStore
 from research_agent.core.errors import ResearchError
 from research_agent.core.ids import generate_task_id, utc_now_iso
 from research_agent.core.kb import KnowledgeBaseIndex
-from research_agent.core.providers import EmbeddingClient
+from research_agent.core.providers import ChatModelClient, EmbeddingClient
 from research_agent.core.tasks import TaskRecord, TaskStore
 from research_agent.core.workspace import Workspace
 
@@ -23,12 +23,15 @@ def run_local_research(
     config_path: Path | None,
     task_id: str | None = None,
     embedding_client: EmbeddingClient | None = None,
+    chat_model: ChatModelClient | None = None,
 ) -> dict[str, Any]:
     task_id = task_id or generate_task_id()
     created_at = utc_now_iso()
     kb_index = KnowledgeBaseIndex(workspace, config_path)
     status = kb_index.status()["status"]
-    if status != "ready":
+    # "stale" means FTS5 is fresh but Chroma vectors may be out of date —
+    # keyword search is still usable.
+    if status not in ("ready", "stale"):
         error = _index_status_error(status)
         result = _failed_result(task_id, question, created_at, error)
         _persist_task(workspace, task_store, task_id, question, created_at, result)
@@ -54,6 +57,24 @@ def run_local_research(
         question=question,
         embedding_client=embedding_client,
     )
+
+    # A+G: Augment prompt with retrieved chunks + generate answer via LLM
+    summary: str | None = None
+    if chat_model is not None and local_results:
+        workspace.append_event(
+            task_id,
+            {
+                "task_id": task_id,
+                "mode": "local",
+                "phase": "local_rag",
+                "event_type": "progress",
+                "created_at": utc_now_iso(),
+                "message": "Generating summary from retrieved chunks...",
+                "details": {"items": []},
+            },
+        )
+        summary = _generate_summary(question, local_results, chat_model)
+
     completed_at = utc_now_iso()
 
     # Build source items for completed event
@@ -73,6 +94,8 @@ def run_local_research(
         "completed_at": completed_at,
         "local_results": local_results,
     }
+    if summary is not None:
+        result["summary"] = summary
     _persist_task(workspace, task_store, task_id, question, created_at, result, completed_items=source_items, result_count=len(local_results))
     return result
 
@@ -303,3 +326,43 @@ def _persist_task(
             "details": {"items": [{"kind": "status", "task_id": task_id, "status": result["status"], "mode": "local"}]},
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Augmentation + Generation
+# ---------------------------------------------------------------------------
+
+
+def _build_augmented_prompt(
+    question: str,
+    chunks: list[dict[str, Any]],
+    top_n: int = 10,
+) -> str:
+    """Build an augmented prompt with retrieved chunks as reference material."""
+    context_parts: list[str] = []
+    for i, chunk in enumerate(chunks[:top_n], 1):
+        source = chunk.get("source_path", "unknown")
+        heading = " > ".join(chunk.get("heading_path", [])) or "(无标题)"
+        text = chunk.get("text", "")
+        context_parts.append(
+            f"[{i}] 来源: {source}\n    标题: {heading}\n    {text}"
+        )
+    context = "\n\n".join(context_parts)
+    return (
+        "你是一个个人知识库助手。请根据以下参考资料回答用户问题。\n"
+        "只使用参考资料中的信息，如果信息不足请明确指出。\n"
+        "回答时请引用对应的参考编号（如 [1]、[2]）。\n\n"
+        f"参考资料：\n\n{context}\n\n"
+        f"用户问题：{question}\n\n"
+        "请用中文回答："
+    )
+
+
+def _generate_summary(
+    question: str,
+    chunks: list[dict[str, Any]],
+    chat_model: ChatModelClient,
+) -> str:
+    """Augment prompt with chunks and generate answer via LLM."""
+    prompt = _build_augmented_prompt(question, chunks)
+    return chat_model.complete(prompt)

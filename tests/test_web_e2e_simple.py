@@ -13,7 +13,12 @@ from research_agent.web.prompt_builders import (
     build_supervisor_prompt,
     build_curator_prompt,
 )
-from research_agent.web.schemas import WebResearchState, PlannerOutput, PlannerSubtaskDraft
+from research_agent.web.schemas import (
+    PlannerOutput,
+    PlannerSubtaskDraft,
+    ResearchSubtask,
+    create_initial_state,
+)
 from research_agent.web.tools import TavilySearchProvider
 
 
@@ -38,7 +43,7 @@ def test_planner_prompt_with_real_llm(tmp_path):
     chat_model = OpenAICompatibleChatModel.from_config(config.chat_model)
 
     # Create a simple state
-    state = WebResearchState(original_question="What is Python?")
+    state = create_initial_state(original_question="What is Python?")
 
     # Build prompt
     prompt = build_planner_prompt(state)
@@ -96,11 +101,9 @@ def test_executor_prompt_with_real_llm(tmp_path):
     chat_model = OpenAICompatibleChatModel.from_config(config.chat_model)
 
     # Create state with a subtask
-    state = WebResearchState(original_question="What is Python?")
-    state.add_planner_output(PlannerOutput(
-        research_title="Python Research",
-        subtasks=[PlannerSubtaskDraft(question="What is Python's GIL?")],
-    ))
+    state = create_initial_state(original_question="What is Python?")
+    state["research_title"] = "Python Research"
+    state["subtasks"] = [ResearchSubtask(subtask_id="st_1", question="What is Python's GIL?")]
 
     # Build executor tool plan prompt
     prompt = build_executor_tool_plan_prompt(state, "st_1")

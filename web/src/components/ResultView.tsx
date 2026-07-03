@@ -15,7 +15,7 @@ export function LocalResultView({ result, events }: { result: ResearchResult; ev
   const groupedEvents = useMemo(() => groupEvents(events), [events]);
   const newestSeq = useMemo(() => {
     let max = 0;
-    for (const e of events) if (e._seq !== undefined && e._seq > max) max = e._seq;
+    for (const e of events) if (e.seq !== undefined && e.seq > max) max = e.seq;
     return max;
   }, [events]);
   return (
@@ -39,7 +39,7 @@ export function WebResultView({ result, events }: { result: ResearchResult; even
   const groupedEvents = useMemo(() => groupEvents(events), [events]);
   const newestSeq = useMemo(() => {
     let max = 0;
-    for (const e of events) if (e._seq !== undefined && e._seq > max) max = e._seq;
+    for (const e of events) if (e.seq !== undefined && e.seq > max) max = e.seq;
     return max;
   }, [events]);
   return (

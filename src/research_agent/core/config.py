@@ -195,7 +195,7 @@ def _parse_user_config(data: dict) -> UserConfig:
             ),
             search=SearchConfig(provider=search.get("provider", "tavily"), api_key=search["api_key"]),
             index=IndexConfig(backend=index.get("backend", "sqlite_fts5_chroma")),
-            web_tools=WebToolsConfig(**{key: int(value) for key, value in web_tools.items()}),
+            web_tools=WebToolsConfig(**{key: _safe_int(value, f"web_tools.{key}") for key, value in web_tools.items()}),
         )
     except KeyError as exc:
         raise ResearchError(code="config_invalid", message=f"Missing config field: {exc.args[0]}") from exc
@@ -213,7 +213,7 @@ def _validate_init_request(request: InitConfigRequest) -> None:
         ("Chat model base URL", request.chat_base_url),
         ("Embedding model base URL", request.embedding_base_url),
     ]:
-        if not _is_valid_url(value):
+        if not is_valid_http_url(value):
             raise ResearchError(code="config_invalid", message=f"{label} must be a valid URL.")
     for label, value in [
         ("Chat model API key", request.chat_api_key),
@@ -253,7 +253,11 @@ def _validate_raw_path(label: str, value: Path) -> None:
         raise ResearchError(code="config_invalid", message=f"{label} must be non-empty.")
 
 
-def _is_valid_url(value: str) -> bool:
+def is_valid_http_url(value: str) -> bool:
+    """Return True if *value* is an http/https URL with a non-empty host.
+
+    Shared between config validation and web tool argument validation (R-108).
+    """
     parsed = urlparse(value)
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
@@ -303,6 +307,17 @@ def _render_config_toml(
             "",
         ]
     )
+
+
+def _safe_int(value: object, label: str) -> int:
+    """Convert *value* to int with a field-specific error message (R-129)."""
+    try:
+        return round(float(value))
+    except (TypeError, ValueError) as exc:
+        raise ResearchError(
+            code="config_invalid",
+            message=f"{label} must be an integer, got {value!r}: {exc}",
+        ) from exc
 
 
 def _toml_string(value: object) -> str:

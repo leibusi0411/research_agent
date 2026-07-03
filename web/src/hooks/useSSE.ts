@@ -30,11 +30,11 @@ export function useSSE(
       },
       () => {
         setConnectionState("disconnected");
-        onResultRef.current();
+        onErrorRef.current();
       },
       () => {
         setConnectionState("disconnected");
-        onErrorRef.current();
+        onResultRef.current();
       },
     );
 

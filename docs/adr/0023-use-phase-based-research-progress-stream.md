@@ -15,18 +15,18 @@ V1 progress records use this shape:
   "event_subtype": "tool_call",
   "created_at": "2026-06-23T10:30:00Z",
   "message": "Searching for LangGraph core concepts",
-  "_seq": 42,
+  "seq": 42,
   "details": {
     "items": []
   }
 }
 ```
 
-Each line in `tasks/{task_id}/events.jsonl` is one JSON object with top-level fields: `task_id`, `mode`, `phase`, `event_type`, optional `event_subtype`, `created_at`, `message`, `_seq`, and `details`. `mode` is `local` or `web`. `event_type` is `started`, `progress`, `completed`, or `failed`. V1 does not add `event_id` or an outer `subtask_id`; subtask context, if useful for display, belongs in `message` or `details`.
+Each line in `tasks/{task_id}/events.jsonl` is one JSON object with top-level fields: `task_id`, `mode`, `phase`, `event_type`, optional `event_subtype`, `created_at`, `message`, `seq`, and `details`. `mode` is `local` or `web`. `event_type` is `started`, `progress`, `completed`, or `failed`. V1 does not add `event_id` or an outer `subtask_id`; subtask context, if useful for display, belongs in `message` or `details`.
 
 `event_subtype` (added 2026-06-30) is an optional field that classifies `progress`-scoped events for direct UI rendering without parsing `details.items`. Values: `tool_call`, `finding`, `source`, `subtask_started`, `subtask_completed`, `subtask_failed`. Phase-boundary events (`started`, `completed`, `failed`) omit `event_subtype`. CLI uses it to select output format; Web UI uses it to pick the appropriate detail card.
 
-`_seq` (added 2026-06-30) is a monotonically increasing integer assigned by `_emit`. It is prefixed with underscore to mark it as an internal field not part of the public display schema. Consumers use it for deduplication when the EventStream replays persisted events from `events.jsonl` before switching to live queue consumption.
+`seq` (added 2026-06-30, renamed from `_seq` on 2026-07-02 per R-112) is a monotonically increasing integer assigned by `_emit`. Consumers use it for deduplication when the EventStream replays persisted events from `events.jsonl` before switching to live queue consumption.
 
 `details.items` is display-only and is not used as the source of truth for recovery, routing, Supervisor judgment, or final report generation. Internal state remains authoritative. `events.jsonl` is an append-only progress display log, is not inserted into SQLite, and is not used as a Supervisor or Curator input.
 

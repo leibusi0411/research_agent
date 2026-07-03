@@ -1,16 +1,16 @@
 import type { ConnectionState } from "../hooks/useSSE";
 
-const config: Record<ConnectionState, { color: string; label: string }> = {
-  connected: { color: "#27ae60", label: "connected" },
-  reconnecting: { color: "#f39c12", label: "reconnecting" },
-  disconnected: { color: "#e74c3c", label: "disconnected" },
+const config: Record<ConnectionState, { className: string; label: string }> = {
+  connected: { className: "connected", label: "connected" },
+  reconnecting: { className: "reconnecting", label: "reconnecting" },
+  disconnected: { className: "disconnected", label: "disconnected" },
 };
 
 export function ConnectionBadge({ status }: { status: ConnectionState }) {
-  const { color, label } = config[status];
+  const { className, label } = config[status];
   return (
     <span className="connection-badge" title={label}>
-      <span className="connection-dot" style={{ color }}>&#9679;</span>
+      <span className={`connection-dot ${className}`} />
       <span className="connection-label">{label}</span>
     </span>
   );

@@ -22,7 +22,7 @@ from research_agent.web.tools import (
     TavilySearchProvider,
     create_default_web_tool_registry,
 )
-from research_agent.web.state_graph import StateGraphRunner
+from research_agent.web.state_graph import RunnerConfig, StateGraphRunner
 
 
 def _get_config_or_skip():
@@ -68,11 +68,13 @@ def test_web_research_e2e_simple(tmp_path):
 
     # Create runner with minimal rounds for faster test
     runner = StateGraphRunner(
-        workspace=str(workspace),
-        chat_models=_make_chat_models(chat_model),
-        tool_gateway=tool_gateway,
-        max_retrieval_rounds=1,  # Limit to 1 round for faster test
-        max_concurrent_subtasks=2,
+        config=RunnerConfig(
+            workspace=str(workspace),
+            chat_models=_make_chat_models(chat_model),
+            tool_gateway=tool_gateway,
+            max_retrieval_rounds=1,  # Limit to 1 round for faster test
+            max_concurrent_subtasks=2,
+        ),
     )
 
     # Run research
@@ -106,11 +108,9 @@ def test_web_research_e2e_simple(tmp_path):
         assert "---" in report_content  # Has frontmatter
         assert question.split("?")[0] in report_content or curator["title"] in report_content
 
-        # Verify blackboard snapshot
-        snapshot_path = workspace / "tasks" / result["task_id"] / "blackboard_snapshot.json"
-        assert snapshot_path.exists()
-        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-        assert snapshot["original_question"] == question
+        # Verify LangGraph checkpoint (replaces blackboard_snapshot.json, ADR-0013 V1.1)
+        checkpoint_path = workspace / "tasks" / result["task_id"] / "checkpoints.sqlite"
+        assert checkpoint_path.exists(), f"checkpoints.sqlite not found at {checkpoint_path}"
 
         print(f"\n[PASS] Research completed successfully!")
         print(f"   Title: {curator['title']}")
@@ -133,11 +133,13 @@ def test_web_research_e2e_with_multiple_subtasks(tmp_path):
     tool_gateway = _create_tool_gateway(config)
 
     runner = StateGraphRunner(
-        workspace=str(workspace),
-        chat_models=_make_chat_models(chat_model),
-        tool_gateway=tool_gateway,
-        max_retrieval_rounds=2,
-        max_concurrent_subtasks=2,
+        config=RunnerConfig(
+            workspace=str(workspace),
+            chat_models=_make_chat_models(chat_model),
+            tool_gateway=tool_gateway,
+            max_retrieval_rounds=2,
+            max_concurrent_subtasks=2,
+        ),
     )
 
     question = "Compare LangGraph and AutoGen for building AI agents"

@@ -68,7 +68,7 @@ export type ProgressEvent = {
   message: string;
   created_at: string;
   details: { items: Array<Record<string, unknown>> };
-  _seq?: number;
+  seq?: number;
   event_subtype?: string | null;
 };
 
@@ -89,8 +89,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
   if (!response.ok) {
-    const error = data.error ?? { code: "runtime_error", message: "Request failed." };
-    throw new Error(`[${error.code}] ${error.message}`);
+    const err = data.error;
+    if (typeof err === "string") {
+      throw new Error(err);
+    }
+    const code = err?.code ?? "runtime_error";
+    const message = err?.message ?? "Request failed.";
+    throw new Error(`[${code}] ${message}`);
   }
   return data as T;
 }
@@ -136,11 +141,13 @@ export function parseSseEvents(text: string): ProgressEvent[] {
   return events;
 }
 
+// R-101: onError before onResult is a more natural parameter order
+// (error handler typically precedes success/result handler).
 export function subscribeTaskEvents(
   taskId: string,
   onEvent: (event: ProgressEvent) => void,
+  onError: () => void,
   onResult: (event: ProgressEvent) => void,
-  onError: () => void
 ): () => void {
   let eventSource: EventSource;
   try {

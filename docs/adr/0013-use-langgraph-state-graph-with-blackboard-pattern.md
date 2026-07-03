@@ -29,4 +29,45 @@ The following migration decisions were made during the grill-with-docs SSE + Lan
 
 ### Relationship with EventStream
 
-The EventStream layer (Stage 6A, `janus.Queue` + `_seq` dedup + SSE endpoint switch) is built **before** LangGraph migration. LangGraph node functions (`plan_node`, `execute_node`, etc.) continue to call `_emit` exactly as the current `_run_graph` phases do. The two systems are orthogonal: `_emit` produces product events through the EventStream regardless of whether the graph loop is manual `while` or LangGraph `StateGraph`.
+The EventStream layer (Stage 6A, `janus.Queue` + `seq` dedup + SSE endpoint switch) is built **before** LangGraph migration. LangGraph node functions (`plan_node`, `execute_node`, etc.) continue to call `_emit` exactly as the current `_run_graph` phases do. The two systems are orthogonal: `_emit` produces product events through the EventStream regardless of whether the graph loop is manual `while` or LangGraph `StateGraph`.
+
+## V1.1 Migration Completed (2026-06-30)
+
+The LangGraph migration (S5, issue #18) was completed. Key implementation details:
+
+### State conversion
+- `WebResearchState` (mutable `@dataclass`) → `WebResearchStateDict` (`TypedDict`, `total=False`)
+- List fields use `Annotated[list[X], operator.add]` for append-on-return semantics
+- `subtasks` uses custom `_merge_subtasks` reducer (upsert by `subtask_id`)
+- Scalar fields use LangGraph's default last-write-wins
+- `create_initial_state(question)` factory returns a fully initialized dict
+
+### Graph structure
+```
+START → plan → execute → supervise → _route_after_supervise ─┬─ continue_execution → execute
+                                                               ├─ revise_plan → plan_revision → execute
+                                                               ├─ curate → curate → END
+                                                               └─ fail → fail → END
+```
+
+### Checkpointing
+- `SqliteSaver.from_conn_string()` with context-manager usage
+- Checkpoint DB written to `{task_dir}/checkpoints.sqlite`
+- `_save_blackboard_snapshot` method deleted
+
+### Route guard
+- `_guard_route` method deleted; logic moved to `_route_after_supervise(state)`
+- `max_retrieval_rounds` enforced both in route function and via `config.recursion_limit` as safety net
+- `route_after_supervise` extracted as standalone module-level function (not method nor closure) for testability; node functions (`_plan_node`, `_execute_node`, etc.) extracted from `build_web_research_graph` closures into module-level functions in `graph.py` (2026-07-02, R-100)
+
+### Unchanged
+- `_emit` + `janus.Queue` EventStream system (orthogonal)
+- `ResearchExecutor` with `ThreadPoolExecutor` (no `Send` parallelization)
+- All artifact persistence helpers (`_save_llm_call_artifact`, `_save_source_snapshots`, `_persist_result`, `_persist_failed`)
+- `events()` async generator for SSE
+
+### Test impact
+- 125 non-e2e tests pass; 7 web_state_graph tests updated for TypedDict state
+- `test_web_prompt_builders.py` (11 tests) updated with helper functions for dict state construction
+- `test_web_e2e.py` snapshot assertion changed from `blackboard_snapshot.json` → `checkpoints.sqlite`
+- `test_api_surface.py` `_TestWebRuntime` gained `runner = None` attribute

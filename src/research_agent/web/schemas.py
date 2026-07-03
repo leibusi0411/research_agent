@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Literal
+import operator
+from dataclasses import dataclass
+from typing import Annotated, Literal, TypedDict
 
 
 SubtaskStatus = Literal["pending", "completed", "failed", "skipped"]
@@ -23,7 +24,7 @@ class PlannerOutput:
     subtasks: list[PlannerSubtaskDraft]
 
 
-@dataclass
+@dataclass(frozen=True)
 class ResearchSubtask:
     subtask_id: str
     question: str
@@ -107,7 +108,7 @@ class ProgressEvent:
     created_at: str
     message: str
     details: dict
-    _seq: int = 0
+    seq: int = 0  # R-112: public field name — consumers use this for dedup
     event_subtype: str | None = None
 
     def to_dict(self) -> dict:
@@ -119,43 +120,87 @@ class ProgressEvent:
             "event_subtype": self.event_subtype,
             "created_at": self.created_at,
             "message": self.message,
-            "_seq": self._seq,
+            "seq": self.seq,
             "details": self.details,
         }
 
 
-@dataclass
-class WebResearchState:
+# ── LangGraph-compatible TypedDict state ────────────────────────────────────
+
+
+def _merge_subtasks(
+    left: list[ResearchSubtask], right: list[ResearchSubtask]
+) -> list[ResearchSubtask]:
+    """Merge subtask lists: update existing by subtask_id, append new ones.
+
+    Used as an ``Annotated`` reducer in ``WebResearchStateDict`` so that
+    nodes returning partial subtask lists (e.g. status updates after
+    execution or skip markings after supervision) correctly merge into
+    the existing list rather than replacing it.
+    """
+    right_by_id = {st.subtask_id: st for st in right}
+    result: list[ResearchSubtask] = []
+    seen: set[str] = set()
+    for st in left:
+        result.append(right_by_id.get(st.subtask_id, st))
+        seen.add(st.subtask_id)
+    for st in right:
+        if st.subtask_id not in seen:
+            result.append(st)
+    return result
+
+
+class WebResearchStateDict(TypedDict, total=False):
+    """LangGraph-compatible TypedDict state with ``Annotated`` reducers.
+
+    Replaces the mutable ``WebResearchState`` dataclass for the LangGraph
+    migration (ADR-0013 V1.1).  List fields use ``operator.add`` (append)
+    or the custom ``_merge_subtasks`` reducer; scalar fields use
+    last-write-wins (the LangGraph default).
+
+    ``total=False`` allows nodes to return partial state updates.
+    """
+
     original_question: str
-    research_title: str | None = None
-    subtasks: list[ResearchSubtask] = field(default_factory=list)
-    executor_outputs: list[ExecutorOutput] = field(default_factory=list)
-    findings: list[Finding] = field(default_factory=list)
-    sources: list[WebSource] = field(default_factory=list)
-    research_gaps: list[str] = field(default_factory=list)
-    last_supervisor_output: SupervisorOutput | None = None
-    curator_output: CuratorOutput | None = None
-    route_history: list[str] = field(default_factory=list)
-    retrieval_round: int = 0
+    research_title: str | None
+    subtasks: Annotated[list[ResearchSubtask], _merge_subtasks]
+    executor_outputs: Annotated[list[ExecutorOutput], operator.add]
+    findings: Annotated[list[Finding], operator.add]
+    sources: Annotated[list[WebSource], operator.add]
+    research_gaps: list[str]
+    last_supervisor_output: SupervisorOutput | None
+    curator_output: CuratorOutput | None
+    route_history: Annotated[list[str], operator.add]
+    revision_subtask_ids: Annotated[list[str], operator.add]  # R-123: track IDs added by plan_revision
+    retrieval_round: int
 
-    def add_planner_output(self, output: PlannerOutput) -> None:
-        self.research_title = output.research_title
-        next_id = len(self.subtasks) + 1
-        for index, draft in enumerate(output.subtasks, start=next_id):
-            self.subtasks.append(ResearchSubtask(subtask_id=f"st_{index}", question=draft.question))
 
-    def merge_executor_output(self, output: ExecutorOutput) -> None:
-        self.executor_outputs.append(output)
-        for subtask in self.subtasks:
-            if subtask.subtask_id == output.subtask_id:
-                subtask.status = output.status
-                break
-        self.findings.extend(output.findings)
-        self.sources.extend(output.sources)
+def check_required_field(payload: dict[str, Any], field: str, expected_type: type, *, allow_empty: bool = False) -> None:
+    """Validate that *payload* has *field* as *expected_type*, raising ``ValueError``.
 
-    def apply_supervisor_output(self, output: SupervisorOutput) -> None:
-        self.last_supervisor_output = output
-        self.research_gaps = output.research_gaps
-        for subtask in self.subtasks:
-            if subtask.subtask_id in output.skip_subtask_ids and subtask.status == "pending":
-                subtask.status = "skipped"
+    Shared between graph.py and executor.py validators to reduce isinstance
+    boilerplate (R-113).
+    """
+    value = payload.get(field)
+    if not isinstance(value, expected_type):
+        raise ValueError(f"{field} must be a {expected_type.__name__}")
+    if not allow_empty and isinstance(value, str) and not value.strip():
+        raise ValueError(f"{field} must be non-empty")
+
+
+def create_initial_state(original_question: str) -> WebResearchStateDict:
+    """Return a fresh ``WebResearchStateDict`` with all fields initialized."""
+    return {
+        "original_question": original_question,
+        "research_title": None,
+        "subtasks": [],
+        "executor_outputs": [],
+        "findings": [],
+        "sources": [],
+        "research_gaps": [],
+        "last_supervisor_output": None,
+        "curator_output": None,
+        "route_history": [],
+        "revision_subtask_ids": [],
+        "retrieval_round": 0,
+    }

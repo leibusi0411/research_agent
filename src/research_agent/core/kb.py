@@ -131,11 +131,9 @@ class KnowledgeBaseIndex:
         failed_marker = tmp_parent / "local.failed.json"
         building_marker.write_text("building", encoding="utf-8")
         tmp_dir = Path(tempfile.mkdtemp(prefix="local-build-", dir=tmp_parent))
-        chroma_tmp: Path | None = Path(
-            tempfile.mkdtemp(prefix="chroma-build-", dir=tmp_parent)
-        )
+
         try:
-            # 1. Build FTS5 + manifest in temp dir
+            # Step 1: Build FTS5 + manifest in temp dir
             _write_sqlite_index(tmp_dir / "fts.sqlite", chunks)
             manifest = _build_manifest(vault_path, parsed_files, chunks)
             (tmp_dir / "manifest.json").write_text(
@@ -145,50 +143,47 @@ class KnowledgeBaseIndex:
             if self.fail_after_temp_build:
                 raise RuntimeError("simulated rebuild failure")
 
-            # Build ChromaDB in its own temp directory (outside index_dir).
-            # ChromaDB's HNSW segment files hold memory-mapped locks on
-            # Windows that prevent renaming/deleting the directory within
-            # the same process.  Building in a fresh temp dir and then
-            # copying over the old one works because file reads are
-            # allowed even when the target files are locked.
-            _write_chroma_index(chroma_tmp, chunks, self.embedding_client)
+            # Atomically deploy FTS5 index (always, even if Chroma fails later)
+            _atomic_swap_fts5(tmp_dir, self.index_dir)
 
-            # 2. Atomic swap: move old FTS5+manifest aside, bring new in
-            backup_dir = self.index_dir.with_name("local.backup")
-            if backup_dir.exists():
-                shutil.rmtree(backup_dir)
-            if self.index_dir.exists():
-                os.rename(self.index_dir, backup_dir)
+            # Step 2: Build ChromaDB separately — failure here does NOT roll
+            # back the FTS5 index, so keyword search still works.
+            chroma_error: str | None = None
+            chroma_tmp: Path | None = None
             try:
-                os.rename(tmp_dir, self.index_dir)
-            except Exception:
-                if backup_dir.exists() and not self.index_dir.exists():
-                    os.rename(backup_dir, self.index_dir)
-                raise
-            if backup_dir.exists():
-                shutil.rmtree(backup_dir)
-
-            # 3. Copy new ChromaDB over the old one
-            self.chroma_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(chroma_tmp, self.chroma_dir, dirs_exist_ok=True)
+                chroma_tmp = Path(
+                    tempfile.mkdtemp(prefix="chroma-build-", dir=tmp_parent)
+                )
+                _write_chroma_index(chroma_tmp, chunks, self.embedding_client)
+                self.chroma_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(chroma_tmp, self.chroma_dir, dirs_exist_ok=True)
+            except Exception as chroma_exc:
+                chroma_error = str(chroma_exc)
+                logger.warning(
+                    "ChromaDB index build failed; FTS5 is still available: %s",
+                    chroma_exc,
+                )
+            finally:
+                if chroma_tmp is not None and chroma_tmp.exists():
+                    shutil.rmtree(chroma_tmp, ignore_errors=True)
 
             building_marker.unlink(missing_ok=True)
             failed_marker.unlink(missing_ok=True)
-            return {
-                "status": "ready",
+
+            result: dict[str, Any] = {
+                "status": "ready" if chroma_error is None else "stale",
                 "vault_path": str(vault_path),
                 "file_count": len(files),
                 "chunk_count": len(chunks),
                 "last_indexed_at": manifest["built_at"],
             }
-        except Exception as exc:  # noqa: BLE001 - normalized into status result
+            if chroma_error:
+                result["error"] = chroma_error
+            return result
+        except Exception as exc:  # noqa: BLE001 - FTS5 build failure → roll back
             building_marker.unlink(missing_ok=True)
             if tmp_dir.exists():
                 shutil.rmtree(tmp_dir, ignore_errors=True)
-            # Clean up only the temp chroma build; keep the prior chroma_dir
-            # intact so the previous vector index is preserved.
-            if chroma_tmp is not None and chroma_tmp.exists():
-                shutil.rmtree(chroma_tmp, ignore_errors=True)
             failed_marker.write_text(
                 json.dumps({"error": str(exc), "failed_at": utc_now_iso()}, ensure_ascii=False),
                 encoding="utf-8",
@@ -197,6 +192,23 @@ class KnowledgeBaseIndex:
             if current_status["status"] in {"ready", "stale"}:
                 return {**current_status, "status": "stale", "error": str(exc)}
             return {**_status("failed", vault_path), "error": str(exc)}
+
+
+def _atomic_swap_fts5(tmp_dir: Path, index_dir: Path) -> None:
+    """Atomically swap the new FTS5+manifest directory in, removing the old one."""
+    backup_dir = index_dir.with_name("local.backup")
+    if backup_dir.exists():
+        shutil.rmtree(backup_dir)
+    if index_dir.exists():
+        os.rename(index_dir, backup_dir)
+    try:
+        os.rename(tmp_dir, index_dir)
+    except Exception:
+        if backup_dir.exists() and not index_dir.exists():
+            os.rename(backup_dir, index_dir)
+        raise
+    if backup_dir.exists():
+        shutil.rmtree(backup_dir)
 
 
 def _status(status: str, vault_path: Path) -> dict[str, Any]:
@@ -339,6 +351,53 @@ def _extract_text(path: Path) -> str:
     return ""
 
 
+def _flush_pending(
+    pending: list[tuple[str, int, int]],
+    chunks: list[Chunk],
+    path: Path,
+    heading_path: list[str],
+) -> None:
+    """Flush accumulated pending paragraphs into a single chunk."""
+    if not pending:
+        return
+    chunk_text = "\n\n".join(item[0] for item in pending)
+    chunks.append(
+        Chunk(
+            chunk_id=_chunk_id(path, pending[0][1], pending[-1][2]),
+            source_path=str(path),
+            heading_path=heading_path,
+            start_offset=pending[0][1],
+            end_offset=pending[-1][2],
+            text=chunk_text,
+        )
+    )
+    pending.clear()
+
+
+def _split_long_paragraph(
+    paragraph: str,
+    start_offset: int,
+    path: Path,
+    heading_path: list[str],
+    chunks: list[Chunk],
+    chunk_size: int = 5000,
+) -> None:
+    """Split a long paragraph into fixed-size chunks."""
+    for index in range(0, len(paragraph), chunk_size):
+        part = paragraph[index : index + chunk_size]
+        part_start = start_offset + index
+        chunks.append(
+            Chunk(
+                chunk_id=_chunk_id(path, part_start, part_start + len(part)),
+                source_path=str(path),
+                heading_path=heading_path,
+                start_offset=part_start,
+                end_offset=part_start + len(part),
+                text=part,
+            )
+        )
+
+
 def _paragraph_chunks(
     path: Path,
     text: str,
@@ -350,50 +409,22 @@ def _paragraph_chunks(
     cursor = 0
     pending: list[tuple[str, int, int]] = []
 
-    def flush_pending() -> None:
-        if not pending:
-            return
-        chunk_text = "\n\n".join(item[0] for item in pending)
-        chunks.append(
-            Chunk(
-                chunk_id=_chunk_id(path, pending[0][1], pending[-1][2]),
-                source_path=str(path),
-                heading_path=heading_path,
-                start_offset=pending[0][1],
-                end_offset=pending[-1][2],
-                text=chunk_text,
-            )
-        )
-        pending.clear()
-
     for paragraph in paragraphs:
         relative_start = text.find(paragraph, cursor)
         start_offset = base_offset + max(relative_start, 0)
         end_offset = start_offset + len(paragraph)
         cursor = relative_start + len(paragraph)
         if len(paragraph) > 5000:
-            flush_pending()
-            for index in range(0, len(paragraph), 5000):
-                part = paragraph[index : index + 5000]
-                part_start = start_offset + index
-                chunks.append(
-                    Chunk(
-                        chunk_id=_chunk_id(path, part_start, part_start + len(part)),
-                        source_path=str(path),
-                        heading_path=heading_path,
-                        start_offset=part_start,
-                        end_offset=part_start + len(part),
-                        text=part,
-                    )
-                )
+            _flush_pending(pending, chunks, path, heading_path)
+            _split_long_paragraph(paragraph, start_offset, path, heading_path, chunks)
             continue
         pending_text_len = sum(len(item[0]) for item in pending) + max(0, len(pending) - 1) * 2
         if pending and pending_text_len + len(paragraph) + 2 > 3000:
-            flush_pending()
+            _flush_pending(pending, chunks, path, heading_path)
         pending.append((paragraph, start_offset, end_offset))
         if sum(len(item[0]) for item in pending) >= 3000:
-            flush_pending()
-    flush_pending()
+            _flush_pending(pending, chunks, path, heading_path)
+    _flush_pending(pending, chunks, path, heading_path)
     return chunks
 
 

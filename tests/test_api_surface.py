@@ -25,6 +25,7 @@ class _TestWebRuntime:
     def __init__(self, workspace_path: str) -> None:
         self._workspace = Workspace(workspace_path)
         self._task_store = TaskStore(self._workspace.root / "tasks.sqlite")
+        self.runner = None  # No LangGraph runner in test runtime
 
     def run(self, question: str, task_id: str | None = None) -> dict:
         resolved_id = task_id or generate_task_id()
@@ -277,3 +278,33 @@ def wait_for_finished_tasks(client: TestClient, *, expected_count: int) -> None:
             return
         time.sleep(0.05)
     raise AssertionError("timed out waiting for finished tasks")
+
+
+# ── R-106: SSE fallback path coverage ──────────────────────────────────
+
+
+def test_sse_fallback_streams_events_from_file(tmp_path):
+    """SSE fallback path polls events.jsonl when no live runner is available.
+
+    The fallback uses polling (now with asyncio.sleep) to stream events
+    from the persisted events.jsonl file. This test verifies the behavior
+    works end-to-end through the API.
+    """
+    client, workspace, _vault = configured_client(tmp_path)
+    web = client.post("/api/research/web", json={"question": "SSE fallback test"})
+    task_id = web.json()["task_id"]
+
+    wait_for_finished_tasks(client, expected_count=1)
+
+    # Verify result exists and SSE fallback returns events
+    result = client.get(f"/api/tasks/{task_id}/result")
+    events_resp = client.get(f"/api/tasks/{task_id}/events")
+
+    assert result.status_code == 200
+    assert result.json()["status"] == "completed"
+    assert "data: " in events_resp.text
+    # Verify events.jsonl is the source: at minimum the started event
+    events_path = workspace / "tasks" / task_id / "events.jsonl"
+    assert events_path.exists()
+    events_text = events_path.read_text(encoding="utf-8")
+    assert "web_planning" in events_text

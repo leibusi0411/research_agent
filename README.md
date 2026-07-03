@@ -6,7 +6,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-green.svg)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-18+-61DAFB.svg)](https://react.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-104%20passed-brightgreen.svg)](https://github.com/leibusi0411/research_agent)
+[![Tests](https://img.shields.io/badge/tests-67%20passed-brightgreen.svg)](https://github.com/leibusi0411/research_agent)
 
 ---
 
@@ -42,7 +42,8 @@
 
 ### Local RAG（本地知识库检索）
 
-- **关键词检索**：基于 SQLite FTS5 全文搜索引擎 + 向量索引（Chroma 兼容），无需 LLM 参与
+- **混合检索**：SQLite FTS5 关键词 + ChromaDB 语义向量 + RRF 融合排序，检索精读
+- **LLM 总结**：检索后用 LLM 对匹配块进行综合总结生成自然语言答案（可选，config 中配置 `local_summarizer` 角色模型）
 - **只读导入**：从用户指定的 Markdown vault 目录构建索引，不修改源文件
 - **多格式支持**：`.md`、`.txt`、`.pdf`、`.html`
 - **段落分块**：智能按段落、标题层级分块，保持上下文连贯性
@@ -57,7 +58,7 @@
 
 ### 通用特性
 
-- **离线测试**：所有 104 个测试均离线运行，使用确定性 fake 实现，无需网络或 API key
+- **离线测试**：所有 67 个测试均离线运行，使用确定性 fake 实现，无需网络或 API key
 - **双界面**：CLI（argparse）+ Web UI（React + Vite），通过统一 FastAPI 接入
 - **任务锁**：同一 family（local/web）同时只允许一个活跃任务，防止资源冲突
 - **SSE 流式推送**：实时推送任务进度事件，支持 30 分钟超时
@@ -220,11 +221,11 @@ uv run research-agent --version
 
 #### 本地知识库检索（Local RAG）
 
-从你的 Markdown vault 中检索信息，不调用 LLM：
+从你的 Markdown vault 中检索信息，并用 LLM 生成总结：
 
 ```bash
-# 基础检索
-uv run research-agent local "What is LangGraph?"
+# 基础检索（自动输出 LLM 总结 + 原始来源）
+uv run research-agent local "Agent 三大范式分别是什么"
 
 # 中文检索
 uv run research-agent local "什么是 RAG 系统？"
@@ -233,10 +234,9 @@ uv run research-agent local "什么是 RAG 系统？"
 uv run research-agent local "machine learning OR deep learning"
 ```
 
-检索结果包含：
-- 匹配的文本片段（chunk）
-- 来源文件路径（source_path）
-- 标题路径（heading_path，如 `机器学习 > 深度学习 > Transformer`）
+输出包含：
+- **Summary**：LLM 基于检索结果生成的综合答案（带引用编号）
+- **Sources**：匹配的文本片段、来源文件路径、标题路径
 
 #### 网络调研（Web Research）
 
@@ -402,11 +402,11 @@ cd web && npm run test:e2e
 
 ### Local RAG（本地知识库检索）
 
-**流程**：扫描 vault 目录 → 解析文件 → 分段 → 构建 FTS5 + 向量索引 → 关键词查询
+**流程**：扫描 vault 目录 → 解析文件 → 分段 → 构建 FTS5 + ChromaDB 向量索引 → 混合检索（FTS5 + 语义 + RRF） → LLM 总结
 
-1. **索引构建**：运行 `research-agent init` 或调用 `POST /api/kb/rebuild`
-2. **检索**：基于 FTS5 MATCH 语法进行关键词搜索，配合向量相似度排序，返回 top-10 结果
-3. **无 LLM 参与**：Local RAG 仅做检索和呈现，不对内容进行总结或改写
+1. **索引构建**：运行 `research-agent kb rebuild` 或调用 `POST /api/kb/rebuild`
+2. **混合检索**：FTS5 关键词 + ChromaDB 语义向量 + RRF 融合排序，返回 top-10 结果
+3. **LLM 总结**：将检索结果作为参考材料注入 prompt，调用 `local_summarizer` 角色模型生成综合答案（无 chat_model 时回退到纯检索模式）
 
 **支持的格式**：
 | 格式 | 说明 |
@@ -562,10 +562,11 @@ tool_retries = 2
 
 在 `[chat_model.<role>]` 下可为每个角色指定不同的模型：
 
-- `chat_model.planner` — Planner 角色
-- `chat_model.executor` — Executor 角色
-- `chat_model.supervisor` — Supervisor 角色
-- `chat_model.curator` — Curator 角色
+- `chat_model.planner` — Web Research Planner 角色
+- `chat_model.executor` — Web Research Executor 角色
+- `chat_model.supervisor` — Web Research Supervisor 角色
+- `chat_model.curator` — Web Research Curator 角色
+- `chat_model.local_summarizer` — Local RAG 总结角色
 
 未指定时回退到全局 `[chat_model]` 配置。
 
@@ -593,13 +594,15 @@ research_agent/
 │   │   └── workspace.py         # 工作区目录管理
 │   └── web/
 │       ├── context.py           # Per-role 上下文构建
+│       ├── executor.py          # ResearchExecutor（工具规划/执行/综合）
 │       ├── fake_runtime.py      # 确定性 Fake Runtime（测试/CLI）
+│       ├── graph.py             # LangGraph 节点函数 + 图构建
 │       ├── prompt_builders.py   # Per-role Prompt 构建
 │       ├── provider_runtime.py  # Provider-backed Runtime
 │       ├── report.py            # Markdown 报告生成
 │       ├── role_invocation.py   # LLM 角色调用 + schema 修复
 │       ├── schemas.py           # 数据模型与状态
-│       ├── state_graph.py       # StateGraphRunner + ResearchExecutor
+│       ├── state_graph.py       # StateGraphRunner
 │       └── tools.py             # ToolGateway（搜索/抓取/提取）
 ├── tests/
 │   ├── test_api_app.py
@@ -660,7 +663,7 @@ research_agent/
 ### 测试
 
 ```bash
-uv run pytest                          # 运行全部 104 个测试
+uv run pytest                          # 运行全部测试（67 个，离线确定）
 uv run pytest -x                       # 首次失败即停止
 uv run pytest -k "state_graph"         # 按关键字筛选
 uv run pytest tests/test_web_state_graph.py  # 单个文件
@@ -734,7 +737,7 @@ Web Research 涉及多轮 LLM 调用 + 网络搜索/抓取，通常需要 2-10 �
 **Q: Local RAG 检索不到内容？**
 1. 确认知识库已索引：`curl http://localhost:8000/api/kb/status` 检查 `file_count > 0`
 2. 如未索引，运行 `uv run research-agent init` 或调用 `POST /api/kb/rebuild`
-3. 尝试更具体的关键词（FTS5 使用关键词匹配，不是语义搜索）
+3. 尝试更具体的关键词或使用自然语言描述（支持 FTS5 关键词 + ChromaDB 语义混合检索）
 
 **Q: 如何清理旧任务数据？**
 ```bash
@@ -746,7 +749,7 @@ rm -rf <workspace>/tasks/task_<old_task_id>/
 
 ## ADR（架构决策记录）
 
-项目包含 **43 个 ADR**（`docs/adr/`），覆盖技术栈选择、架构模式、工程边界等关键决策。关键 ADR：
+项目包含 **44 个 ADR**（`docs/adr/`），覆盖技术栈选择、架构模式、工程边界等关键决策。关键 ADR：
 
 | ADR | 决策 | 实现状态 |
 |-----|------|----------|
@@ -763,6 +766,7 @@ rm -rf <workspace>/tasks/task_<old_task_id>/
 | 0038 | 最小化 FastAPI + SSE 接口 | ✅ |
 | 0042 | 确定性离线测试 | ✅ 104 passed |
 | 0043 | uv (Python) + npm (Web UI) | ✅ |
+| 0044 | Local RAG LLM 总结（Augmentation + Generation） | ✅ |
 
 完整 ADR 合规率：**~97%**（1 个 P2 问题待解决：tool call 记录持久化）
 

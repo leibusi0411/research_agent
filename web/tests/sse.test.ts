@@ -117,7 +117,7 @@ describe("subscribeTaskEvents — SSE-first architecture (S2)", () => {
     const onResult = vi.fn();
     const onError = vi.fn();
 
-    subscribeTaskEvents("t1", onEvent, onResult, onError);
+    subscribeTaskEvents("t1", onEvent, onError, onResult);
 
     // Wait for microtasks to flush
     await vi.waitFor(() => expect(onResult).toHaveBeenCalledTimes(1));
@@ -152,7 +152,7 @@ describe("subscribeTaskEvents — SSE-first architecture (S2)", () => {
     const onResult = vi.fn();
     const onError = vi.fn();
 
-    subscribeTaskEvents("t1", onEvent, onResult, onError);
+    subscribeTaskEvents("t1", onEvent, onError, onResult);
 
     await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
     expect(onEvent).not.toHaveBeenCalled();
@@ -171,7 +171,7 @@ describe("subscribeTaskEvents — SSE-first architecture (S2)", () => {
     const onResult = vi.fn();
     const onError = vi.fn();
 
-    subscribeTaskEvents("t1", onEvent, onResult, onError);
+    subscribeTaskEvents("t1", onEvent, onError, onResult);
 
     // Wait a tick to ensure any async handlers have fired
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -201,7 +201,7 @@ describe("subscribeTaskEvents — SSE-first architecture (S2)", () => {
     const onResult = vi.fn();
     const onError = vi.fn();
 
-    subscribeTaskEvents("t1", onEvent, onResult, onError);
+    subscribeTaskEvents("t1", onEvent, onError, onResult);
 
     await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
     expect(onResult).not.toHaveBeenCalled();
@@ -233,7 +233,7 @@ describe("subscribeTaskEvents — SSE-first architecture (S2)", () => {
 
     const onError = vi.fn();
     // Should not throw — errors are caught internally
-    const unsubscribe = subscribeTaskEvents("t1", vi.fn(), vi.fn(), onError);
+    const unsubscribe = subscribeTaskEvents("t1", vi.fn(), onError, vi.fn());
 
     // unsubscribe should be a no-op function that doesn't throw
     expect(() => unsubscribe()).not.toThrow();

@@ -33,7 +33,7 @@ A configurable Web Research dependency that returns search results through the T
 _Avoid_: search engine, web backend
 
 **Local RAG Research Workflow**:
-The independent flow that finds and presents relevant existing content from the configured Knowledge Base, Local Sources, and prebuilt Local RAG indexes. It links results back to source files, fails when indexes are missing or stale, does not use LLM summarization, does not call Web Research tools, and does not produce a Web Report File in v1.
+The independent flow that finds and presents relevant existing content from the configured Knowledge Base, Local Sources, and prebuilt Local RAG indexes. It uses hybrid retrieval (FTS5 keyword + ChromaDB vector with RRF fusion), optionally augments retrieved chunks into an LLM prompt, and generates a natural-language summary via the `local_summarizer` role model when one is configured. When no chat model is available, it falls back to raw-chunk display. It does not call Web Research tools and does not produce a Web Report File in v2.
 _Avoid_: local-first research, local search mode
 
 **Web Research Workflow**:
@@ -177,11 +177,11 @@ The real-time product progress view of a currently running Research Task. It is 
 _Avoid_: graph status, node status
 
 **Research Progress Stream**:
-The real-time product progress stream emitted while a Research Task runs. It is phase-based: each streamed record is anchored by `phase`, with `event_type` limited to that phase's progress state (`started`, `progress`, `completed`, or `failed`). Each `events.jsonl` line stores one append-only progress display record with top-level `task_id`, `mode`, `phase`, `event_type`, optional `event_subtype`, `created_at`, `message`, `_seq`, and `details`; v1 does not add `event_id` or an outer `subtask_id`. Web UI consumes it through SSE, and CLI uses it to display live progress until completion without requiring a v1 daemon concept.
+The real-time product progress stream emitted while a Research Task runs. It is phase-based: each streamed record is anchored by `phase`, with `event_type` limited to that phase's progress state (`started`, `progress`, `completed`, or `failed`). Each `events.jsonl` line stores one append-only progress display record with top-level `task_id`, `mode`, `phase`, `event_type`, optional `event_subtype`, `created_at`, `message`, `seq`, and `details`; v1 does not add `event_id` or an outer `subtask_id`. Web UI consumes it through SSE, and CLI uses it to display live progress until completion without requiring a v1 daemon concept.
 _Avoid_: daemon, raw logs
 
 **EventStream**:
-The shared in-process event channel that transports Research Progress Stream records from the runner to consumers (SSE endpoint and CLI). It is backed by a `janus.Queue` (sync/async dual-faced queue) with a max capacity of 1024 events. The runner pushes events via `_emit` to both the queue and `events.jsonl`; consumers read from the queue via `async for`. Events carry a monotonically increasing `_seq` integer for deduplication when the consumer first replays missed events from `events.jsonl` before switching to live queue consumption. The queue is created lazily when the first consumer connects and destroyed when the runner finishes. `events.jsonl` remains the persistence and replay layer—it is no longer the transport layer.
+The shared in-process event channel that transports Research Progress Stream records from the runner to consumers (SSE endpoint and CLI). It is backed by a `janus.Queue` (sync/async dual-faced queue) with a max capacity of 1024 events. The runner pushes events via `_emit` to both the queue and `events.jsonl`; consumers read from the queue via `async for`. Events carry a monotonically increasing `seq` integer for deduplication when the consumer first replays missed events from `events.jsonl` before switching to live queue consumption. The queue is created lazily when the first consumer connects and destroyed when the runner finishes. `events.jsonl` remains the persistence and replay layer—it is no longer the transport layer.
 _Avoid_: callback, polling, file-watcher
 
 **Progress Event Subtype**:
@@ -189,7 +189,7 @@ An optional `event_subtype` field on Research Progress Stream records that class
 _Avoid_: nested discrimination, item kind parsing
 
 **Event Sequence**:
-A monotonically increasing integer `_seq` assigned by `_emit` to every Research Progress Stream record. It is prefixed with underscore to mark it as an internal field not part of the public display schema. Consumers use it to deduplicate events when the EventStream first replays persisted events from `events.jsonl` and then switches to live queue consumption—any event whose `_seq` was already yielded during file replay is skipped from the queue. The counter is per-runner, not global.
+A monotonically increasing integer `seq` assigned by `_emit` to every Research Progress Stream record. Consumers use it to deduplicate events when the EventStream first replays persisted events from `events.jsonl` and then switches to live queue consumption—any event whose `seq` was already yielded during file replay is skipped from the queue. The counter is per-runner, not global.
 _Avoid_: event_id, timestamp ordering
 
 **Runner Registry**:
@@ -217,7 +217,7 @@ An external or local model backend used for planning, execution, synthesis, or e
 _Avoid_: LLM, model
 
 **Chat Model**:
-The single configured chat model used by Web Research roles in v1, including Planner, ResearchExecutor, Supervisor, and Curator. It is configured with provider, model, base URL, and API key.
+The default configured chat model used by Web Research roles and Local RAG summarization when no role-specific override is configured. Configured with provider, model, base URL, and API key.
 _Avoid_: role model, agent model
 
 **Embedding Model**:
@@ -225,7 +225,7 @@ The configured embedding model used for Knowledge Base indexing and Local RAG re
 _Avoid_: chat model, vector model
 
 **Role Model Slot**:
-An optional per-role chat model override that allows Planner, ResearchExecutor, Supervisor, and Curator to use different chat models. V1 reserves the config structure under `[chat_model.<role>]` sections but defaults all roles to the global `[chat_model]` settings when role-specific overrides are absent; the setup flow only collects the global chat model and does not expose per-role configuration.
+An optional per-role chat model override that allows Planner, Executor, Supervisor, Curator, and Local Summarizer to use different chat models. V1 reserves the config structure under `[chat_model.<role>]` sections but defaults all roles to the global `[chat_model]` settings when role-specific overrides are absent; the setup flow only collects the global chat model and does not expose per-role configuration. Supported roles: `planner`, `executor`, `supervisor`, `curator`, `local_summarizer`.
 _Avoid_: model slot, agent model
 
 **RAG**:
@@ -233,7 +233,7 @@ Retrieval-augmented generation used to retrieve relevant source material from th
 _Avoid_: knowledge base, search
 
 **Hybrid Retrieval**:
-The initial Local RAG retrieval strategy that combines SQLite FTS5 full-text search (keyword) and ChromaDB vector search (semantic), fuses results via Reciprocal Rank Fusion (RRF, k=60), and returns the top-10 fused, traceable Chunks. Falls back to FTS5-only when no embedding client is available. Does not require complex reranking or agentic query rewriting in v1.
+The initial Local RAG retrieval strategy that combines SQLite FTS5 full-text search (keyword) and ChromaDB vector search (semantic), fuses results via Reciprocal Rank Fusion (RRF, k=60), and returns the top-10 fused, traceable Chunks. Falls back to FTS5-only when no embedding client is available. ChromaDB embedding is batched (32 chunks per request) to stay within API limits. Does not require complex reranking or agentic query rewriting in v1.
 _Avoid_: semantic search, reranking
 
 **Planner**:
@@ -273,11 +273,11 @@ A temporary failure during a tool call, such as timeout, fetch failure, extracti
 _Avoid_: runtime failure, node failure
 
 **Runtime Failure**:
-A system-level failure such as invalid configuration, unavailable model provider, unrepaired schema failure, or node code error. LLM schema validation may be repaired up to two times per role invocation; if both repairs fail, it terminates the Web Research Workflow and returns an error instead of being routed as a research gap.
+A system-level failure such as invalid configuration, unavailable model provider, unrepaired schema failure, or node code error. LLM schema validation may be repaired one time per role invocation; if the repair fails, it terminates the Web Research Workflow and returns an error instead of being routed as a research gap.
 _Avoid_: subtask failure, source failure
 
 **Schema Repair**:
-An internal fallback LLM call used when a role output fails parsing or schema validation. It sends only the raw invalid output, validation error, and target schema back to the model to fix format or fields without rerunning the node. V1 allows up to two repair attempts per role invocation; if both repairs fail, the Web Research Workflow terminates with a `schema_validation_failed` error.
+An internal fallback LLM call used when a role output fails parsing or schema validation. It sends only the raw invalid output, validation error, and target schema back to the model to fix format or fields without rerunning the node. V1 allows one repair attempt per role invocation; if the repair fails, the Web Research Workflow terminates with a `schema_validation_failed` error.
 _Avoid_: repair node, final check
 
 **Executor Batch**:
@@ -337,7 +337,7 @@ The user-facing index maintenance surface for the configured Markdown Vault. It 
 _Avoid_: knowledge base management, note management
 
 **Knowledge Base Index Status**:
-The user-facing state returned by `kb status`: `missing`, `ready`, `stale`, `building`, or `failed`. Local RAG queries are allowed only when status is `ready`; `missing`, `stale`, `building`, and `failed` make Local RAG fail before retrieval and instruct the user to run `research-agent kb rebuild`. V1 stale checks compare indexed file path, mtime, and file size, not hashes.
+The user-facing state returned by `kb status`: `missing`, `ready`, `stale`, `building`, or `failed`. Local RAG queries are allowed when status is `ready` or `stale` (FTS5 keyword index is available even if ChromaDB vectors are outdated); `missing`, `building`, and `failed` make Local RAG fail before retrieval and instruct the user to run `research-agent kb rebuild`. V1 stale checks compare indexed file path, mtime, and file size, not hashes.
 _Avoid_: partial_success, completed_with_warning
 
 **Capability Surface**:

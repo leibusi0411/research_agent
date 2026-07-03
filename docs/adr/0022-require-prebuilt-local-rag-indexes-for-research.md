@@ -12,6 +12,8 @@ V1 CLI exposes only `research-agent kb status` and `research-agent kb rebuild`. 
 - `building`: an index rebuild is currently running.
 - `failed`: the last rebuild failed and no usable prior index exists.
 
-Local RAG queries run only when status is `ready`. For `missing`, `stale`, `building`, or `failed`, `research-agent local` fails before retrieval and tells the user to run `research-agent kb rebuild`.
+Local RAG queries run when status is `ready` or `stale` (FTS5 keyword index is available even if ChromaDB vectors are outdated). For `missing`, `building`, or `failed`, `research-agent local` fails before retrieval and tells the user to run `research-agent kb rebuild`.
+
+> **2026-07-03 update**: Status check relaxed from `ready`-only to `ready`|`stale` per R-131. ChromaDB build failures no longer roll back the FTS5 index, so `stale` indicates FTS5 is usable.
 
 `kb rebuild` builds into a temporary index location first, including SQLite FTS5 data, Chroma data, chunk records, and a manifest. Only after all build steps succeed does runtime atomically replace `indexes/local/`. If rebuild fails while a prior index exists, the prior index is preserved and status remains `stale` rather than `failed`; Local RAG still refuses to query until a successful rebuild. `failed` is reserved for cases where no usable prior index exists.

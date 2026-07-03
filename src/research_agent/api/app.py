@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -26,6 +27,7 @@ from research_agent.core.errors import ResearchError
 from research_agent.core.ids import generate_task_id, utc_now_iso, validate_task_id
 from research_agent.core.providers import EmbeddingClient
 from research_agent.core.service import CoreService, create_provider_runtime
+from research_agent.core.workspace import read_lock_task_id
 from research_agent.web.provider_runtime import ProviderBackedWebResearchRuntime
 
 
@@ -39,6 +41,11 @@ def create_app(
     web_runtime_factory: WebRuntimeFactory | None = None,
     embedding_client_factory: EmbeddingClientFactory | None = None,
 ) -> FastAPI:
+    """Create and configure the FastAPI application.
+
+    Route registration is delegated to focused helper functions to keep
+    this factory small and readable (R-102).
+    """
     resolved_config_path = Path(config_path) if config_path is not None else default_config_path()
     executor = ThreadPoolExecutor(max_workers=4)
 
@@ -51,7 +58,7 @@ def create_app(
 
     _cached_service: CoreService | None = None
 
-    def service() -> CoreService:
+    def get_service() -> CoreService:
         """Return a cached CoreService instance (fixes R-71).
 
         The instance is created once and reused across requests so that
@@ -70,6 +77,20 @@ def create_app(
     @app.exception_handler(ResearchError)
     async def research_error_handler(_request, exc: ResearchError):
         return _error_response(exc)
+
+    _register_setup_routes(app, resolved_config_path)
+    _register_research_routes(app, get_service, executor, web_runtime_factory)
+    _register_task_routes(app, get_service)
+    _register_kb_routes(app, get_service, resolved_config_path, embedding_client_factory)
+
+    return app
+
+
+# ── route registration helpers ────────────────────────────────────────
+
+
+def _register_setup_routes(app: FastAPI, resolved_config_path: Path) -> None:
+    """Register /api/setup/* routes."""
 
     @app.get("/api/setup/status")
     def setup_status() -> dict[str, Any]:
@@ -95,54 +116,63 @@ def create_app(
         written = CoreService(default_workspace=request.default_workspace, config_path=resolved_config_path).init_config(request)
         return {"configured": True, "config_path": str(written)}
 
+
+def _register_research_routes(
+    app: FastAPI,
+    get_service: Callable[[], CoreService],
+    executor: ThreadPoolExecutor,
+    web_runtime_factory: WebRuntimeFactory | None,
+) -> None:
+    """Register /api/research/* routes."""
+
     @app.post("/api/research/local")
     def start_local(payload: dict[str, Any]) -> JSONResponse:
         task_id = generate_task_id()
         question = _question(payload)
-        current_service = service()
-        lock = current_service.acquire_family_lock("local", task_id)
-        lock.__enter__()
-        try:
-            _create_running_task(current_service, task_id=task_id, mode="local", question=question)
-            executor.submit(lambda: _run_background(lock, lambda: current_service.run_local_research_unlocked(question, task_id=task_id)))
-        except Exception:
-            lock.__exit__(None, None, None)
-            raise
+        current_service = get_service()
+        _create_running_task(current_service, task_id=task_id, mode="local", question=question)
+        _submit_background_task(
+            executor,
+            current_service.acquire_family_lock("local", task_id),
+            lambda: current_service.run_local_research_unlocked(question, task_id=task_id),
+        )
         return JSONResponse({"task_id": task_id, "mode": "local", "status": "running", "question": question}, status_code=202)
 
     @app.post("/api/research/web")
     def start_web(payload: dict[str, Any]) -> JSONResponse:
-        current_service = service()
+        current_service = get_service()
         runtime = web_runtime_factory(str(current_service.workspace.root)) if web_runtime_factory is not None else None
         task_id = generate_task_id()
         question = _question(payload)
         if runtime is None:
-            # Use CoreService's default provider-backed runtime construction when no test/runtime override is supplied.
             runtime = _default_web_runtime(current_service)
         _active_runtimes[task_id] = runtime
-        lock = current_service.acquire_family_lock("web", task_id)
-        lock.__enter__()
-        try:
-            _create_running_task(current_service, task_id=task_id, mode="web", question=question)
-            executor.submit(lambda: _cleanup_background(lock, task_id, lambda: current_service.run_web_research_unlocked(question, runtime=runtime, task_id=task_id)))
-        except Exception:
-            lock.__exit__(None, None, None)
-            raise
+        _create_running_task(current_service, task_id=task_id, mode="web", question=question)
+        _submit_background_task(
+            executor,
+            current_service.acquire_family_lock("web", task_id),
+            lambda: current_service.run_web_research_unlocked(question, runtime=runtime, task_id=task_id),
+            task_id=task_id,
+        )
         return JSONResponse({"task_id": task_id, "mode": "web", "status": "running", "question": question}, status_code=202)
+
+
+def _register_task_routes(app: FastAPI, get_service: Callable[[], CoreService]) -> None:
+    """Register /api/tasks/* routes."""
 
     @app.get("/api/tasks/active")
     def active_tasks() -> dict[str, Any]:
-        current_service = service()
+        current_service = get_service()
         active = []
         for mode in ["local", "web"]:
             lock_path = current_service.workspace.root / "locks" / f"{mode}.lock"
             if lock_path.exists():
-                active.append({"mode": mode, "task_id": _read_lock_task_id(lock_path)})
+                active.append({"mode": mode, "task_id": read_lock_task_id(lock_path)})
         return {"active": active}
 
     @app.get("/api/tasks/finished")
     def finished_tasks() -> dict[str, Any]:
-        records = service().list_finished_tasks()
+        records = get_service().list_finished_tasks()
         return {
             "tasks": [
                 {
@@ -159,38 +189,49 @@ def create_app(
     @app.get("/api/tasks/{task_id}/events")
     async def task_events(task_id: str) -> StreamingResponse:
         _validate_task_id_as_research_error(task_id)
-        events_path = service().workspace.task_dir(task_id) / "events.jsonl"
+        events_path = get_service().workspace.task_dir(task_id) / "events.jsonl"
         runtime = _active_runtimes.get(task_id)
         return StreamingResponse(
-            _stream_events(events_path, runtime.runner if runtime is not None else None),
+            _stream_events(events_path, getattr(runtime, "runner", None) if runtime is not None else None),
             media_type="text/event-stream",
         )
 
     @app.get("/api/tasks/{task_id}/result")
     def task_result(task_id: str) -> JSONResponse:
         _validate_task_id_as_research_error(task_id)
-        result_path = service().workspace.task_dir(task_id) / "result.json"
+        result_path = get_service().workspace.task_dir(task_id) / "result.json"
         if not result_path.exists():
             return _error_response(ResearchError(code="runtime_error", message="Task result not found."), status_code=404)
         return JSONResponse(json.loads(result_path.read_text(encoding="utf-8")))
 
+
+def _register_kb_routes(
+    app: FastAPI,
+    get_service: Callable[[], CoreService],
+    resolved_config_path: Path,
+    embedding_client_factory: EmbeddingClientFactory | None,
+) -> None:
+    """Register /api/kb/* routes."""
+
     @app.get("/api/kb/status")
     def kb_status() -> JSONResponse:
         try:
-            return JSONResponse(service().get_kb_status())
+            return JSONResponse(get_service().get_kb_status())
         except ResearchError as error:
             return _error_response(error)
 
     @app.post("/api/kb/rebuild")
     def kb_rebuild() -> JSONResponse:
-        current_service = service()
+        current_service = get_service()
         embedding_client = None
         if embedding_client_factory is not None:
             embedding_client = embedding_client_factory(load_user_config(resolved_config_path))
         result = current_service.rebuild_kb_index(embedding_client=embedding_client)
+        # Normalise core-layer plain-string errors to the structured API format
+        # so the frontend sees a consistent {code, message} object (R-131).
+        if isinstance(result.get("error"), str):
+            result["error"] = {"code": "kb_rebuild_error", "message": result["error"]}
         return JSONResponse(result, status_code=200 if "error" not in result else 400)
-
-    return app
 
 
 def _question(payload: dict[str, Any]) -> str:
@@ -202,14 +243,6 @@ def _question(payload: dict[str, Any]) -> str:
 
 def _error_response(error: ResearchError, status_code: int = 400) -> JSONResponse:
     return JSONResponse({"error": error.to_dict()}, status_code=status_code)
-
-
-def _read_lock_task_id(lock_path: Path) -> str:
-    try:
-        payload = json.loads(lock_path.read_text(encoding="utf-8"))
-        return str(payload.get("task_id") or "unknown")
-    except Exception:
-        return "unknown"
 
 
 async def _stream_events(events_path: Path, runner=None):
@@ -241,7 +274,7 @@ async def _stream_events(events_path: Path, runner=None):
             result_path = events_path.with_name("result.json")
             if _is_terminal_result(result_path):
                 break
-        time.sleep(0.1)
+        await asyncio.sleep(0.1)
     else:
         yield f'data: {json.dumps({"event_type": "stream_timeout", "message": "SSE stream timed out."})}\n\n'
 
@@ -274,7 +307,13 @@ def _create_running_task(service: CoreService, *, task_id: str, mode: str, quest
     )
 
 
-def _run_background(lock, operation) -> None:
+def _run_background(lock: Any, operation: Callable[[], Any]) -> None:
+    """Run *operation* in background and release *lock* when done (R-110, R-114).
+
+    The lock is acquired in the main thread before this is submitted to the
+    executor; this function releases it in the background thread after the
+    operation completes (or fails).
+    """
     try:
         operation()
     except Exception as exc:
@@ -283,8 +322,13 @@ def _run_background(lock, operation) -> None:
         lock.__exit__(None, None, None)
 
 
-def _cleanup_background(lock, task_id: str, operation) -> None:
-    """Run background operation then clean up the runner registry entry."""
+def _cleanup_background(lock: Any, task_id: str, operation: Callable[[], Any]) -> None:
+    """Run *operation* in background, release *lock*, and remove runner from
+    registry when done (R-111, R-114).
+
+    Same lock lifecycle as :func:`_run_background` but additionally cleans
+    up the ``_active_runtimes`` entry for *task_id*.
+    """
     try:
         operation()
     except Exception as exc:
@@ -292,6 +336,30 @@ def _cleanup_background(lock, task_id: str, operation) -> None:
     finally:
         lock.__exit__(None, None, None)
         _active_runtimes.pop(task_id, None)
+
+
+def _submit_background_task(
+    executor: ThreadPoolExecutor,
+    lock: Any,
+    operation: Callable[[], Any],
+    *,
+    task_id: str | None = None,
+) -> None:
+    """Acquire *lock* in the current thread and submit *operation* to the
+    executor, ensuring the lock is released in the background thread after
+    the operation completes (R-114).
+
+    When *task_id* is provided the runner registry is also cleaned up.
+    """
+    lock.__enter__()
+    try:
+        if task_id is not None:
+            executor.submit(lambda: _cleanup_background(lock, task_id, operation))
+        else:
+            executor.submit(lambda: _run_background(lock, operation))
+    except Exception:
+        lock.__exit__(None, None, None)
+        raise
 
 
 def _is_terminal_result(result_path: Path) -> bool:

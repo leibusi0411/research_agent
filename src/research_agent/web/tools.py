@@ -11,7 +11,7 @@ import httpx
 import trafilatura
 from pypdf import PdfReader
 
-from research_agent.core.config import WebToolsConfig
+from research_agent.core.config import WebToolsConfig, is_valid_http_url
 
 
 ToolStatus = str
@@ -32,6 +32,10 @@ class ToolSpec:
     name: str
     allowed_workflows: set[str]
     input_schema: dict[str, dict[str, Any]]
+
+
+# R-112: Workflow name constant — used by ToolGateway.call() and registry.
+WEB_RESEARCH_WORKFLOW = "web_research"
 
 
 class ToolRegistry:
@@ -157,7 +161,7 @@ class ToolRunner:
 
     def _run_fetch_extract(self, arguments: dict[str, Any]) -> ToolResult:
         url = str(arguments["url"])
-        if not _is_http_url(url):
+        if not is_valid_http_url(url):
             return ToolResult(status="error", error="validation_error", message="url must be http or https.")
         response = self.http_client.get(
             url,
@@ -188,7 +192,7 @@ class ToolRunner:
 
     def _run_download_pdf(self, arguments: dict[str, Any]) -> ToolResult:
         url = str(arguments["url"])
-        if not _is_http_url(url):
+        if not is_valid_http_url(url):
             return ToolResult(status="error", error="validation_error", message="url must be http or https.")
         response = self.http_client.get(
             url,
@@ -255,7 +259,7 @@ def create_default_web_tool_registry() -> ToolRegistry:
     registry.register(
         ToolSpec(
             name="web.search",
-            allowed_workflows={"web_research"},
+            allowed_workflows={WEB_RESEARCH_WORKFLOW},
             input_schema={
                 "query": {"type": "string", "required": True},
                 "max_results": {"type": "integer", "required": False},
@@ -265,14 +269,14 @@ def create_default_web_tool_registry() -> ToolRegistry:
     registry.register(
         ToolSpec(
             name="web.fetch_extract",
-            allowed_workflows={"web_research"},
+            allowed_workflows={WEB_RESEARCH_WORKFLOW},
             input_schema={"url": {"type": "string", "required": True}},
         )
     )
     registry.register(
         ToolSpec(
             name="web.download_pdf",
-            allowed_workflows={"web_research"},
+            allowed_workflows={WEB_RESEARCH_WORKFLOW},
             input_schema={"url": {"type": "string", "required": True}},
         )
     )
@@ -292,11 +296,6 @@ def _validate_arguments(arguments: dict[str, Any], schema: dict[str, dict[str, A
         if expected_type == "integer" and not isinstance(arguments[field_name], int):
             return f"Argument {field_name} must be an integer."
     return None
-
-
-def _is_http_url(url: str) -> bool:
-    parsed = urlparse(url)
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
 def _http_status_error(status_code: int) -> ToolResult | None:

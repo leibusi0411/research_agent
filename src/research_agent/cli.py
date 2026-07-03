@@ -159,7 +159,12 @@ def _print_local_result(result: dict) -> int:
         error = result.get("error", {})
         print(f"[{error.get('code', 'unknown')}] {error.get('message', 'Unknown error')}")
         return 1
-    print("Local Results")
+    summary = result.get("summary")
+    if summary:
+        print("Summary")
+        print(summary)
+        print()
+    print("Sources")
     for index, item in enumerate(result.get("local_results", []), start=1):
         print(f"{index}. {item.get('text', '')}")
         print(f"source_path: {item.get('source_path', '')}")

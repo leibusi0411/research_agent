@@ -1,28 +1,28 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { type ProgressEvent } from "../api";
 import { DetailItem } from "./DetailItem";
 
 export function ProcessView({ groupedEvents, newestSeq }: { groupedEvents: Record<string, ProgressEvent[]>; newestSeq?: number }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const userScrolledUp = useRef(false);
-  const [seenSeqs, setSeenSeqs] = useState<Set<number>>(new Set());
+  const seenSeqs = useRef<Set<number>>(new Set());
 
-  // Track which _seq values have been seen, mark new ones for animation
+  // Track which seq values have been seen, mark new ones for animation
   const getSeqClass = (event: ProgressEvent): string => {
-    if (event._seq === undefined) return "";
-    if (seenSeqs.has(event._seq)) return "";
+    if (event.seq === undefined) return "";
+    if (seenSeqs.current.has(event.seq)) return "";
     return "event-enter";
   };
 
-  // Mark current _seq values as seen after render
+  // Mark current seq values as seen after render (R-103: useRef avoids re-render)
   useEffect(() => {
     const seqs = new Set<number>();
     for (const phaseEvents of Object.values(groupedEvents)) {
       for (const event of phaseEvents) {
-        if (event._seq !== undefined) seqs.add(event._seq);
+        if (event.seq !== undefined) seqs.add(event.seq);
       }
     }
-    setSeenSeqs(seqs);
+    seenSeqs.current = seqs;
   }, [newestSeq]);
 
   // Auto-scroll to bottom on new events, unless user scrolled up
@@ -51,7 +51,7 @@ export function ProcessView({ groupedEvents, newestSeq }: { groupedEvents: Recor
         <section key={phase}>
           <h3>{phase}</h3>
           {phaseEvents.map((event, idx) => (
-            <div key={event._seq ?? `${event.created_at}-${idx}`} className={getSeqClass(event)}>
+            <div key={event.seq ?? `${event.created_at}-${idx}`} className={getSeqClass(event)}>
               <p className="event-message">{event.message}</p>
               {event.details?.items?.length > 0 && (
                 <ul className="event-items">

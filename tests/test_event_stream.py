@@ -1,7 +1,7 @@
 """Tests for EventStream — unified progress event transport.
 
 Covers S1 (C1-C4): ProgressEvent schema, _emit dual-write, events() async iterator,
-and _seq deduplication.
+and seq deduplication.
 """
 
 import asyncio
@@ -17,7 +17,7 @@ from research_agent.core.ids import generate_task_id, utc_now_iso
 from research_agent.core.service import CoreService
 from research_agent.core.workspace import Workspace
 from research_agent.web.schemas import ProgressEvent
-from research_agent.web.state_graph import StateGraphRunner
+from research_agent.web.state_graph import RunnerConfig, StateGraphRunner
 from research_agent.web.tools import ToolGateway
 
 
@@ -54,18 +54,20 @@ def _make_runner(workspace: Workspace) -> StateGraphRunner:
     mock_gateway.registry = mock_registry
     mock_gateway.call.return_value = MagicMock(status="ok", data="", error=None, message="")
     return StateGraphRunner(
-        workspace=str(workspace.root),
-        chat_models={"planner": mock_chat, "executor": mock_chat, "supervisor": mock_chat, "curator": mock_chat},
-        tool_gateway=mock_gateway,
-        workspace_obj=workspace,
+        config=RunnerConfig(
+            workspace=str(workspace.root),
+            chat_models={"planner": mock_chat, "executor": mock_chat, "supervisor": mock_chat, "curator": mock_chat},
+            tool_gateway=mock_gateway,
+            workspace_obj=workspace,
+        ),
     )
 
 
 class TestProgressEventSchema:
-    """C1: ProgressEvent carries _seq and event_subtype in serialised output."""
+    """C1: ProgressEvent carries seq and event_subtype in serialised output."""
 
-    def test_to_dict_includes_seq_and_subtype(self):
-        """_seq and event_subtype appear in the serialised dict."""
+    def test_to_dict_includesseq_and_subtype(self):
+        """seq and event_subtype appear in the serialised dict."""
         created_at = utc_now_iso()
         event = ProgressEvent(
             task_id="t1",
@@ -75,7 +77,7 @@ class TestProgressEventSchema:
             created_at=created_at,
             message="searching",
             details={"items": []},
-            _seq=42,
+            seq=42,
             event_subtype="tool_call",
         )
         d = event.to_dict()
@@ -84,7 +86,7 @@ class TestProgressEventSchema:
         assert d["phase"] == "web_execution"
         assert d["event_type"] == "progress"
         assert d["event_subtype"] == "tool_call"
-        assert d["_seq"] == 42
+        assert d["seq"] == 42
         assert d["details"] == {"items": []}
 
     def test_event_subtype_is_none_for_phase_boundary_events(self):
@@ -97,12 +99,12 @@ class TestProgressEventSchema:
             created_at=utc_now_iso(),
             message="done.",
             details={"items": []},
-            _seq=5,
+            seq=5,
             event_subtype=None,
         )
         d = event.to_dict()
         assert d["event_subtype"] is None
-        assert d["_seq"] == 5
+        assert d["seq"] == 5
 
     def test_backward_compatible_without_new_fields(self):
         """Callers that don't pass new fields still get valid output (no crash)."""
@@ -118,7 +120,7 @@ class TestProgressEventSchema:
         d = event.to_dict()
         assert d["task_id"] == "t1"
         assert d["event_subtype"] is None
-        assert d["_seq"] == 0
+        assert d["seq"] == 0
 
 
 class TestEventStreamAsyncIterator:
@@ -153,7 +155,7 @@ class TestEventStreamAsyncIterator:
             collected.append(evt)
 
         assert [e["message"] for e in collected] == ["event_1", "event_2", "event_3"]
-        assert [e["_seq"] for e in collected] == [1, 2, 3]
+        assert [e["seq"] for e in collected] == [1, 2, 3]
         # Queue is now created and waiting — cleanup
         await async_gen.aclose()
 
@@ -178,7 +180,7 @@ class TestEventStreamAsyncIterator:
         async_gen = runner.events()
         evt1 = await asyncio.wait_for(async_gen.__anext__(), timeout=2)
         assert evt1["message"] == "before_connect"
-        assert evt1["_seq"] == 1
+        assert evt1["seq"] == 1
 
         # Queue is now active (created by events()).  Push directly to async_q
         # to avoid janus sync_q deadlock when calling from event-loop thread.
@@ -186,7 +188,7 @@ class TestEventStreamAsyncIterator:
             "task_id": task_id, "mode": "web", "phase": "web_execution",
             "event_type": "progress", "event_subtype": "tool_call",
             "created_at": utc_now_iso(), "message": "after_connect",
-            "_seq": 42, "details": {"items": []},
+            "seq": 42, "details": {"items": []},
         }
         await runner._event_queue.async_q.put(event_dict)
 
@@ -221,7 +223,7 @@ class TestProgressItemSubtype:
         events_text = (task_dir / "events.jsonl").read_text(encoding="utf-8")
         events = [json.loads(line) for line in events_text.strip().splitlines()]
 
-        subtypes = {e["message"]: e["event_subtype"] for e in events}
+        subtypes = {e["event_subtype"]: e["event_subtype"] for e in events}
         assert subtypes.get("tool_call") == "tool_call"
         assert subtypes.get("finding") == "finding"
         assert subtypes.get("source") == "source"
@@ -251,10 +253,10 @@ class TestEmitDualWrite:
         events = [json.loads(line) for line in events_text.strip().splitlines()]
         target = [e for e in events if e["message"] == "planning starts"]
         assert len(target) == 1
-        assert target[0]["_seq"] == 1
+        assert target[0]["seq"] == 1
 
-    def test_emit_increments_seq(self, tmp_path):
-        """Each _emit call increments the _seq counter."""
+    def test_emit_incrementsseq(self, tmp_path):
+        """Each _emit call increments the seq counter."""
         _, workspace = _configured_workspace(tmp_path)
         runner = _make_runner(workspace)
 
@@ -274,7 +276,7 @@ class TestEmitDualWrite:
         events_text = (task_dir / "events.jsonl").read_text(encoding="utf-8")
         events = [json.loads(line) for line in events_text.strip().splitlines()]
         custom = [e for e in events if e["message"] in ("first", "second", "third")]
-        assert [e["_seq"] for e in custom] == [1, 2, 3]
+        assert [e["seq"] for e in custom] == [1, 2, 3]
 
     def test_emit_pushes_to_queue_when_active(self, tmp_path):
         """When queue is active, events appear in both file and queue."""
@@ -303,8 +305,8 @@ class TestEmitDualWrite:
 
         q_event = runner._event_queue.sync_q.get(timeout=2)
         assert q_event["phase"] == "web_execution"
-        assert q_event["_seq"] == target[0]["_seq"]
-        assert q_event["_seq"] == 1
+        assert q_event["seq"] == target[0]["seq"]
+        assert q_event["seq"] == 1
 
 
 class TestTaskResultEvent:
@@ -323,13 +325,13 @@ class TestTaskResultEvent:
             details={
                 "items": [{"kind": "status", "task_id": "t1", "status": "completed", "mode": "web"}]
             },
-            _seq=99,
+            seq=99,
             event_subtype=None,
         )
         d = event.to_dict()
         assert d["event_type"] == "task_result"
         assert d["phase"] == "web_curation"
-        assert d["_seq"] == 99
+        assert d["seq"] == 99
         assert d["details"]["items"][0]["kind"] == "status"
         assert d["details"]["items"][0]["status"] == "completed"
 

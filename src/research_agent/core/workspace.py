@@ -72,3 +72,16 @@ class Workspace:
                 events_file.write("\n")
         except OSError as exc:
             logger.warning("Failed to append event for task %s: %s", task_id, exc)
+
+
+def read_lock_task_id(lock_path: Path) -> str:
+    """Read the task_id from a family lock file.
+
+    Shared between ``CoreService._active_family_lock`` and the API layer's
+    ``active_tasks`` endpoint to avoid duplication (R-107).
+    """
+    try:
+        payload = json.loads(lock_path.read_text(encoding="utf-8"))
+        return str(payload.get("task_id") or "unknown")
+    except Exception:
+        return "unknown"

@@ -33,6 +33,9 @@ model = "gpt-4.1"
 [chat_model.curator]
 # Optional per-role override; falls back to [chat_model] when absent
 
+[chat_model.local_summarizer]
+# Optional per-role override for Local RAG A+G summarization (added 2026-07-03, ADR-0044)
+
 [embedding_model]
 provider = "openai_compatible"
 base_url = "https://api.openai.com/v1"

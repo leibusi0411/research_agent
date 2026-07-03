@@ -40,6 +40,9 @@ class ChromaStore:
         """
         if self._client is None:
             return
+        # R-115: ``_closed`` is a ChromaDB internal attribute with no public
+        # API alternative.  Accessing it is the least-bad way to avoid a
+        # duplicate-close error when ``close()`` is called multiple times.
         try:
             already_closed = self._client._closed
         except AttributeError:
@@ -75,11 +78,17 @@ class ChromaStore:
             self._client.get_or_create_collection(name=self.COLLECTION_NAME)
             return
 
-        embeddings = (
-            embedding_client.embed([chunk.text for chunk in chunks])
-            if embedding_client is not None
-            else [_deterministic_embedding(chunk.text) for chunk in chunks]
-        )
+        # Embed in batches to stay within API limits (e.g. token count per
+        # request).  Default batch size of 32 is conservative for most
+        # providers; larger values risk 400 errors on long chunks.
+        _EMBED_BATCH_SIZE = 32
+        if embedding_client is not None:
+            embeddings: list[list[float]] = []
+            for i in range(0, len(chunks), _EMBED_BATCH_SIZE):
+                batch = chunks[i : i + _EMBED_BATCH_SIZE]
+                embeddings.extend(embedding_client.embed([c.text for c in batch]))
+        else:
+            embeddings = [_deterministic_embedding(c.text) for c in chunks]
 
         self._client.get_or_create_collection(name=self.COLLECTION_NAME).add(
             ids=[chunk.chunk_id for chunk in chunks],

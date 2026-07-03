@@ -12,24 +12,33 @@ from research_agent.web.context import (
     build_planner_context,
     build_supervisor_context,
 )
-from research_agent.web.schemas import WebResearchState
+from research_agent.web.schemas import WebResearchStateDict
 
 
-def build_planner_prompt(state: WebResearchState, *, revision: bool = False) -> str:
+def build_planner_prompt(state: WebResearchStateDict, *, revision: bool = False) -> str:
     context = build_planner_context(state)
     if revision:
         return _build_revision_planner_prompt(context)
     return _build_initial_planner_prompt(context)
 
 
-def build_executor_tool_plan_prompt(state: WebResearchState, subtask_id: str) -> str:
-    """Build prompt for the executor to plan which tools to call."""
+def build_executor_tool_plan_prompt(
+    state: WebResearchStateDict,
+    subtask_id: str,
+    *,
+    tool_descriptions: str | None = None,
+) -> str:
+    """Build prompt for the executor to plan which tools to call.
+
+    When *tool_descriptions* is provided it replaces the default hardcoded
+    tool list, keeping the prompt in sync with the registry (R-128).
+    """
     context = build_executor_context(state, subtask_id)
-    return _render_tool_plan_prompt(context)
+    return _render_tool_plan_prompt(context, tool_descriptions=tool_descriptions)
 
 
 def build_executor_synthesis_prompt(
-    state: WebResearchState,
+    state: WebResearchStateDict,
     subtask_id: str,
     tool_results: list[dict[str, Any]],
 ) -> str:
@@ -38,12 +47,12 @@ def build_executor_synthesis_prompt(
     return _render_synthesis_prompt(context, tool_results)
 
 
-def build_supervisor_prompt(state: WebResearchState) -> str:
+def build_supervisor_prompt(state: WebResearchStateDict) -> str:
     context = build_supervisor_context(state)
     return _render_supervisor_prompt(context)
 
 
-def build_curator_prompt(state: WebResearchState) -> str:
+def build_curator_prompt(state: WebResearchStateDict) -> str:
     context = build_curator_context(state)
     return _render_curator_prompt(context)
 
@@ -97,16 +106,24 @@ def _build_revision_planner_prompt(context: PlannerInput) -> str:
     )
 
 
-def _render_tool_plan_prompt(context: ExecutorInput) -> str:
+def _render_tool_plan_prompt(
+    context: ExecutorInput,
+    *,
+    tool_descriptions: str | None = None,
+) -> str:
+    if tool_descriptions is None:
+        tool_descriptions = (
+            '1. web.search - Search the web. Arguments: {"query": "search query", "max_results": 5}\n'
+            '2. web.fetch_extract - Fetch and extract text from a URL. Arguments: {"url": "https://..."}\n'
+            '3. web.download_pdf - Download and extract text from a PDF. Arguments: {"url": "https://..."}\n'
+        )
     return (
         "You are a Research Executor for a web research task.\n"
         "Your job is to plan tool calls to gather information for a specific subtask.\n\n"
         f"Original research question: {context.original_question}\n"
         f"Your subtask: {context.subtask.question}\n\n"
         "Available tools:\n"
-        '1. web.search - Search the web. Arguments: {"query": "search query", "max_results": 5}\n'
-        '2. web.fetch_extract - Fetch and extract text from a URL. Arguments: {"url": "https://..."}\n'
-        '3. web.download_pdf - Download and extract text from a PDF. Arguments: {"url": "https://..."}\n\n'
+        f"{tool_descriptions}\n"
         "Plan a series of tool calls to gather evidence for this subtask.\n"
         "Start with web.search to find relevant sources, then use web.fetch_extract or web.download_pdf to get details.\n"
         "Return ONLY valid JSON with this exact structure (no markdown, no extra text):\n"
@@ -120,31 +137,41 @@ def _render_tool_plan_prompt(context: ExecutorInput) -> str:
     )
 
 
-def _render_synthesis_prompt(context: ExecutorInput, tool_results: list[dict]) -> str:
-    results_text = ""
-    for i, result in enumerate(tool_results, 1):
-        tool_name = result.get("tool", "unknown")
-        status = result.get("status", "unknown")
-        if status == "ok":
-            data = result.get("data", {})
-            if tool_name == "web.search":
-                search_results = data.get("results", [])
-                results_text += f"\n--- Tool Call {i}: {tool_name} (status: {status}) ---\n"
-                for j, sr in enumerate(search_results[:5], 1):
-                    title = sr.get("title", "No title")
-                    url = sr.get("url", "No URL")
-                    snippet = sr.get("content", sr.get("snippet", ""))[:200]
-                    results_text += f"  Result {j}: {title}\n  URL: {url}\n  Snippet: {snippet}\n\n"
-            else:
-                text_preview = data.get("text", "")[:500]
-                results_text += f"\n--- Tool Call {i}: {tool_name} (status: {status}) ---\n"
-                results_text += f"URL: {data.get('url', 'N/A')}\n"
-                results_text += f"Content preview: {text_preview}...\n"
+def _format_tool_result(index: int, result: dict) -> str:
+    """Format a single tool result for inclusion in the synthesis prompt."""
+    tool_name = result.get("tool", "unknown")
+    status = result.get("status", "unknown")
+    if status == "ok":
+        data = result.get("data", {})
+        if tool_name == "web.search":
+            search_results = data.get("results", [])
+            lines = [f"\n--- Tool Call {index}: {tool_name} (status: {status}) ---"]
+            for j, sr in enumerate(search_results[:5], 1):
+                title = sr.get("title", "No title")
+                url = sr.get("url", "No URL")
+                snippet = sr.get("content", sr.get("snippet", ""))[:200]
+                lines.append(f"  Result {j}: {title}\n  URL: {url}\n  Snippet: {snippet}\n")
+            return "\n".join(lines)
         else:
-            error = result.get("error", "unknown error")
-            message = result.get("message", "")
-            results_text += f"\n--- Tool Call {i}: {tool_name} (status: {status}) ---\n"
-            results_text += f"Error: {error} - {message}\n"
+            text_preview = data.get("text", "")[:500]
+            return (
+                f"\n--- Tool Call {index}: {tool_name} (status: {status}) ---\n"
+                f"URL: {data.get('url', 'N/A')}\n"
+                f"Content preview: {text_preview}...\n"
+            )
+    else:
+        error = result.get("error", "unknown error")
+        message = result.get("message", "")
+        return (
+            f"\n--- Tool Call {index}: {tool_name} (status: {status}) ---\n"
+            f"Error: {error} - {message}\n"
+        )
+
+
+def _render_synthesis_prompt(context: ExecutorInput, tool_results: list[dict]) -> str:
+    results_text = "".join(
+        _format_tool_result(i, result) for i, result in enumerate(tool_results, 1)
+    )
 
     return (
         "You are a Research Executor for a web research task.\n"

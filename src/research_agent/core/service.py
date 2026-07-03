@@ -4,7 +4,7 @@ import json
 import os
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Protocol
@@ -14,10 +14,11 @@ from research_agent.core.errors import ResearchError
 from research_agent.core.ids import generate_task_id
 from research_agent.core.kb import KnowledgeBaseIndex
 from research_agent.core.local_research import run_local_research
-from research_agent.core.providers import EmbeddingClient, OpenAICompatibleChatModel, OpenAICompatibleEmbeddingModel, build_chat_models, ChatModelClient
+from research_agent.core.providers import EmbeddingClient, OpenAICompatibleChatModel, OpenAICompatibleEmbeddingModel, build_chat_models, build_role_chat_model_config, ChatModelClient
 from research_agent.core.tasks import TaskStore
-from research_agent.core.workspace import Workspace
+from research_agent.core.workspace import Workspace, read_lock_task_id
 from research_agent.web.provider_runtime import ProviderBackedWebResearchRuntime
+from research_agent.web.state_graph import RunnerConfig
 from research_agent.web.tools import ToolGateway, ToolRunner, TavilySearchProvider, create_default_web_tool_registry
 
 
@@ -45,7 +46,7 @@ def create_provider_runtime(
     search_provider = TavilySearchProvider(api_key=config.search.api_key)
     tool_runner = ToolRunner(config=config.web_tools, search_provider=search_provider)
     tool_gateway = ToolGateway(registry=create_default_web_tool_registry(), runner=tool_runner)
-    return ProviderBackedWebResearchRuntime(
+    runner_config = RunnerConfig(
         workspace=workspace_root,
         chat_models=resolved_models,
         tool_gateway=tool_gateway,
@@ -55,6 +56,7 @@ def create_provider_runtime(
         workspace_obj=workspace_obj,
         task_store=task_store,
     )
+    return ProviderBackedWebResearchRuntime(config=runner_config)
 
 
 class WebResearchRuntime(Protocol):
@@ -77,10 +79,23 @@ class CoreService:
         self.workspace.ensure()
         return config_path
 
-    def run_local_research(self, question: str, *, task_id: str | None = None, embedding_client: EmbeddingClient | None = None) -> dict:
+    def run_local_research(self, question: str, *, task_id: str | None = None, embedding_client: EmbeddingClient | None = None, chat_model: ChatModelClient | None = None) -> dict:
         resolved_task_id = task_id or generate_task_id()
+        # Auto-create embedding client from config when none is provided, so
+        # that ChromaDB vector search can supplement FTS5 keyword search.
+        if embedding_client is None and self.config_path is not None:
+            config = load_user_config(self.config_path)
+            embedding_client = OpenAICompatibleEmbeddingModel.from_config(config.embedding_model)
+        # Auto-create chat model from config for A+G summarization.
+        # Uses the "curator" role model if configured, otherwise the default
+        # chat_model — same resolution as web research roles.
+        if chat_model is None and self.config_path is not None:
+            config = load_user_config(self.config_path)
+            chat_model = OpenAICompatibleChatModel.from_config(
+                build_role_chat_model_config(config, "local_summarizer")
+            )
         with self._active_family_lock("local", resolved_task_id):
-            return self.run_local_research_unlocked(question, task_id=resolved_task_id, embedding_client=embedding_client)
+            return self.run_local_research_unlocked(question, task_id=resolved_task_id, embedding_client=embedding_client, chat_model=chat_model)
 
     def run_web_research(self, question: str, *, runtime: WebResearchRuntime | None = None, chat_models: dict[str, ChatModelClient] | None = None, task_id: str | None = None, on_event: Callable[[dict[str, Any]], None] | None = None) -> dict:
         resolved_task_id = task_id or generate_task_id()
@@ -102,7 +117,7 @@ class CoreService:
         with self._active_family_lock("web", resolved_task_id):
             return self.run_web_research_unlocked(question, runtime=resolved_runtime, task_id=resolved_task_id)
 
-    def run_local_research_unlocked(self, question: str, *, task_id: str, embedding_client: EmbeddingClient | None = None) -> dict:
+    def run_local_research_unlocked(self, question: str, *, task_id: str, embedding_client: EmbeddingClient | None = None, chat_model: ChatModelClient | None = None) -> dict:
         return run_local_research(
             question=question,
             workspace=self.workspace,
@@ -110,6 +125,7 @@ class CoreService:
             config_path=self.config_path,
             task_id=task_id,
             embedding_client=embedding_client,
+            chat_model=chat_model,
         )
 
     def run_web_research_unlocked(self, question: str, *, runtime: WebResearchRuntime, task_id: str) -> dict:
@@ -135,7 +151,7 @@ class CoreService:
             "web": web_result,
         }
 
-    def list_finished_tasks(self):
+    def list_finished_tasks(self) -> list[TaskRecord]:
         self.task_store.initialize()
         return self.task_store.list_finished_tasks()
 
@@ -181,7 +197,7 @@ class CoreService:
                 lock_path.unlink(missing_ok=True)
                 fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             else:
-                active = _read_lock(lock_path)
+                active = read_lock_task_id(lock_path)
                 raise ResearchError(
                     code="busy",
                     message=f"{family} task family is already active: {active}",
@@ -197,19 +213,11 @@ class CoreService:
         return self._active_family_lock(family, task_id)
 
 
-def _safe_future_result(future, family: str) -> dict:
+def _safe_future_result(future: Future, family: str) -> dict[str, Any]:
     try:
         return future.result()
     except Exception as exc:
         return {"mode": family, "status": "failed", "error": {"code": "runtime_error", "message": str(exc)}}
-
-
-def _read_lock(path: Path) -> str:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        return str(payload.get("task_id") or "unknown")
-    except Exception:
-        return "unknown"
 
 
 def _is_lock_stale(path: Path, timeout_seconds: int = 3600) -> bool:
