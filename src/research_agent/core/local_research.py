@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -126,7 +127,7 @@ def _search_fts5(
     fts_query = " ".join(f'"{term}"' for term in terms)
 
     try:
-        with sqlite3.connect(sqlite_path) as connection:
+        with closing(sqlite3.connect(sqlite_path)) as connection:
             connection.row_factory = sqlite3.Row
             rows = connection.execute(
                 """

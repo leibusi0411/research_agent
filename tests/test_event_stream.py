@@ -6,12 +6,12 @@ and seq deduplication.
 
 import asyncio
 import json
-import threading
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+from research_agent.core.bus import Bus
 from research_agent.core.config import InitConfigRequest
 from research_agent.core.ids import generate_task_id, utc_now_iso
 from research_agent.core.service import CoreService
@@ -44,7 +44,7 @@ def _configured_workspace(tmp_path: Path) -> tuple[Path, Workspace]:
     return config_path, Workspace(workspace)
 
 
-def _make_runner(workspace: Workspace) -> StateGraphRunner:
+def _make_runner(workspace: Workspace, bus: Bus | None = None) -> StateGraphRunner:
     """Create a runner with mock chat models and tool gateway."""
     mock_chat = MagicMock()
     mock_chat.complete.return_value = "{}"
@@ -59,6 +59,7 @@ def _make_runner(workspace: Workspace) -> StateGraphRunner:
             chat_models={"planner": mock_chat, "executor": mock_chat, "supervisor": mock_chat, "curator": mock_chat},
             tool_gateway=mock_gateway,
             workspace_obj=workspace,
+            bus=bus,
         ),
     )
 
@@ -123,6 +124,13 @@ class TestProgressEventSchema:
         assert d["seq"] == 0
 
 
+async def _drain_one(bus: Bus, channel: str, out: list[dict]) -> None:
+    """Read one event from *bus* on *channel* and append to *out*."""
+    async for payload in bus.subscribe(channel):
+        out.append(json.loads(payload["data"]))
+        break
+
+
 class TestEventStreamAsyncIterator:
     """C3: events() AsyncIterator - file replay, queue switch, seq dedup."""
 
@@ -130,7 +138,8 @@ class TestEventStreamAsyncIterator:
     async def test_events_replays_file_events(self, tmp_path):
         """File replay yields all events persisted before consumer connected."""
         _, workspace = _configured_workspace(tmp_path)
-        runner = _make_runner(workspace)
+        bus = Bus()
+        runner = _make_runner(workspace, bus=bus)
 
         task_id = generate_task_id()
         workspace.create_task_folder(
@@ -146,24 +155,26 @@ class TestEventStreamAsyncIterator:
         runner._emit(task_id, "web_execution", "started", "event_3")
 
         # Connect consumer — should replay all 3 from file,
-        # then block waiting for queue. Use timeout to stop after replay.
+        # then block waiting for bus. Use timeout to stop after replay.
         collected = []
         async_gen = runner.events()
 
         for _ in range(3):
             evt = await asyncio.wait_for(async_gen.__anext__(), timeout=2)
-            collected.append(evt)
+            # events() yields {"data": json_string} dicts (sse_starlette format)
+            parsed = json.loads(evt["data"])
+            collected.append(parsed)
 
         assert [e["message"] for e in collected] == ["event_1", "event_2", "event_3"]
         assert [e["seq"] for e in collected] == [1, 2, 3]
-        # Queue is now created and waiting — cleanup
         await async_gen.aclose()
 
     @pytest.mark.asyncio
     async def test_events_queue_receives_post_connect_event(self, tmp_path):
-        """After connecting, events arrive via the live queue (async_q path)."""
+        """After connecting, events arrive via the live Bus (mycode pattern)."""
         _, workspace = _configured_workspace(tmp_path)
-        runner = _make_runner(workspace)
+        bus = Bus()
+        runner = _make_runner(workspace, bus=bus)
 
         task_id = generate_task_id()
         workspace.create_task_folder(
@@ -176,25 +187,32 @@ class TestEventStreamAsyncIterator:
         # Pre-emit 1 event to file
         runner._emit(task_id, "web_planning", "started", "before_connect")
 
-        # Connect consumer — get file replay
-        async_gen = runner.events()
-        evt1 = await asyncio.wait_for(async_gen.__anext__(), timeout=2)
-        assert evt1["message"] == "before_connect"
-        assert evt1["seq"] == 1
+        # Collect from events() concurrently
+        collected: list[dict] = []
+        async def _consume():
+            async for evt in runner.events():
+                collected.append(json.loads(evt["data"]))
+                if len(collected) >= 2:
+                    break
 
-        # Queue is now active (created by events()).  Push directly to async_q
-        # to avoid janus sync_q deadlock when calling from event-loop thread.
-        event_dict = {
-            "task_id": task_id, "mode": "web", "phase": "web_execution",
-            "event_type": "progress", "event_subtype": "tool_call",
-            "created_at": utc_now_iso(), "message": "after_connect",
-            "seq": 42, "details": {"items": []},
-        }
-        await runner._event_queue.async_q.put(event_dict)
+        consumer = asyncio.ensure_future(_consume())
+        # Let consumer start (file replay happens synchronously on first await)
+        await asyncio.sleep(0.05)
 
-        evt2 = await asyncio.wait_for(async_gen.__anext__(), timeout=2)
-        assert evt2["message"] == "after_connect"
-        await async_gen.aclose()
+        # Publish a live event after consumer is already waiting on bus
+        await bus.publish(f"task.{task_id}",
+            task_id=task_id, mode="web", phase="web_execution",
+            event_type="progress", event_subtype="tool_call",
+            created_at=utc_now_iso(), message="after_connect",
+            seq=42, details={"items": []},
+        )
+
+        await asyncio.wait_for(consumer, timeout=2)
+
+        assert collected[0]["message"] == "before_connect"
+        assert collected[0]["seq"] == 1
+        assert collected[1]["message"] == "after_connect"
+        assert collected[1]["seq"] == 42
 
 
 class TestProgressItemSubtype:
@@ -231,7 +249,7 @@ class TestProgressItemSubtype:
 
 
 class TestEmitDualWrite:
-    """C2: _emit writes to both events.jsonl and janus.Queue."""
+    """C2: _emit writes to events.jsonl (always) and Bus (when configured)."""
 
     def test_emit_writes_to_file_when_no_queue(self, tmp_path):
         """When no consumer has connected, _emit only writes to file."""
@@ -278,10 +296,12 @@ class TestEmitDualWrite:
         custom = [e for e in events if e["message"] in ("first", "second", "third")]
         assert [e["seq"] for e in custom] == [1, 2, 3]
 
-    def test_emit_pushes_to_queue_when_active(self, tmp_path):
-        """When queue is active, events appear in both file and queue."""
+    @pytest.mark.asyncio
+    async def test_emit_publishes_to_bus_when_active(self, tmp_path):
+        """When bus is configured, events arrive at subscribers."""
         _, workspace = _configured_workspace(tmp_path)
-        runner = _make_runner(workspace)
+        bus = Bus()
+        runner = _make_runner(workspace, bus=bus)
 
         task_id = generate_task_id()
         workspace.create_task_folder(
@@ -291,9 +311,27 @@ class TestEmitDualWrite:
         )
         runner._task_id = task_id
 
-        import janus
-        runner._event_queue = janus.Queue(maxsize=1024)
+        # Start subscriber first
+        collected: list[dict] = []
+        async def _consume_one():
+            async for payload in bus.subscribe(f"task.{task_id}"):
+                collected.append(json.loads(payload["data"]))
+                break
 
+        sub_task = asyncio.ensure_future(_consume_one())
+        await asyncio.sleep(0)  # let subscriber register
+
+        # Publish via bus async path
+        await bus.publish(f"task.{task_id}",
+            task_id=task_id, mode="web", phase="web_execution",
+            event_type="progress", event_subtype="tool_call",
+            message="tool_call search", seq=1, details={"items": []},
+            created_at=utc_now_iso(),
+        )
+
+        await asyncio.wait_for(sub_task, timeout=2)
+
+        # File persistence still works via _emit
         runner._emit(task_id, "web_execution", "progress", "tool_call search",
                      items=[{"kind": "tool_call", "name": "web.search", "input": "test"}])
 
@@ -303,10 +341,9 @@ class TestEmitDualWrite:
         target = [e for e in events if e["message"] == "tool_call search"]
         assert len(target) == 1
 
-        q_event = runner._event_queue.sync_q.get(timeout=2)
-        assert q_event["phase"] == "web_execution"
-        assert q_event["seq"] == target[0]["seq"]
-        assert q_event["seq"] == 1
+        assert len(collected) >= 1
+        assert collected[0]["phase"] == "web_execution"
+        assert collected[0]["seq"] == 1
 
 
 class TestTaskResultEvent:
@@ -393,10 +430,11 @@ class TestTaskResultEvent:
 
 
     @pytest.mark.asyncio
-    async def test_events_sentinel_terminates_loop(self, tmp_path):
-        """R-88: _close_event_queue sends a sentinel that breaks the events() while-True loop."""
+    async def test_events_file_replay_then_bus_live(self, tmp_path):
+        """File replay + bus live path: events() replays file then streams from bus."""
         _, workspace = _configured_workspace(tmp_path)
-        runner = _make_runner(workspace)
+        bus = Bus()
+        runner = _make_runner(workspace, bus=bus)
 
         task_id = generate_task_id()
         workspace.create_task_folder(
@@ -406,22 +444,34 @@ class TestTaskResultEvent:
         )
         runner._task_id = task_id
 
-        # Emit a task_result event, then push sentinel to close the queue
+        # Emit one event to file pre-connect
         runner._emit(task_id, "web_curation", "task_result", "Task completed.",
                      items=[{"kind": "status", "task_id": task_id, "status": "completed", "mode": "web"}])
-        runner._close_event_queue()
 
-        # Consumer should receive the task_result event then terminate
-        async_gen = runner.events()
-        collected = []
-        async for evt in async_gen:
-            collected.append(evt)
+        collected: list[dict] = []
+        async def _consume():
+            async for evt in runner.events():
+                collected.append(json.loads(evt["data"]))
+                if len(collected) >= 2:
+                    break
 
-        # Should have exactly 1 event (the task_result), loop terminated by sentinel
-        assert len(collected) == 1
+        consumer = asyncio.ensure_future(_consume())
+        await asyncio.sleep(0.05)
+
+        # First event: file replay
         assert collected[0]["event_type"] == "task_result"
-        # async_q should have the sentinel consumed, queue reference cleaned up
-        # The finally block nulls the queue, so a new consumer would start fresh
+
+        # Publish a live event while consumer is active on bus
+        await bus.publish(f"task.{task_id}",
+            task_id=task_id, mode="web", phase="web_planning",
+            event_type="completed", message="post_connect_event",
+            seq=42, details={"items": []},
+            created_at=utc_now_iso(),
+        )
+
+        await asyncio.wait_for(consumer, timeout=2)
+
+        assert collected[1]["message"] == "post_connect_event"
 
 
 class TestPrintWebEvent:

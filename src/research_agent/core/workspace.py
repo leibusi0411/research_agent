@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +73,17 @@ class Workspace:
                 events_file.write("\n")
         except OSError as exc:
             logger.warning("Failed to append event for task %s: %s", task_id, exc)
+
+    def delete_task_folder(self, task_id: str) -> bool:
+        task_dir = self.task_dir(task_id)
+        tasks_root = self.tasks_dir.resolve()
+        resolved_task_dir = task_dir.resolve()
+        if tasks_root != resolved_task_dir and tasks_root not in resolved_task_dir.parents:
+            raise ValueError(f"task directory escapes workspace: {task_id}")
+        if not task_dir.exists():
+            return False
+        shutil.rmtree(task_dir)
+        return True
 
 
 def read_lock_task_id(lock_path: Path) -> str:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import logging
+import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
@@ -24,10 +24,103 @@ from research_agent.web.tools import WEB_RESEARCH_WORKFLOW, ToolGateway
 
 logger = logging.getLogger(__name__)
 
+# ── JSON Schema constants for native function calling ───────────────────
+
+_EXECUTOR_TOOL_PLAN_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "tool_calls": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "arguments": {"type": "object"},
+                },
+                "required": ["name", "arguments"],
+            },
+        },
+    },
+    "required": ["tool_calls"],
+}
+
+_EXECUTOR_SYNTHESIS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "subtask_id": {"type": "string"},
+        "status": {"type": "string", "enum": ["completed", "failed"]},
+        "findings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "finding_id": {"type": "string"},
+                    "subtask_id": {"type": "string"},
+                    "text": {"type": "string"},
+                    "source_ids": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["finding_id", "subtask_id", "text", "source_ids"],
+            },
+        },
+        "sources": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source_id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "url": {"type": "string"},
+                    "fetched_at": {"type": "string"},
+                },
+                "required": ["source_id", "title", "url", "fetched_at"],
+            },
+        },
+        "failure_reason": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
+    "required": ["subtask_id", "status", "findings", "sources"],
+}
+
+
+def _normalize_tool_call_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize common LLM/provider variants into {"tool_calls": [...]}."""
+    if "tool_calls" not in payload and "name" in payload:
+        payload = {"tool_calls": [payload]}
+
+    tool_calls = payload.get("tool_calls")
+    if isinstance(tool_calls, dict):
+        tool_calls = [tool_calls]
+
+    normalized: list[dict[str, Any]] = []
+    if isinstance(tool_calls, list):
+        for item in tool_calls:
+            if not isinstance(item, dict):
+                normalized.append(item)
+                continue
+            if "function" in item and isinstance(item["function"], dict):
+                function = item["function"]
+                arguments = function.get("arguments", {})
+                if isinstance(arguments, str):
+                    arguments = json.loads(arguments)
+                normalized.append({
+                    "name": function.get("name"),
+                    "arguments": arguments,
+                })
+            else:
+                if isinstance(item.get("arguments"), str):
+                    item = {**item, "arguments": json.loads(item["arguments"])}
+                normalized.append(item)
+    else:
+        normalized = tool_calls
+
+    return {**payload, "tool_calls": normalized}
+
 
 def _validate_tool_plan_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    check_required_field(payload, "tool_calls", list)
+    payload = _normalize_tool_call_payload(payload)
+    check_required_field(payload, "tool_calls", list, allow_empty=True)
     for tc in payload["tool_calls"]:
+        if not isinstance(tc, dict):
+            raise ValueError("tool_calls items must be objects")
         check_required_field(tc, "name", str)
         check_required_field(tc, "arguments", dict, allow_empty=True)
     return payload
@@ -182,13 +275,11 @@ class ResearchExecutor:
             state, subtask_id,
             tool_descriptions=self._build_tool_descriptions(),
         )
-        tool_plan_schema = json.dumps({
-            "tool_calls": [{"name": "string", "arguments": {}}],
-        })
         return invoke_role_json(
             role_name="executor",
             prompt=tool_plan_prompt,
-            target_schema=tool_plan_schema,
+            tool_name="executor_tool_plan",
+            tool_schema=_EXECUTOR_TOOL_PLAN_SCHEMA,
             chat_model=chat_model,
             validator=_validate_tool_plan_payload,
         )
@@ -228,17 +319,11 @@ class ResearchExecutor:
     ) -> ExecutorOutput:
         """Ask the LLM to synthesize findings from tool results."""
         synthesis_prompt = build_executor_synthesis_prompt(state, subtask_id, tool_results)
-        synthesis_schema = json.dumps({
-            "subtask_id": "string",
-            "status": "completed|failed",
-            "findings": [{"finding_id": "string", "subtask_id": "string", "text": "string", "source_ids": ["string"]}],
-            "sources": [{"source_id": "string", "title": "string", "url": "string", "fetched_at": "string"}],
-            "failure_reason": "string|null",
-        })
         payload = invoke_role_json(
             role_name="executor",
             prompt=synthesis_prompt,
-            target_schema=synthesis_schema,
+            tool_name="executor_synthesis",
+            tool_schema=_EXECUTOR_SYNTHESIS_SCHEMA,
             chat_model=chat_model,
             validator=_validate_executor_payload,
         )

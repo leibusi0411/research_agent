@@ -52,8 +52,8 @@ def test_build_planner_prompt_contains_original_question():
     state = create_initial_state(original_question="What is LangGraph?")
     prompt = build_planner_prompt(state)
     assert "What is LangGraph?" in prompt
-    assert "research_title" in prompt
-    assert "subtasks" in prompt
+    assert "Planner" in prompt
+    assert "subtask" in prompt.lower()
 
 
 def test_build_planner_prompt_for_revision_contains_existing_plan():
@@ -138,13 +138,12 @@ def test_build_supervisor_prompt_requests_json_with_route():
     assert "fail" in prompt
 
 
-def test_build_curator_prompt_requests_json_with_title_and_summary():
+def test_build_curator_prompt_requests_title_and_summary():
     state = create_initial_state(original_question="What is LangGraph?")
     _add_planner_output(state, PlannerOutput("LangGraph Research", [PlannerSubtaskDraft("Find architecture overview.")]))
     prompt = build_curator_prompt(state)
     assert "title" in prompt
     assert "summary" in prompt
-    assert "JSON" in prompt or "json" in prompt
 
 
 # ── R-109: build_executor_context raises ResearchError for missing subtask ──

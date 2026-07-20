@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,7 +30,7 @@ class TaskStore:
 
     def initialize(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS tasks (
@@ -44,6 +45,7 @@ class TaskStore:
                 )
                 """
             )
+            connection.commit()
 
     def upsert_finished_task(self, record: TaskRecord) -> None:
         validate_task_id(record.task_id)
@@ -53,7 +55,7 @@ class TaskStore:
             raise ValueError(f"invalid finished task status: {record.status}")
 
         self.initialize()
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection:
             connection.execute(
                 """
                 INSERT INTO tasks (
@@ -87,10 +89,11 @@ class TaskStore:
                     record.result_path,
                 ),
             )
+            connection.commit()
 
     def list_finished_tasks(self) -> list[TaskRecord]:
         self.initialize()
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection:
             connection.row_factory = sqlite3.Row
             rows = connection.execute(
                 """
@@ -121,3 +124,45 @@ class TaskStore:
             )
             for row in rows
         ]
+
+    def get_finished_task(self, task_id: str) -> TaskRecord | None:
+        validate_task_id(task_id)
+        self.initialize()
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            connection.row_factory = sqlite3.Row
+            row = connection.execute(
+                """
+                SELECT
+                  task_id,
+                  mode,
+                  status,
+                  title_or_question,
+                  created_at,
+                  completed_at,
+                  report_path,
+                  result_path
+                FROM tasks
+                WHERE task_id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return TaskRecord(
+            task_id=row["task_id"],
+            mode=row["mode"],
+            status=row["status"],
+            title_or_question=row["title_or_question"],
+            created_at=row["created_at"],
+            completed_at=row["completed_at"],
+            report_path=row["report_path"],
+            result_path=row["result_path"],
+        )
+
+    def delete_finished_task(self, task_id: str) -> bool:
+        validate_task_id(task_id)
+        self.initialize()
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            cursor = connection.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
+            connection.commit()
+            return cursor.rowcount > 0

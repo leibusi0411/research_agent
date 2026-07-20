@@ -152,6 +152,75 @@ def route_after_supervise(state: WebResearchStateDict, max_retrieval_rounds: int
     return route
 
 
+# ── JSON Schema constants for native function calling ───────────────────
+
+
+_PLANNER_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "research_title": {"type": "string"},
+        "subtasks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"question": {"type": "string"}},
+                "required": ["question"],
+            },
+        },
+    },
+    "required": ["research_title", "subtasks"],
+}
+
+_SUPERVISOR_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "route": {"type": "string", "enum": ["continue_execution", "revise_plan", "curate", "fail"]},
+        "reason": {"type": "string"},
+        "next_subtask_ids": {"type": "array", "items": {"type": "string"}},
+        "skip_subtask_ids": {"type": "array", "items": {"type": "string"}},
+        "plan_revision_request": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "research_gaps": {"type": "array", "items": {"type": "string"}},
+        "saturation": {"type": "boolean"},
+    },
+    "required": ["route", "reason", "next_subtask_ids", "skip_subtask_ids", "research_gaps", "saturation"],
+}
+
+_CURATOR_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "summary": {"type": "string"},
+        "findings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "finding_id": {"type": "string"},
+                    "subtask_id": {"type": "string"},
+                    "text": {"type": "string"},
+                    "source_ids": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["finding_id", "subtask_id", "text", "source_ids"],
+            },
+        },
+        "sources": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source_id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "url": {"type": "string"},
+                    "fetched_at": {"type": "string"},
+                },
+                "required": ["source_id", "title", "url", "fetched_at"],
+            },
+        },
+    },
+    "required": ["title", "summary", "findings", "sources"],
+}
+
+
 # ── graph node functions ──────────────────────────────────────────────
 # Extracted from build_web_research_graph so each node is independently
 # testable and the graph builder stays focused on wiring (R-100).
@@ -164,7 +233,8 @@ def _plan_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[str, Any]
     planner_payload = invoke_role_json(
         role_name="planner",
         prompt=planner_prompt,
-        target_schema='{"research_title": "string", "subtasks": [{"question": "string"}]}',
+        tool_name="plan_output",
+        tool_schema=_PLANNER_SCHEMA,
         chat_model=ctx.chat_models["planner"],
         validator=_validate_planner_payload,
     )
@@ -258,7 +328,8 @@ def _supervise_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[str,
     supervisor_payload = invoke_role_json(
         role_name="supervisor",
         prompt=supervisor_prompt,
-        target_schema='{"route": "string", "reason": "string", "next_subtask_ids": ["string"], "skip_subtask_ids": ["string"], "plan_revision_request": "string|null", "research_gaps": ["string"], "saturation": false}',
+        tool_name="supervisor_output",
+        tool_schema=_SUPERVISOR_SCHEMA,
         chat_model=ctx.chat_models["supervisor"],
         validator=_validate_supervisor_payload,
     )
@@ -303,7 +374,8 @@ def _plan_revision_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[
     revision_payload = invoke_role_json(
         role_name="planner_revision",
         prompt=revision_prompt,
-        target_schema='{"research_title": "string", "subtasks": [{"question": "string"}]}',
+        tool_name="plan_output",
+        tool_schema=_PLANNER_SCHEMA,
         chat_model=ctx.chat_models["planner"],
         validator=_validate_planner_payload,
     )
@@ -339,7 +411,8 @@ def _curate_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[str, An
     curator_payload = invoke_role_json(
         role_name="curator",
         prompt=curator_prompt,
-        target_schema='{"title": "string", "summary": "string", "findings": [], "sources": []}',
+        tool_name="curator_output",
+        tool_schema=_CURATOR_SCHEMA,
         chat_model=ctx.chat_models["curator"],
         validator=_validate_curator_payload,
     )

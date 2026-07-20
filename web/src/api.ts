@@ -109,8 +109,9 @@ export const api = {
   runWeb: (question: string) =>
     request<ResearchResult>("/api/research/web", { method: "POST", body: JSON.stringify({ question }) }),
   finishedTasks: () => request<{ tasks: TaskSummary[] }>("/api/tasks/finished"),
-  taskResult: (taskId: string) => request<ResearchResult>(`/api/tasks/${taskId}/result`),
-  taskEvents: async (taskId: string) => parseSseEvents(await requestText(`/api/tasks/${taskId}/events`)),
+  deleteTask: (taskId: string) => request<{ task_id: string; deleted: boolean }>(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" }),
+  taskResult: (taskId: string) => request<ResearchResult>(`/api/tasks/${encodeURIComponent(taskId)}/result`),
+  taskEvents: (taskId: string) => request<ProgressEvent[]>(`/api/tasks/${encodeURIComponent(taskId)}/events`),
   kbStatus: () => request<KbStatus>("/api/kb/status"),
   kbRebuild: () => request<KbStatus>("/api/kb/rebuild", { method: "POST" })
 };

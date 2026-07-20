@@ -169,6 +169,7 @@ class RunnerConfig:
     on_event: Any | None = None
     workspace_obj: Workspace | None = None
     task_store: TaskStore | None = None
+    bus: Any | None = None  # research_agent.core.bus.Bus (lazy import to avoid cycles)
 
 
 class StateGraphRunner:
@@ -182,12 +183,11 @@ class StateGraphRunner:
         self.max_retrieval_rounds = config.max_retrieval_rounds
         self.max_concurrent_subtasks = config.max_concurrent_subtasks
         self.on_event = config.on_event
+        self._bus = config.bus
         self._task_id: str | None = None
         self._event_seq: int = 0
-        self._event_queue: Any = None  # janus.Queue | None (lazy)
         self._saved_source_ids: set[str] = set()
         self._llm_call_count: int = 0
-        self._event_queue_closed: bool = False  # R-116: regular attr, not object.__setattr__
         self.executor = ResearchExecutor(
             tool_gateway=config.tool_gateway,
             max_concurrent_subtasks=config.max_concurrent_subtasks,
@@ -221,43 +221,42 @@ class StateGraphRunner:
             ))
 
     async def events(self):
-        """Yield ProgressEvents, first replaying from file then live from queue."""
+        """Yield SSE frames via the bus, first replaying persisted events from file."""
         if self._task_id is None:
             raise RuntimeError("Cannot stream events: task_id is not set. Call run() first.")
-        import janus
+        if self._bus is None:
+            raise RuntimeError("Cannot stream events: bus is not configured.")
 
-        self._event_queue = janus.Queue(maxsize=1024)
+        bus = self._bus
+        bus_channel = f"task.{self._task_id}"
         events_path = self.workspace.task_dir(self._task_id) / "events.jsonl"
         last_seq = -1
 
-        if self._event_queue_closed:
-            try:
-                self._event_queue.sync_q.put_nowait(None)
-            except Exception:
-                pass
-
-        try:
-            if events_path.exists():
-                for line in events_path.read_text(encoding="utf-8").splitlines():
-                    if not line.strip():
+        # 1) Replay persisted events (catch-up).
+        if events_path.exists():
+            with open(events_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
                         continue
                     try:
                         evt = json.loads(line)
                     except Exception:
                         logger.warning("Failed to parse event line in %s: %s", events_path, line[:100])
                         continue
-                    yield evt
+                    yield {"data": json.dumps(evt, ensure_ascii=False)}
                     last_seq = max(last_seq, evt.get("seq", -1))
 
-            while True:
-                evt = await self._event_queue.async_q.get()
-                if evt is None:
-                    break
-                if evt.get("seq", -1) <= last_seq:
-                    continue
-                yield evt
-        finally:
-            self._event_queue = None
+        # 2) Live phase — subscribe to the bus, filtering by seq to skip
+        #    events already replayed.
+        async for payload in bus.subscribe(bus_channel):
+            try:
+                evt = json.loads(payload["data"])
+            except Exception:
+                continue
+            if evt.get("seq", -1) <= last_seq:
+                continue
+            yield payload
 
     # ── graph execution ───────────────────────────────────────────────
 
@@ -421,12 +420,12 @@ class StateGraphRunner:
                 logger.warning("Failed to save source snapshot %s: %s", source.source_id, exc)
 
     def _close_event_queue(self) -> None:
-        self._event_queue_closed = True
-        if self._event_queue is not None:
-            try:
-                self._event_queue.sync_q.put(None, timeout=5)
-            except Exception:
-                logger.warning("Failed to push event queue sentinel; consumer may hang until disconnect.")
+        """No-op: the Bus handles subscriber lifecycle automatically.
+
+        Subscribers are unblocked when ``Bus.close()`` is called during
+        server shutdown or when the subscriber disconnects and the
+        ``async for`` loop exits (the queue is garbage-collected).
+        """
 
     def _emit(self, task_id: str, phase: str, event_type: str, message: str, items: list[dict[str, Any]] | None = None, *, event_subtype: str | None = None) -> None:
         self._event_seq += 1
@@ -438,12 +437,10 @@ class StateGraphRunner:
         )
         event_dict = event.to_dict()
         self.workspace.append_event(task_id, event_dict)
-        if self._event_queue is not None:
-            try:
-                self._event_queue.sync_q.put(event_dict, timeout=5)
-            except Exception:
-                logger.warning("Failed to push event to live queue (seq=%d); event is persisted to disk.", self._event_seq)
-        if self.on_event is not None:
+        if self._bus is not None:
+            self._bus.publish_nowait(f"task.{task_id}", **event_dict)
+        elif self.on_event is not None:
+            # Fallback for CLI / tests: direct callback, no bus.
             self.on_event(event_dict)
 
     _PROGRESS_ITEM_MESSAGES: dict[str, str] = {

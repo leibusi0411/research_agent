@@ -73,6 +73,7 @@ function stubEventSource() {
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  vi.stubGlobal("confirm", () => true);
 });
 
 describe("App", () => {
@@ -130,6 +131,22 @@ describe("App", () => {
     expect(screen.getByText("local_rag")).toBeInTheDocument();
   });
 
+  it("deletes a finished task from task history and clears selected details", async () => {
+    mockConfiguredFetch();
+    render(<MemoryRouter><App /></MemoryRouter>);
+
+    await screen.findByRole("heading", { name: "Research" });
+    await userEvent.click(screen.getByRole("link", { name: "Tasks" }));
+    await userEvent.click(await screen.findByText("web question"));
+    expect(await screen.findByText("Web Report")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete task web question" }));
+
+    await waitFor(() => expect(screen.queryByText("web question")).not.toBeInTheDocument());
+    expect(screen.queryByText("Web Report")).not.toBeInTheDocument();
+    expect(screen.getByText("local question")).toBeInTheDocument();
+  });
+
   it("shows knowledge base status and rebuild action", async () => {
     mockConfiguredFetch();
     render(<MemoryRouter><App /></MemoryRouter>);
@@ -140,6 +157,42 @@ describe("App", () => {
     expect(await screen.findByText("Knowledge Base Index")).toBeInTheDocument();
     expect(screen.getByText("ready")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Rebuild" })).toBeInTheDocument();
+  });
+
+  it("shows error banner when delete task fails with 409 busy", async () => {
+    // Override mockConfiguredFetch to make DELETE return 409 for web task
+    stubEventSource();
+    const finishedTasks = [
+      { task_id: webResult.task_id, mode: "web", status: "completed", title_or_question: "web question", created_at: "2026-06-24T00:00:01Z" },
+      { task_id: localResult.task_id, mode: "local", status: "completed", title_or_question: "local question", created_at: "2026-06-24T00:00:00Z" },
+    ];
+    _sseEventMap = {};
+    function jsonResponse(body: unknown, ok = true, status = 200) {
+      return { ok, status, text: async () => JSON.stringify(body) };
+    }
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api/setup/status")) return jsonResponse({ configured: true });
+        if (url.endsWith("/api/tasks/finished")) return jsonResponse({ tasks: finishedTasks });
+        if (url.endsWith("/api/kb/status")) return jsonResponse({ status: "ready", vault_path: "D:/vault", file_count: 2, chunk_count: 4, last_indexed_at: "now" });
+        if (url.endsWith(`/api/tasks/${webResult.task_id}`) && init?.method === "DELETE") {
+          return jsonResponse({ error: { code: "busy", message: "Task is still running" } }, false, 409);
+        }
+        return jsonResponse({});
+      })
+    );
+
+    render(<MemoryRouter><App /></MemoryRouter>);
+
+    await screen.findByRole("heading", { name: "Research" });
+    await userEvent.click(screen.getByRole("link", { name: "Tasks" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete task web question" }));
+
+    expect(await screen.findByText(/busy/)).toBeInTheDocument();
+    // Task row should still be present (delete failed)
+    expect(screen.getByText("web question")).toBeInTheDocument();
   });
 
   it("closes previous EventSource when starting a new task (P2 fix)", async () => {
@@ -189,6 +242,22 @@ describe("App", () => {
 function mockConfiguredFetch(options: { webResultOverride?: ResearchResult } = {}) {
   const resolvedWebResult = options.webResultOverride ?? webResult;
   const webStatus: "completed" | "failed" = resolvedWebResult.status === "failed" ? "failed" : "completed";
+  let finishedTasks = [
+    {
+      task_id: webResult.task_id,
+      mode: "web",
+      status: "completed",
+      title_or_question: "web question",
+      created_at: "2026-06-24T00:00:01Z"
+    },
+    {
+      task_id: localResult.task_id,
+      mode: "local",
+      status: "completed",
+      title_or_question: "local question",
+      created_at: "2026-06-24T00:00:00Z"
+    }
+  ];
 
   // Build SSE event map for EventSource mock
   _sseEventMap = {};
@@ -227,22 +296,7 @@ function mockConfiguredFetch(options: { webResultOverride?: ResearchResult } = {
         body = { configured: true };
       } else if (url.endsWith("/api/tasks/finished")) {
         body = {
-          tasks: [
-            {
-              task_id: webResult.task_id,
-              mode: "web",
-              status: "completed",
-              title_or_question: "web question",
-              created_at: "2026-06-24T00:00:01Z"
-            },
-            {
-              task_id: localResult.task_id,
-              mode: "local",
-              status: "completed",
-              title_or_question: "local question",
-              created_at: "2026-06-24T00:00:00Z"
-            }
-          ]
+          tasks: finishedTasks
         };
       } else if (url.endsWith("/api/kb/status") || url.endsWith("/api/kb/rebuild")) {
         body = { status: "ready", vault_path: "D:/vault", file_count: 2, chunk_count: 4, last_indexed_at: "now" };
@@ -251,13 +305,19 @@ function mockConfiguredFetch(options: { webResultOverride?: ResearchResult } = {
       } else if (url.endsWith("/api/research/web") && init?.method === "POST") {
         body = { ...resolvedWebResult, status: "running" };
       } else if (url.endsWith(`/api/tasks/${localResult.task_id}/events`)) {
-        body = localEvents;
+        body = _sseEventMap[localResult.task_id] ?? [];
       } else if (url.endsWith(`/api/tasks/${webResult.task_id}/events`)) {
-        body = webEvents;
+        body = _sseEventMap[webResult.task_id] ?? [];
       } else if (url.endsWith(`/api/tasks/${webResult.task_id}/result`)) {
         body = resolvedWebResult;
       } else if (url.endsWith(`/api/tasks/${localResult.task_id}/result`)) {
         body = localResult;
+      } else if (url.endsWith(`/api/tasks/${webResult.task_id}`) && init?.method === "DELETE") {
+        finishedTasks = finishedTasks.filter((task) => task.task_id !== webResult.task_id);
+        body = { task_id: webResult.task_id, deleted: true };
+      } else if (url.endsWith(`/api/tasks/${localResult.task_id}`) && init?.method === "DELETE") {
+        finishedTasks = finishedTasks.filter((task) => task.task_id !== localResult.task_id);
+        body = { task_id: localResult.task_id, deleted: true };
       }
       return {
         ok: true,

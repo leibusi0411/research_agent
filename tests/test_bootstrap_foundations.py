@@ -135,6 +135,27 @@ def test_task_store_persists_finished_tasks_for_local_and_web_only(tmp_path):
     assert set(status for (status,) in statuses) <= {"completed", "failed"}
 
 
+def test_task_store_deletes_finished_task_record(tmp_path):
+    store = TaskStore(tmp_path / "tasks.sqlite")
+    task_id = "task_20260623_103000_a1b2c3"
+    store.upsert_finished_task(
+        TaskRecord(
+            task_id=task_id,
+            mode="local",
+            status="completed",
+            title_or_question="question one",
+            created_at="2026-06-23T10:30:00Z",
+            completed_at="2026-06-23T10:31:00Z",
+            report_path=None,
+            result_path=f"tasks/{task_id}/result.json",
+        )
+    )
+
+    assert store.delete_finished_task(task_id) is True
+    assert store.delete_finished_task(task_id) is False
+    assert store.list_finished_tasks() == []
+
+
 def test_research_error_is_user_facing_code_and_message_only():
     error = ResearchError(code="config_missing", message="Run research-agent init first.")
 

@@ -2,10 +2,12 @@ import json
 import queue
 import threading
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 from research_agent.core.config import InitConfigRequest
 from research_agent.core.ids import utc_now_iso
+from research_agent.core.providers import ToolCallResult
 from research_agent.core.service import CoreService
 from research_agent.web.schemas import (
     ExecutorOutput,
@@ -32,6 +34,10 @@ class _SequencedChatClient:
     def complete(self, prompt: str, *, json_mode: bool = False) -> str:
         self.prompts.append(prompt)
         return self._completions.pop(0) if self._completions else ""
+
+    def complete_tool(self, prompt: str, *, tool_name: str, tool_schema: dict[str, Any]) -> ToolCallResult:
+        raw = self.complete(prompt, json_mode=True)
+        return ToolCallResult(name=tool_name, arguments=json.loads(raw))
 
 
 def configured_service(tmp_path: Path) -> tuple[CoreService, Path, Path]:
@@ -343,6 +349,65 @@ def test_research_executor_empty_tool_calls_returns_failed(tmp_path):
     assert len(outputs[0].sources) == 0
 
 
+def test_research_executor_accepts_single_tool_call_payload(tmp_path):
+    """Some function-call providers return one planned call instead of a tool_calls array."""
+    mock_gateway = MagicMock()
+    mock_gateway.call.return_value = MagicMock(
+        status="ok",
+        data={"results": [{"title": "Agent", "url": "https://example.com/agent", "content": "Agent content"}]},
+    )
+    mock_gateway.registry.has.return_value = True
+
+    executor = ResearchExecutor(tool_gateway=mock_gateway, max_concurrent_subtasks=1)
+    state = create_initial_state(original_question="What is an agent?")
+    state["research_title"] = "Agent Research"
+    state["subtasks"] = [ResearchSubtask(subtask_id="st_1", question="Define AI agent.")]
+
+    mock_chat = _SequencedChatClient([
+        json.dumps({"name": "web.search", "arguments": {"query": "AI agent", "max_results": 5}}),
+        _make_executor_response("st_1", "An agent acts toward goals.", "https://example.com/agent"),
+    ])
+
+    outputs = executor.execute(state, ["st_1"], chat_model=mock_chat)
+
+    assert len(outputs) == 1
+    assert outputs[0].status == "completed"
+    mock_gateway.call.assert_called_once()
+
+
+def test_research_executor_accepts_openai_shaped_inner_tool_call(tmp_path):
+    """Nested OpenAI-style tool call objects are normalized before validation."""
+    mock_gateway = MagicMock()
+    mock_gateway.call.return_value = MagicMock(
+        status="ok",
+        data={"results": [{"title": "Agent", "url": "https://example.com/agent", "content": "Agent content"}]},
+    )
+    mock_gateway.registry.has.return_value = True
+
+    executor = ResearchExecutor(tool_gateway=mock_gateway, max_concurrent_subtasks=1)
+    state = create_initial_state(original_question="What is an agent?")
+    state["research_title"] = "Agent Research"
+    state["subtasks"] = [ResearchSubtask(subtask_id="st_1", question="Define AI agent.")]
+
+    mock_chat = _SequencedChatClient([
+        json.dumps({
+            "tool_calls": {
+                "function": {
+                    "name": "web.search",
+                    "arguments": '{"query": "AI agent", "max_results": 5}',
+                },
+            },
+        }),
+        _make_executor_response("st_1", "An agent acts toward goals.", "https://example.com/agent"),
+    ])
+
+    outputs = executor.execute(state, ["st_1"], chat_model=mock_chat)
+
+    assert len(outputs) == 1
+    assert outputs[0].status == "completed"
+    mock_gateway.call.assert_called_once()
+
+
 def test_route_after_supervise_redirects_revise_plan_at_max_rounds(tmp_path):
     """_route_after_supervise should redirect revise_plan when retrieval_round >= max, not just continue_execution."""
     _service, _config_path, workspace = configured_service(tmp_path)
@@ -572,6 +637,7 @@ class _ThreadSafeChatClient:
         self._queue: queue.Queue[str] = queue.Queue()
         for c in completions:
             self._queue.put(c)
+        self._completions = list(completions)
         self._lock = threading.Lock()
         self.prompts: list[str] = []
 
@@ -582,6 +648,24 @@ class _ThreadSafeChatClient:
             return self._queue.get(timeout=5)
         except queue.Empty:
             return ""
+
+    def complete_tool(self, prompt: str, *, tool_name: str, tool_schema: dict[str, Any]) -> ToolCallResult:
+        with self._lock:
+            self.prompts.append(prompt)
+            raw = self._pop_matching_completion(tool_name)
+        return ToolCallResult(name=tool_name, arguments=json.loads(raw))
+
+    def _pop_matching_completion(self, tool_name: str) -> str:
+        for index, raw in enumerate(self._completions):
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if tool_name == "executor_tool_plan" and ("tool_calls" in payload or "name" in payload):
+                return self._completions.pop(index)
+            if tool_name == "executor_synthesis" and "findings" in payload and "sources" in payload:
+                return self._completions.pop(index)
+        return self._completions.pop(0) if self._completions else ""
 
 
 def test_research_executor_concurrent_subtasks_with_thread_safe_mock(tmp_path):

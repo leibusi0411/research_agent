@@ -1,6 +1,5 @@
 """Simple end-to-end tests to verify real API connections work with Web Research components."""
 
-import json
 from pathlib import Path
 
 import pytest
@@ -48,31 +47,33 @@ def test_planner_prompt_with_real_llm(tmp_path):
     # Build prompt
     prompt = build_planner_prompt(state)
 
-    # Call LLM
-    response = chat_model.complete(prompt)
+    # Call LLM via native function calling
+    result = chat_model.complete_tool(
+        prompt=prompt,
+        tool_name="plan_output",
+        tool_schema={
+            "type": "object",
+            "properties": {
+                "research_title": {"type": "string"},
+                "subtasks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"question": {"type": "string"}},
+                    },
+                },
+            },
+        },
+    )
 
-    # Parse response
-    try:
-        # Try to extract JSON from response
-        json_str = response
-        if "```json" in response:
-            json_str = response.split("```json")[1].split("```")[0]
-        elif "```" in response:
-            json_str = response.split("```")[1].split("```")[0]
+    data = result.arguments
+    assert "research_title" in data, "Response should have research_title"
+    assert "subtasks" in data, "Response should have subtasks"
+    assert len(data["subtasks"]) > 0, "Should have at least one subtask"
 
-        data = json.loads(json_str)
-        assert "research_title" in data, "Response should have research_title"
-        assert "subtasks" in data, "Response should have subtasks"
-        assert len(data["subtasks"]) > 0, "Should have at least one subtask"
-
-        print(f"\n[PASS] Planner prompt works with real LLM!")
-        print(f"   Title: {data['research_title']}")
-        print(f"   Subtasks: {len(data['subtasks'])}")
-    except json.JSONDecodeError as e:
-        print(f"\n[WARN] LLM response is not valid JSON: {e}")
-        print(f"   Response: {response[:200]}...")
-        # Don't fail the test, just warn
-        pass
+    print(f"\n[PASS] Planner prompt works with real LLM!")
+    print(f"   Title: {data['research_title']}")
+    print(f"   Subtasks: {len(data['subtasks'])}")
 
 
 @pytest.mark.e2e
@@ -108,24 +109,37 @@ def test_executor_prompt_with_real_llm(tmp_path):
     # Build executor tool plan prompt
     prompt = build_executor_tool_plan_prompt(state, "st_1")
 
-    # Call LLM
-    response = chat_model.complete(prompt)
+    # Call LLM via native function calling
+    result = chat_model.complete_tool(
+        prompt=prompt,
+        tool_name="executor_tool_plan",
+        tool_schema={
+            "type": "object",
+            "properties": {
+                "tool_calls": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "arguments": {"type": "object"},
+                        },
+                    },
+                },
+            },
+        },
+    )
 
-    # Try to parse response
-    try:
-        json_str = response
-        if "```json" in response:
-            json_str = response.split("```json")[1].split("```")[0]
-        elif "```" in response:
-            json_str = response.split("```")[1].split("```")[0]
+    data = result.arguments
+    assert "tool_calls" in data, "Response should have tool_calls"
+    assert isinstance(data["tool_calls"], list), "tool_calls should be a list"
+    if data["tool_calls"]:
+        tc = data["tool_calls"][0]
+        assert "name" in tc, "Each tool call should have a name"
+        assert "arguments" in tc, "Each tool call should have arguments"
 
-        data = json.loads(json_str)
-        print(f"\n[PASS] Executor tool plan prompt works with real LLM!")
-        print(f"   Status: {data.get('status', 'N/A')}")
-        print(f"   Findings: {len(data.get('findings', []))}")
-    except json.JSONDecodeError:
-        print(f"\n[WARN] Executor response is not structured JSON (this is expected for first call)")
-        print(f"   Response preview: {response[:100]}...")
+    print(f"\n[PASS] Executor tool plan prompt works with real LLM!")
+    print(f"   Tool calls: {len(data['tool_calls'])}")
 
 
 if __name__ == "__main__":

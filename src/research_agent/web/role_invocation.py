@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import json
 from typing import Any, Callable
 
 from research_agent.core.errors import ResearchError
-from research_agent.core.providers import ChatModelClient
-
+from research_agent.core.providers import ChatModelClient, ToolCallResult
 
 Validator = Callable[[dict[str, Any]], Any]
 
@@ -14,70 +12,37 @@ def invoke_role_json(
     *,
     role_name: str,
     prompt: str,
-    target_schema: str,
+    tool_name: str,
+    tool_schema: dict[str, Any],
     chat_model: ChatModelClient,
     validator: Validator,
-) -> Any:
-    raw_output = chat_model.complete(prompt, json_mode=True)
+) -> dict[str, Any]:
+    """Invoke an LLM role via native function/tool calling.
+
+    The *validator* runs for application-level type/presence checks.
+    LLM-call failures and schema-validation failures are reported with
+    distinct error codes so callers can tell them apart.
+    """
     try:
-        return _parse_and_validate(raw_output, validator)
-    except Exception as first_error:  # noqa: BLE001 - converted to one schema repair attempt
-        # Save before implicit `del first_error` at end of except block (PEP 3110)
-        _original_error_str = str(first_error)
-        repaired_output: str | None = None
-        try:
-            repair_prompt = build_schema_repair_prompt(
-                role_name=role_name,
-                raw_output=raw_output,
-                validation_error=_original_error_str,
-                target_schema=target_schema,
-            )
-            repaired_output = chat_model.complete(repair_prompt)
-        except Exception as repair_error:  # noqa: BLE001 - LLM call failure during repair
-            raise ResearchError(
-                code="schema_validation_failed",
-                message=(
-                    f"{role_name} schema repair LLM call failed "
-                    f"(original validation error: {_original_error_str[:200]}): {repair_error}"
-                ),
-            ) from repair_error
-        if repaired_output is None:
-            raise ResearchError(
-                code="schema_validation_failed",
-                message=f"{role_name} schema repair produced no output (original error: {_original_error_str[:200]})",
-            )
+        result: ToolCallResult = chat_model.complete_tool(
+            prompt=prompt,
+            tool_name=tool_name,
+            tool_schema=tool_schema,
+        )
+    except ResearchError:
+        raise
+    except Exception as exc:
+        raise ResearchError(
+            code="llm_call_failed",
+            message=f"{role_name} LLM call failed: {exc}",
+        ) from exc
+
     try:
-        return _parse_and_validate(repaired_output, validator)
-    except Exception as second_error:  # noqa: BLE001 - normalized workflow failure
+        return validator(result.arguments)
+    except ResearchError:
+        raise
+    except Exception as exc:
         raise ResearchError(
             code="schema_validation_failed",
-            message=(
-                f"{role_name} output failed schema validation after one repair attempt "
-                f"(original validation error: {_original_error_str[:200]}): {second_error}"
-            ),
-        ) from second_error
-
-
-def build_schema_repair_prompt(*, role_name: str, raw_output: str, validation_error: str, target_schema: str) -> str:
-    return "\n".join(
-        [
-            f"You are repairing the JSON output for the {role_name} role.",
-            "Return only corrected JSON. Do not include markdown.",
-            "",
-            "Target schema:",
-            target_schema,
-            "",
-            "Validation error:",
-            validation_error,
-            "",
-            "Raw invalid output:",
-            raw_output,
-        ]
-    )
-
-
-def _parse_and_validate(raw_output: str, validator: Validator) -> Any:
-    parsed = json.loads(raw_output)
-    if not isinstance(parsed, dict):
-        raise ValueError("role output must be a JSON object")
-    return validator(parsed)
+            message=f"{role_name} function-call output failed schema validation: {exc}",
+        ) from exc

@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
+from sse_starlette.sse import EventSourceResponse
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 # whose runner hasn't been created yet.
 _active_runtimes: dict[str, Any] = {}
 
+from research_agent.core.bus import Bus
 from research_agent.core.config import InitConfigRequest, UserConfig, default_config_path, load_user_config
 from research_agent.core.errors import ResearchError
 from research_agent.core.ids import generate_task_id, utc_now_iso, validate_task_id
@@ -48,6 +50,7 @@ def create_app(
     """
     resolved_config_path = Path(config_path) if config_path is not None else default_config_path()
     executor = ThreadPoolExecutor(max_workers=4)
+    bus = Bus()  # SSE event bus shared across all tasks
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -187,14 +190,33 @@ def _register_task_routes(app: FastAPI, get_service: Callable[[], CoreService]) 
         }
 
     @app.get("/api/tasks/{task_id}/events")
-    async def task_events(task_id: str) -> StreamingResponse:
+    async def task_events(task_id: str):
         _validate_task_id_as_research_error(task_id)
         events_path = get_service().workspace.task_dir(task_id) / "events.jsonl"
         runtime = _active_runtimes.get(task_id)
-        return StreamingResponse(
-            _stream_events(events_path, getattr(runtime, "runner", None) if runtime is not None else None),
-            media_type="text/event-stream",
-        )
+        runner = getattr(runtime, "runner", None) if runtime is not None else None
+
+        # Historical / completed task (no active runtime at all):
+        # return full events list as JSON — no need for SSE streaming.
+        if runtime is None:
+            result_path = events_path.with_name("result.json")
+            if _is_terminal_result(result_path):
+                events: list[dict[str, Any]] = []
+                if events_path.exists():
+                    for line in events_path.read_text(encoding="utf-8").splitlines():
+                        if line.strip():
+                            try:
+                                events.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                pass
+                return JSONResponse(events)
+
+        # Live task: stream via Bus + EventSourceResponse (mycode pattern).
+        if runner is not None and hasattr(runner, "events"):
+            return EventSourceResponse(runner.events())
+
+        # Task registered but runner not ready yet: poll fallback.
+        return EventSourceResponse(_stream_events(events_path))
 
     @app.get("/api/tasks/{task_id}/result")
     def task_result(task_id: str) -> JSONResponse:
@@ -203,6 +225,15 @@ def _register_task_routes(app: FastAPI, get_service: Callable[[], CoreService]) 
         if not result_path.exists():
             return _error_response(ResearchError(code="runtime_error", message="Task result not found."), status_code=404)
         return JSONResponse(json.loads(result_path.read_text(encoding="utf-8")))
+
+    @app.delete("/api/tasks/{task_id}")
+    def delete_task(task_id: str) -> JSONResponse:
+        _validate_task_id_as_research_error(task_id)
+        try:
+            return JSONResponse(get_service().delete_finished_task(task_id))
+        except ResearchError as error:
+            status_code = 409 if error.code == "busy" else 404 if error.code == "task_not_found" else 400
+            return _error_response(error, status_code=status_code)
 
 
 def _register_kb_routes(
@@ -245,38 +276,35 @@ def _error_response(error: ResearchError, status_code: int = 400) -> JSONRespons
     return JSONResponse({"error": error.to_dict()}, status_code=status_code)
 
 
-async def _stream_events(events_path: Path, runner=None):
-    """Stream task progress events as SSE.
+async def _stream_events(events_path: Path):
+    """Fallback SSE: poll events.jsonl every 100 ms with incremental reads.
 
-    When a live runner is available, iterates its EventStream (janus.Queue
-    backed AsyncIterator) for real-time delivery.  Falls back to polling
-    events.jsonl otherwise (e.g. historical tasks or tasks whose runner
-    hasn't started yet).
+    Only used when a task is registered in ``_active_runtimes`` but its
+    runner hasn't started yet.  Once the runner is ready the caller
+    switches to ``runner.events()`` backed by the Bus.
     """
-    if runner is not None:
-        # EventStream path — real-time, no polling
-        async for event in runner.events():
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        return
-
-    # Fallback: poll events.jsonl every 100 ms
     deadline = time.time() + 1800  # 30 minutes max
     offset = 0
     while time.time() < deadline:
         if events_path.exists():
-            text = events_path.read_text(encoding="utf-8")
-            if len(text) > offset:
-                chunk = text[offset:]
-                offset = len(text)
-                for line in chunk.splitlines():
-                    if line.strip():
-                        yield f"data: {line}\n\n"
+            with open(events_path, "r", encoding="utf-8") as f:
+                f.seek(offset)
+                chunk = f.read()
+                if chunk:
+                    offset = f.tell()
+                    for line in chunk.splitlines():
+                        if line.strip():
+                            yield {"data": line}
             result_path = events_path.with_name("result.json")
             if _is_terminal_result(result_path):
                 break
+        elif not events_path.parent.exists():
+            break
         await asyncio.sleep(0.1)
     else:
-        yield f'data: {json.dumps({"event_type": "stream_timeout", "message": "SSE stream timed out."})}\n\n'
+        yield {
+            "data": json.dumps({"event_type": "stream_timeout", "message": "SSE stream timed out."}),
+        }
 
 
 def _validate_task_id_as_research_error(task_id: str) -> None:
@@ -376,8 +404,7 @@ def _default_web_runtime(service: CoreService) -> ProviderBackedWebResearchRunti
     """Create a provider-backed runtime using the shared factory (fixes R-20, R-44).
 
     The ``on_event`` callback is intentionally omitted here because the API
-    layer pushes events through SSE (``_stream_events`` polls ``events.jsonl``),
-    not through the in-process callback.  CLI callers that need live progress
-    pass ``on_event`` via ``CoreService.run_web_research(on_event=...)``.
+    layer pushes events through SSE via the Bus.  CLI callers that need
+    live progress pass ``on_event`` via ``CoreService.run_web_research(on_event=...)``.
     """
-    return create_provider_runtime(service.config_path, str(service.workspace.root))
+    return create_provider_runtime(service.config_path, str(service.workspace.root), bus=bus)

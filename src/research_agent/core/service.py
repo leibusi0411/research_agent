@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from collections.abc import Callable
@@ -12,6 +13,8 @@ from typing import Any, Iterator, Protocol
 from research_agent.core.config import InitConfigRequest, init_user_config, load_user_config
 from research_agent.core.errors import ResearchError
 from research_agent.core.ids import generate_task_id
+
+logger = logging.getLogger(__name__)
 from research_agent.core.kb import KnowledgeBaseIndex
 from research_agent.core.local_research import run_local_research
 from research_agent.core.providers import EmbeddingClient, OpenAICompatibleChatModel, OpenAICompatibleEmbeddingModel, build_chat_models, build_role_chat_model_config, ChatModelClient
@@ -30,6 +33,7 @@ def create_provider_runtime(
     on_event: Callable[[dict[str, Any]], None] | None = None,
     workspace_obj: Workspace | None = None,
     task_store: TaskStore | None = None,
+    bus: Any | None = None,
 ) -> ProviderBackedWebResearchRuntime:
     """Shared factory for ProviderBackedWebResearchRuntime.
 
@@ -55,6 +59,7 @@ def create_provider_runtime(
         on_event=on_event,
         workspace_obj=workspace_obj,
         task_store=task_store,
+        bus=bus,
     )
     return ProviderBackedWebResearchRuntime(config=runner_config)
 
@@ -81,15 +86,16 @@ class CoreService:
 
     def run_local_research(self, question: str, *, task_id: str | None = None, embedding_client: EmbeddingClient | None = None, chat_model: ChatModelClient | None = None) -> dict:
         resolved_task_id = task_id or generate_task_id()
+        offline = os.environ.get("RESEARCH_AGENT_OFFLINE") == "1"
         # Auto-create embedding client from config when none is provided, so
         # that ChromaDB vector search can supplement FTS5 keyword search.
-        if embedding_client is None and self.config_path is not None:
+        if embedding_client is None and self.config_path is not None and not offline:
             config = load_user_config(self.config_path)
             embedding_client = OpenAICompatibleEmbeddingModel.from_config(config.embedding_model)
         # Auto-create chat model from config for A+G summarization.
         # Uses the "curator" role model if configured, otherwise the default
         # chat_model — same resolution as web research roles.
-        if chat_model is None and self.config_path is not None:
+        if chat_model is None and self.config_path is not None and not offline:
             config = load_user_config(self.config_path)
             chat_model = OpenAICompatibleChatModel.from_config(
                 build_role_chat_model_config(config, "local_summarizer")
@@ -154,6 +160,77 @@ class CoreService:
     def list_finished_tasks(self) -> list[TaskRecord]:
         self.task_store.initialize()
         return self.task_store.list_finished_tasks()
+
+    def delete_finished_task(self, task_id: str) -> dict[str, Any]:
+        # Fail-closed: if lock is unreadable, treat family as busy.
+        for mode in ("local", "web"):
+            lock_path = self.workspace.root / "locks" / f"{mode}.lock"
+            if not lock_path.exists():
+                continue
+            lock_task_id = read_lock_task_id(lock_path)
+            if lock_task_id == task_id:
+                raise ResearchError(code="busy", message=f"Task is still running: {task_id}")
+            if lock_task_id == "unknown":
+                raise ResearchError(
+                    code="busy",
+                    message=f"{mode} lock file is unreadable — treat as busy for safety",
+                )
+
+        record = self.task_store.get_finished_task(task_id)
+        if record is None:
+            result_path = self.workspace.task_dir(task_id) / "result.json"
+            if result_path.exists():
+                try:
+                    result = json.loads(result_path.read_text(encoding="utf-8"))
+                except Exception as exc:
+                    raise ResearchError(code="task_not_found", message="Task not found.") from exc
+                if result.get("status") == "running":
+                    raise ResearchError(code="busy", message=f"Task is still running: {task_id}")
+            raise ResearchError(code="task_not_found", message="Task not found.")
+
+        # Delete DB record first (authoritative removal).  File cleanup is
+        # best-effort so a locked report file never leaves an orphaned DB row.
+        self.task_store.delete_finished_task(task_id)
+
+        cleanup_errors: list[str] = []
+        try:
+            self.workspace.delete_task_folder(task_id)
+        except OSError as exc:
+            cleanup_errors.append(f"task folder: {exc}")
+
+        if not self._delete_report_file(record.report_path):
+            # Only report an error when the path exists but could not be removed.
+            report_path = record.report_path
+            if report_path:
+                path = Path(report_path)
+                if not path.is_absolute():
+                    path = self.workspace.root / path
+                if path.exists():
+                    cleanup_errors.append(f"report file: {report_path}")
+
+        if cleanup_errors:
+            logger.warning(
+                "Post-delete cleanup incomplete for %s: %s",
+                task_id,
+                "; ".join(cleanup_errors),
+            )
+
+        return {"task_id": task_id, "deleted": True}
+
+    def _delete_report_file(self, report_path: str | None) -> bool:
+        if not report_path:
+            return False
+        path = Path(report_path)
+        if not path.is_absolute():
+            path = self.workspace.root / path
+        resolved_report = path.resolve()
+        reports_root = self.workspace.web_reports_dir.resolve()
+        if reports_root != resolved_report and reports_root not in resolved_report.parents:
+            raise OSError(f"report path escapes workspace reports directory: {report_path}")
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
 
     def get_kb_status(self) -> dict:
         return KnowledgeBaseIndex(self.workspace, self.config_path).status()

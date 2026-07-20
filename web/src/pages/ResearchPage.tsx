@@ -1,5 +1,5 @@
 import { FormEvent } from "react";
-import { BookOpen, Wifi } from "lucide-react";
+import { BookOpen, Sparkles, Wifi } from "lucide-react";
 import { type ProgressEvent, type ResearchResult } from "../api";
 import { ConnectionBadge } from "../components/ConnectionBadge";
 import { PhaseIndicator } from "../components/PhaseIndicator";
@@ -38,10 +38,20 @@ export function ResearchPage({
   const webRunning = busy === "web";
 
   return (
-    <section>
-      <h1>Research</h1>
+    <section className="research-page">
+      <header className="page-header">
+        <div>
+          <p className="eyebrow">Research workspace</p>
+          <h1>Research</h1>
+          <p className="page-summary">Run local knowledge-base retrieval or web research, then watch the agent trace its work in real time.</p>
+        </div>
+        <span className="header-pill">
+          <Sparkles size={14} />
+          Agent ready
+        </span>
+      </header>
       <div className="research-grid">
-        <form className="tool-panel" onSubmit={runLocal}>
+        <form className="tool-panel local" onSubmit={runLocal}>
           <h2>
             <BookOpen size={18} />
             Local RAG
@@ -52,10 +62,16 @@ export function ResearchPage({
             )}
           </h2>
           {localRunning && localPhase && <PhaseIndicator currentPhase={localPhase} mode="local" />}
-          <textarea value={localQuestion} onChange={(event) => setLocalQuestion(event.target.value)} required />
+          <textarea
+            aria-label="Local RAG question"
+            value={localQuestion}
+            onChange={(event) => setLocalQuestion(event.target.value)}
+            placeholder="Ask against your indexed notes..."
+            required
+          />
           <button disabled={localRunning}>Run Local</button>
         </form>
-        <form className="tool-panel" onSubmit={runWeb}>
+        <form className="tool-panel web" onSubmit={runWeb}>
           <h2>
             <Wifi size={18} />
             Web Research
@@ -66,7 +82,13 @@ export function ResearchPage({
             )}
           </h2>
           {webRunning && webPhase && <PhaseIndicator currentPhase={webPhase} mode="web" />}
-          <textarea value={webQuestion} onChange={(event) => setWebQuestion(event.target.value)} required />
+          <textarea
+            aria-label="Web research question"
+            value={webQuestion}
+            onChange={(event) => setWebQuestion(event.target.value)}
+            placeholder="Ask for a current web-backed report..."
+            required
+          />
           <button disabled={webRunning}>Run Web</button>
         </form>
       </div>

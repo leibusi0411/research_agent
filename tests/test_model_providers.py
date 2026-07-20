@@ -13,10 +13,12 @@ from research_agent.core.providers import (
     OpenAICompatibleChatModel,
     OpenAICompatibleEmbeddingModel,
     build_role_chat_model_config,
+    _parse_llm_json,
 )
 from research_agent.core.service import CoreService
 from research_agent.core.workspace import Workspace
 from research_agent.web.role_invocation import invoke_role_json
+from research_agent.core.providers import ToolCallResult
 
 
 class _SequencedChatClient:
@@ -27,6 +29,10 @@ class _SequencedChatClient:
     def complete(self, prompt: str, *, json_mode: bool = False) -> str:
         self.prompts.append(prompt)
         return self._completions.pop(0) if self._completions else ""
+
+    def complete_tool(self, prompt: str, *, tool_name: str, tool_schema: dict[str, Any]) -> ToolCallResult:
+        raw = self.complete(prompt, json_mode=True)
+        return ToolCallResult(name=tool_name, arguments=json.loads(raw))
 
 
 def init_config(tmp_path: Path) -> Path:
@@ -83,6 +89,42 @@ def test_openai_compatible_embedding_adapter_reads_user_config(tmp_path):
     assert requests[0]["payload"]["model"] == "embedding-model"
 
 
+def test_parse_llm_json_invalid_input_raises_value_error_not_runtime_error():
+    with pytest.raises(ValueError, match="invalid JSON"):
+        _parse_llm_json("{not json")
+
+
+def test_parse_llm_json_requires_object():
+    with pytest.raises(ValueError, match="object"):
+        _parse_llm_json("[1]")
+
+
+def test_openai_compatible_chat_adapter_reads_legacy_function_call(tmp_path):
+    config = load_user_config(init_config(tmp_path))
+    client = OpenAICompatibleChatModel.from_config(
+        config.chat_model,
+        post_json=lambda _url, _headers, _payload: {
+            "choices": [{
+                "message": {
+                    "function_call": {
+                        "name": "executor_tool_plan",
+                        "arguments": '{"tool_calls": [{"name": "web.search", "arguments": {"query": "agent"}}]}',
+                    },
+                },
+            }],
+        },
+    )
+
+    result = client.complete_tool(
+        "prompt",
+        tool_name="executor_tool_plan",
+        tool_schema={"type": "object"},
+    )
+
+    assert result.name == "executor_tool_plan"
+    assert result.arguments["tool_calls"][0]["arguments"]["query"] == "agent"
+
+
 def test_role_chat_model_config_sections_fallback_to_global(tmp_path):
     config_path = init_config(tmp_path)
     text = config_path.read_text(encoding="utf-8")
@@ -104,75 +146,44 @@ def test_role_chat_model_config_sections_fallback_to_global(tmp_path):
     assert executor == config.chat_model
 
 
-def test_role_invocation_repairs_invalid_schema_once_then_returns_value():
-    client = _SequencedChatClient(["not json", '{"answer": "fixed"}'])
+def test_role_invocation_uses_native_function_calling_and_validates():
+    """invoke_role_json calls complete_tool and runs validator on the result."""
+    client = _SequencedChatClient(['{"answer": "fixed"}'])
 
     value = invoke_role_json(
         role_name="planner",
         prompt="return json",
-        target_schema="AnswerSchema",
+        tool_name="plan_output",
+        tool_schema={"type": "object", "properties": {"answer": {"type": "string"}}},
         chat_model=client,
-        validator=lambda payload: payload if isinstance(payload.get("answer"), str) else (_ for _ in ()).throw(ValueError("answer required")),
+        validator=lambda payload: payload if payload.get("answer") == "fixed" else (_ for _ in ()).throw(ValueError("bad answer")),
     )
 
     assert value == {"answer": "fixed"}
-    assert len(client.prompts) == 2
-    assert "not json" in client.prompts[1]
-    assert "AnswerSchema" in client.prompts[1]
+    assert len(client.prompts) == 1
 
-
-def test_role_invocation_fails_after_one_schema_repair_attempt():
-    client = _SequencedChatClient(["not json", "still not json"])
-
-    with pytest.raises(ResearchError) as error:
-        invoke_role_json(
-            role_name="supervisor",
-            prompt="return json",
-            target_schema="SupervisorOutput",
-            chat_model=client,
-            validator=lambda payload: payload,
-        )
-
-    assert error.value.code == "schema_validation_failed"
-    assert len(client.prompts) == 2
-
-
-def test_role_invocation_repair_llm_call_raises_exception():
-    """When the repair LLM call itself fails (network error, etc.),
-    it should be wrapped in a ResearchError, not propagate raw."""
-
-    class FailingRepairClient:
-        def __init__(self) -> None:
-            self.call_count = 0
-
-        def complete(self, prompt: str, *, json_mode: bool = False) -> str:
-            self.call_count += 1
-            if self.call_count == 1:
-                return "not json"  # triggers repair
-            raise RuntimeError("simulated API connection lost during repair")
-
-    client = FailingRepairClient()
+def test_role_invocation_validator_rejects_invalid_data():
+    """invoke_role_json still applies the validator after parsing."""
+    client = _SequencedChatClient(['{"answer": 123}'])
 
     with pytest.raises(ResearchError) as error:
         invoke_role_json(
             role_name="planner",
             prompt="return json",
-            target_schema="AnswerSchema",
+            tool_name="plan_output",
+            tool_schema={"type": "object"},
             chat_model=client,
-            validator=lambda payload: payload,
+            validator=lambda payload: payload if isinstance(payload.get("answer"), str) else (_ for _ in ()).throw(ValueError("answer required")),
         )
-
     assert error.value.code == "schema_validation_failed"
-    assert "repair" in error.value.message.lower()
-    assert client.call_count == 2
+    assert "answer required" in error.value.message
 
 
-def test_core_service_default_web_runtime_uses_chat_model_with_schema_repair(tmp_path):
+def test_core_service_default_web_runtime_uses_function_calling(tmp_path):
     config_path = init_config(tmp_path)
     service = CoreService(default_workspace=tmp_path / "runtime", config_path=config_path)
     client = _SequencedChatClient([
-        "not json",  # Planner initial attempt fails
-        '{"research_title": "Title", "subtasks": [{"question": "Q"}]}',  # Planner repair succeeds
+        '{"research_title": "Title", "subtasks": [{"question": "Q"}]}',  # Planner
         '{"tool_calls": [{"name": "web.search", "arguments": {"query": "test", "max_results": 5}}]}',  # Executor tool plan
         '{"subtask_id": "st_1", "status": "completed", "findings": [{"finding_id": "f_1", "subtask_id": "st_1", "text": "Finding", "source_ids": ["src_1"]}], "sources": [{"source_id": "src_1", "title": "Source", "url": "https://example.com", "fetched_at": "2026-06-25T10:00:00Z"}], "failure_reason": null}',  # Executor synthesis
         '{"route": "curate", "reason": "Enough evidence.", "next_subtask_ids": [], "skip_subtask_ids": [], "plan_revision_request": null, "research_gaps": [], "saturation": true}',  # Supervisor
@@ -183,7 +194,7 @@ def test_core_service_default_web_runtime_uses_chat_model_with_schema_repair(tmp
 
     assert result["status"] == "completed"
     assert result["curator_output"]["title"] == "Title"
-    assert len(client.prompts) == 6  # Planner + repair + tool_plan + synthesis + supervisor + curator
+    assert len(client.prompts) == 5  # Planner + tool_plan + synthesis + supervisor + curator (no repair)
 
 
 def test_core_service_rebuild_uses_configured_embedding_adapter_by_default(tmp_path, monkeypatch):

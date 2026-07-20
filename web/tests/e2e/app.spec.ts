@@ -5,6 +5,10 @@ const localTaskId = "task_20260624_000000_aaaaaa";
 
 test("setup, research, task navigation, and kb flows", async ({ page }) => {
   let configured = false;
+  let finishedTasks = [
+    { task_id: webTaskId, mode: "web", status: "completed", title_or_question: "web question", created_at: "2026-06-24T00:00:01Z" },
+    { task_id: localTaskId, mode: "local", status: "completed", title_or_question: "local question", created_at: "2026-06-24T00:00:00Z" }
+  ];
   await page.route("**/api/**", async (route) => {
     const url = route.request().url();
     const method = route.request().method();
@@ -20,10 +24,7 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
     if (url.endsWith("/api/tasks/finished")) {
       await route.fulfill({
         json: {
-          tasks: [
-            { task_id: webTaskId, mode: "web", status: "completed", title_or_question: "web question", created_at: "2026-06-24T00:00:01Z" },
-            { task_id: localTaskId, mode: "local", status: "completed", title_or_question: "local question", created_at: "2026-06-24T00:00:00Z" }
-          ]
+          tasks: finishedTasks
         }
       });
       return;
@@ -46,8 +47,10 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
     }
     if (url.endsWith(`/api/tasks/${localTaskId}/events`)) {
       await route.fulfill({
-        contentType: "text/event-stream",
-        body: 'data: {"task_id":"task_20260624_000000_aaaaaa","mode":"local","phase":"local_rag","event_type":"completed","created_at":"now","message":"Local RAG completed.","details":{"items":[]}}\n\n'
+        json: [
+          { task_id: localTaskId, mode: "local", phase: "local_rag", event_type: "completed", created_at: "now", message: "Local RAG completed.", details: { items: [] } },
+          { task_id: localTaskId, mode: "local", phase: "local_rag", event_type: "task_result", created_at: "now", message: "Task completed.", details: { items: [] } },
+        ],
       });
       return;
     }
@@ -57,9 +60,21 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
     }
     if (url.endsWith(`/api/tasks/${webTaskId}/events`)) {
       await route.fulfill({
-        contentType: "text/event-stream",
-        body: 'data: {"task_id":"task_20260624_000001_bbbbbb","mode":"web","phase":"web_planning","event_type":"completed","created_at":"now","message":"Initial plan created.","details":{"items":[]}}\n\n'
+        json: [
+          { task_id: webTaskId, mode: "web", phase: "web_planning", event_type: "completed", created_at: "now", message: "Initial plan created.", details: { items: [] } },
+          { task_id: webTaskId, mode: "web", phase: "web_curation", event_type: "task_result", created_at: "now", message: "Task completed.", details: { items: [] } },
+        ],
       });
+      return;
+    }
+    if (url.endsWith(`/api/tasks/${webTaskId}`) && method === "DELETE") {
+      finishedTasks = finishedTasks.filter((task) => task.task_id !== webTaskId);
+      await route.fulfill({ json: { task_id: webTaskId, deleted: true } });
+      return;
+    }
+    if (url.endsWith(`/api/tasks/${localTaskId}`) && method === "DELETE") {
+      finishedTasks = finishedTasks.filter((task) => task.task_id !== localTaskId);
+      await route.fulfill({ json: { task_id: localTaskId, deleted: true } });
       return;
     }
     await route.fulfill({ status: 404, json: {} });
@@ -73,23 +88,25 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
   await page.getByRole("button", { name: "Save Config" }).click();
   await expect(page.getByRole("heading", { name: "Research", exact: true })).toBeVisible();
 
-  await page.locator("textarea").first().fill("local question");
+  await page.getByRole("textbox", { name: "Local RAG question" }).fill("local question");
   await page.getByRole("button", { name: "Run Local" }).click();
   await expect(page.getByText("Local content")).toBeVisible();
 
-  await page.locator("textarea").nth(1).fill("web question");
+  await page.getByRole("textbox", { name: "Web research question" }).fill("web question");
   await page.getByRole("button", { name: "Run Web" }).click();
   await expect(page.getByText("Web summary")).toBeVisible();
   await expect(page.getByText("web_planning")).toBeVisible();
 
-  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("link", { name: "Tasks" }).click();
   await page.getByRole("button", { name: new RegExp(webTaskId) }).click();
   await expect(page.getByRole("heading", { name: "Web Report" })).toBeVisible();
   await page.getByRole("button", { name: new RegExp(localTaskId) }).click();
   await expect(page.getByRole("heading", { name: "Local Result" })).toBeVisible();
   await expect(page.getByText("local_rag")).toBeVisible();
+  await page.getByRole("button", { name: "Delete task web question" }).click();
+  await expect(page.getByText("web question")).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Knowledge Base" }).click();
+  await page.getByRole("link", { name: "Knowledge Base" }).click();
   await expect(page.getByRole("heading", { name: "Knowledge Base Index" })).toBeVisible();
   await expect(page.getByText("D:/vault")).toBeVisible();
   await page.getByRole("button", { name: "Rebuild" }).click();

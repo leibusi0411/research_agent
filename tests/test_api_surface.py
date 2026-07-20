@@ -178,9 +178,42 @@ def test_api_local_and_web_starts_finished_tasks_results_and_sse(tmp_path):
 
     assert result.status_code == 200
     assert result.json()["task_id"] == web_task_id
-    assert "data: " in events.text
-    assert "web_planning" in events.text
+    # Completed tasks return JSON array, not SSE text
+    assert isinstance(events.json(), list)
+    assert any(e["phase"] == "web_planning" for e in events.json())
     assert (workspace / "tasks" / web_task_id / "events.jsonl").exists()
+
+
+def test_api_deletes_finished_task_history_and_files(tmp_path):
+    client, workspace, _vault = configured_client(tmp_path)
+    web = client.post("/api/research/web", json={"question": "LangGraph"})
+    task_id = web.json()["task_id"]
+    wait_for_finished_tasks(client, expected_count=1)
+    result = client.get(f"/api/tasks/{task_id}/result").json()
+    report_path = Path(result["report_path"])
+    assert report_path.exists()
+
+    deleted = client.delete(f"/api/tasks/{task_id}")
+
+    assert deleted.status_code == 200
+    assert deleted.json() == {"task_id": task_id, "deleted": True}
+    assert client.get("/api/tasks/finished").json()["tasks"] == []
+    assert not (workspace / "tasks" / task_id).exists()
+    assert not report_path.exists()
+    assert client.get(f"/api/tasks/{task_id}/result").status_code == 404
+
+
+def test_api_refuses_to_delete_active_task(tmp_path):
+    client, workspace, _vault = configured_client(tmp_path)
+    task_id = "task_20260624_000000_abc123"
+    lock_dir = workspace / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    (lock_dir / "web.lock").write_text(json.dumps({"task_id": task_id}), encoding="utf-8")
+
+    response = client.delete(f"/api/tasks/{task_id}")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "busy"
 
 
 def test_api_reports_active_real_task_id_and_streams_running_events(tmp_path):
@@ -250,11 +283,10 @@ def test_invalid_task_id_uses_unified_error_shape(tmp_path):
     assert result.json()["error"]["code"] == "config_invalid"
 
 
-def test_api_does_not_expose_both_or_task_delete_or_settings_editor(tmp_path):
+def test_api_does_not_expose_both_or_settings_editor(tmp_path):
     client, _workspace, _vault = configured_client(tmp_path)
 
     assert client.post("/api/research/both", json={"question": "x"}).status_code == 404
-    assert client.delete("/api/tasks/task_20260624_000000_abcdef").status_code == 404
     assert client.get("/api/settings").status_code == 404
 
 
@@ -296,14 +328,19 @@ def test_sse_fallback_streams_events_from_file(tmp_path):
 
     wait_for_finished_tasks(client, expected_count=1)
 
-    # Verify result exists and SSE fallback returns events
+    # Verify result exists and events endpoint returns JSON array for completed task
     result = client.get(f"/api/tasks/{task_id}/result")
     events_resp = client.get(f"/api/tasks/{task_id}/events")
 
     assert result.status_code == 200
     assert result.json()["status"] == "completed"
-    assert "data: " in events_resp.text
-    # Verify events.jsonl is the source: at minimum the started event
+    # Completed (historical) tasks return JSON array, not SSE text/event-stream
+    assert events_resp.headers["content-type"].startswith("application/json")
+    events = events_resp.json()
+    assert isinstance(events, list)
+    assert len(events) >= 1
+    assert events[0]["phase"] == "web_planning"
+    # Verify events.jsonl is the source
     events_path = workspace / "tasks" / task_id / "events.jsonl"
     assert events_path.exists()
     events_text = events_path.read_text(encoding="utf-8")
