@@ -203,6 +203,11 @@ class StateGraphRunner:
 
     # ── public API ──────────────────────────────────────────────────────
 
+    @property
+    def task_id(self) -> str | None:
+        """The task this runner is bound to, or None before ``run()`` starts."""
+        return self._task_id
+
     def run(self, question: str, task_id: str | None = None) -> dict[str, Any]:
         self.workspace.ensure()
         task_id = task_id or generate_task_id()

@@ -394,3 +394,58 @@ def test_start_web_without_factory_uses_default_runtime_with_bus(tmp_path, monke
     response = client.post("/api/research/web", json={"question": "web question"})
     assert response.status_code == 202
     assert isinstance(captured["bus"], Bus)
+
+
+class _NotReadyRunner:
+    """Mimics StateGraphRunner before run() binds it: exists, but task_id is None."""
+
+    task_id = None
+
+    def events(self):  # must never be called in this state
+        raise RuntimeError("Cannot stream events: task_id is not set. Call run() first.")
+
+
+class _NotReadyRuntime(_TestWebRuntime):
+    def __init__(self, workspace_path: str) -> None:
+        super().__init__(workspace_path)
+        self.runner = _NotReadyRunner()
+
+
+def test_events_endpoint_falls_back_while_runner_not_ready(tmp_path):
+    """Regression: events endpoint must not 500 in the startup window.
+
+    The provider runtime creates its runner inside run(); between runner
+    construction and task binding, runner.events() raises RuntimeError.
+    The route must fall back to file polling (the pre-existing fallback).
+    """
+    config_path = tmp_path / "config.toml"
+    workspace = tmp_path / "runtime"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    service = CoreService(default_workspace=workspace, config_path=config_path)
+    service.init_config(
+        InitConfigRequest(
+            default_workspace=workspace,
+            knowledge_base_path=vault,
+            chat_base_url="https://models.example/v1",
+            chat_api_key="chat-key",
+            chat_model="chat-model",
+            embedding_base_url="https://embeddings.example/v1",
+            embedding_api_key="embedding-key",
+            embedding_model="embedding-model",
+            search_api_key="search-key",
+        )
+    )
+    app = create_app(
+        config_path=config_path,
+        web_runtime_factory=lambda workspace_path: _NotReadyRuntime(workspace_path=str(workspace_path)),
+    )
+    client = TestClient(app)
+
+    started = client.post("/api/research/web", json={"question": "q"})
+    assert started.status_code == 202
+    task_id = started.json()["task_id"]
+
+    events = client.get(f"/api/tasks/{task_id}/events")
+    assert events.status_code == 200
+    assert "data: " in events.text

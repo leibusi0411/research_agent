@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-07 | 测试：184 passed（Python，178 离线 + 6 e2e）+ 20 passed（前端 Vitest）+ 1 passed（Playwright e2e）| 最新一轮审查 9 项处理完毕 ✅（R-184~R-192）+ 热修 2 项（R-193~R-194）+ 第六轮 7 项（R-195~R-201）| 新功能：Knowledge Deposit（ADR-0045）+ Web UI 沉淀按钮 + Prior Knowledge 注入（ADR-0046）+ Inkwell 重设计（Gemini 式深色 + 实时轨迹 + 结果卡片）
+> 最后更新：2026-09-07 | 测试：186 passed（Python，180 离线 + 6 e2e 真实链路）+ 21 passed（前端 Vitest）+ 1 passed（Playwright e2e）| 最新一轮审查 9 项处理完毕 ✅（R-184~R-192）+ 热修 6 项（R-193~R-194、R-202~R-205）+ 第六轮 7 项（R-195~R-201）| 新功能：Knowledge Deposit（ADR-0045）+ Web UI 沉淀按钮 + Prior Knowledge 注入（ADR-0046）+ Inkwell 重设计（Gemini 式深色 + 实时轨迹 + 结果卡片）
 
 ---
 
@@ -47,7 +47,7 @@
 
 ### 待解决问题（共 0 项）
 
-✅ 五轮审查共 44 项（R-149~R-192），38 项修复、6 项明确接受或记录在案（R-165、R-173、R-182、R-183、R-191、R-192）。
+✅ 六轮审查 + 热修共 47 项（R-149~R-203），41 项修复、6 项明确接受或记录在案（R-165、R-173、R-182、R-183、R-191、R-192）。
 
 ### 第二轮复审（2026-09-06，修复后终审）
 
@@ -175,6 +175,11 @@
 | R-200 | index.html meta description 未随改名更新 | ✅ Research Agent → Inkwell |
 | R-201 | `deleteTask` 残留 phase；state_graph import 非字母序 | ✅ 清理 |
 | R-202 | 刷新/撞 busy 后页面"忘记"正在运行的任务，用户误以为无响应重复提交 | ✅ 页面加载时查 `/api/tasks/active` 自动重连 SSE（回填问题与轨迹）；409 busy 时自动接管运行中任务；finishTask 补齐全量事件 |
+| R-203 | `llm_call_failed` 未注册进 `VALID_ERROR_CODES`，`ResearchError` 构造时抛 ValueError，真实 provider 错误被掩盖成 "unknown error code"（用户任务 task_20260907_132359 因此 failed；CLIP 任务首轮子任务全灭同源） | ✅ 注册错误码 + role_invocation 回归测试（真实错误信息透出） |
+| R-204 | **SSE 启动窗口 500**：provider runtime 在 `run()` 内才创建 runner 并绑定 task_id，浏览器在 POST 返回后毫秒内订阅事件 → `runner.events()` 抛 RuntimeError → EventSource 永久关闭，页面无进度（日志实证两次）。这是"页面没反馈"在 bus 修复后仍存在的另一半原因 | ✅ 路由检查 `runner.task_id == task_id`，未就绪回退文件轮询 SSE；StateGraphRunner 加 `task_id` 只读属性；补回归测试 |
+| R-205 | 模型在 function-calling 下返回语法损坏的 JSON（`_parse_llm_json` 三道防线全败），executor 工具规划直接失败；无重试/修复机制，反复触发会致命 | ⚠️ 记录在案：归入阶段 9"LLM 调用重试机制"，届时加 parse-failure 重试与原始输出落盘诊断 |
+
+**测试策略约定更新（2026-09-07，用户指令）**：纯本地逻辑的离线单测保留（配置/存储/ID 等），但涉及生产装配链路（API 路由、SSE、运行时接线）的功能必须在提交前跑真实链路 e2e（`pytest -m e2e`）；fake runtime 注入不再作为这类路径的充分验证。ADR-0042 适用范围相应收窄，待下次文档轮次显式演进。
 
 **实证**：真实服务起任务后 `curl -N` SSE 端点持续收到 data 帧（planning→prior knowledge→execution…）；任务完成 7 findings / 12 sources。
 

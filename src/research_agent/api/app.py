@@ -213,7 +213,11 @@ def _register_task_routes(app: FastAPI, get_service: Callable[[], CoreService]) 
                 return JSONResponse(events)
 
         # Live task: stream via Bus + EventSourceResponse (mycode pattern).
-        if runner is not None and hasattr(runner, "events"):
+        # The runner exists before run() binds it to the task — while its
+        # task_id is still None (or stale), events() would raise; fall back
+        # to file polling instead (fixes the startup-window 500).
+        runner_ready = runner is not None and getattr(runner, "task_id", None) == task_id
+        if runner_ready and hasattr(runner, "events"):
             return EventSourceResponse(runner.events())
 
         # Task registered but runner not ready yet: poll fallback.

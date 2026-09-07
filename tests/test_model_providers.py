@@ -179,6 +179,28 @@ def test_role_invocation_validator_rejects_invalid_data():
     assert "answer required" in error.value.message
 
 
+def test_role_invocation_llm_failure_uses_registered_error_code():
+    """LLM call failures surface as llm_call_failed, not a ValueError for an
+    unknown code (the code was raised here but missing from VALID_ERROR_CODES,
+    which masked the real provider error and failed tasks opaquely)."""
+
+    class _FailingChatClient:
+        def complete_tool(self, **_kwargs):
+            raise ConnectionError("provider unreachable")
+
+    with pytest.raises(ResearchError) as error:
+        invoke_role_json(
+            role_name="planner",
+            prompt="return json",
+            tool_name="plan_output",
+            tool_schema={"type": "object"},
+            chat_model=_FailingChatClient(),
+            validator=lambda payload: payload,
+        )
+    assert error.value.code == "llm_call_failed"
+    assert "provider unreachable" in error.value.message
+
+
 def test_core_service_default_web_runtime_uses_function_calling(tmp_path):
     config_path = init_config(tmp_path)
     service = CoreService(default_workspace=tmp_path / "runtime", config_path=config_path)

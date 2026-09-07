@@ -12,6 +12,7 @@ VALID_ERROR_CODES = {
     "kb_index_building",
     "kb_index_failed",
     "model_error",
+    "llm_call_failed",
     "search_error",
     "tool_error",
     "schema_validation_failed",
