@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-06 | 测试：182 passed（Python，含 6 个 e2e）+ 20 passed（前端 Vitest）+ 1 passed（Playwright e2e）| 最新一轮审查 10 项处理完毕 ✅（R-174~R-183）| 新功能：Knowledge Deposit（ADR-0045）+ Web UI 沉淀按钮 + Prior Knowledge 注入（ADR-0046）
+> 最后更新：2026-09-07 | 测试：182 passed（Python，含 6 个 e2e）+ 20 passed（前端 Vitest）+ 1 passed（Playwright e2e）| 最新一轮审查 9 项处理完毕 ✅（R-184~R-192）| 新功能：Knowledge Deposit（ADR-0045）+ Web UI 沉淀按钮 + Prior Knowledge 注入（ADR-0046）+ Web UI 视觉重设计（纸墨/荧光笔体系）
 
 ---
 
@@ -47,7 +47,7 @@
 
 ### 待解决问题（共 0 项）
 
-✅ 四轮审查共 35 项（R-149~R-183），31 项修复、4 项明确接受或记录在案（R-165、R-173、R-182、R-183），均于 2026-09-06 处理完毕。
+✅ 五轮审查共 44 项（R-149~R-192），38 项修复、6 项明确接受或记录在案（R-165、R-173、R-182、R-183、R-191、R-192）。
 
 ### 第二轮复审（2026-09-06，修复后终审）
 
@@ -121,6 +121,38 @@
 - `uv run pytest -m "not e2e"` — 176 passed（R-173 家族偶发项重跑即过）
 - 审查 subagent 全量含 e2e — 178 passed（当时计数；后续 +4 测试为 P3 修复新增）
 - `cd web && npx vitest run` — 20 passed（本轮未动前端）
+
+### 第五轮审查（2026-09-07，Web UI 视觉重设计）
+
+本轮改动：`styles.css` 整体重写（纸/墨/荧光笔体系，消灭渐变与彩色投影，细线分隔）；字体改 @fontsource 自托管 IBM Plex Sans/Mono（移除 Google Fonts CDN，符合 local-first）；结果区双列窄卡改全宽通栏；车道符号（■ local / ○ web）+ 运行态轨迹线动效；运行态推导由 `busy`（仅 POST 期间）改为 `events && !result`，新增 `LiveResultPanel` 在结果到达前渲染实时事件流（修复执行期旧结果与新事件混杂的既存问题）；新任务启动时清空旧 result；新增 `scripts/shoot.mjs` 截图工具（`npm run shots`）。subagent 审查发现 9 项（P2×1、P3×5、nit×3），7 项修复、2 项接受/记录。
+
+#### P2
+| 编号 | 描述 | 修复 |
+|------|------|------|
+| R-184 | `finishTask` 的 `taskResult` 拉取失败无兜底，新运行态推导下车道永久锁死（按钮永禁、无错误提示） | ✅ try/catch：失败时清事件解锁 + `setMessage` |
+
+#### P3
+| 编号 | 描述 | 修复 |
+|------|------|------|
+| R-185 | SSE 提前终结时 running stub 渲染绿色 completed 样式 | ✅ `StatusLine` 区分 `status running` |
+| R-186 | `--muted`/`--warn` 小字对比度 3.1~4.2:1 低于 WCAG AA | ✅ 加深至 `#6b6d62` / `#856712` |
+| R-187 | `input:focus` 的 `outline:none` 覆盖 `:focus-visible`，键盘焦点无提示 | ✅ 仅 `:focus:not(:focus-visible)` 取消 outline |
+| R-188 | LiveResultPanel 显示可编辑实时输入，运行中改问题会与已提交任务不符 | ✅ 运行中禁用 textarea |
+| R-189 | 死规则/死 class：`.phase-dot.done`、`input[type=url]`、tool-panel `local`/`web`、`font-weight: 650` 落到 700 | ✅ 全部清理（650→600） |
+
+#### Nit
+| 编号 | 描述 | 修复 |
+|------|------|------|
+| R-190 | shoot.mjs 浏览器进程中途失败不关闭；未挂 npm script | ✅ finally 统一关闭 + `npm run shots` |
+| R-191 | 结果到达瞬间 ProcessView 重建重播动画、滚动位置丢失 | ⚠️ 接受：cosmetic，重播在半秒内结束 |
+| R-192 | `web/dist/` 被 git 跟踪，新构建资产必须随提交一起进入 | ⚠️ 记录：提交时 `git add` 包含 dist 全量（含旧资产删除） |
+
+#### 已验证（第五轮终审后）
+
+- `cd web && npm run build`（tsc + vite）— 通过
+- `cd web && npm test` — 20 passed
+- `cd web && npx playwright test` — 1 passed
+- 截图目检 7 页（setup / research / results / running / tasks×2 / kb）— 符合设计
 
 ### 已验证（终审后）
 
@@ -281,8 +313,9 @@
 
 ### 立即
 
-1. **提交本日改动** — Knowledge Deposit 后端 + Web UI 沉淀按钮 + e2e 修复 + R-149~R-173 全部处理完毕；提交时顺带 `git rm --cached web/test-results/.last-run.json`（R-172）
-2. **下一大步：Local 知识注入 Web Planner**（方案 2）— deposit 打通 Web→Local 后，反向让 Planner 看到本地已有知识，形成"调研→沉淀→复用"回路；需新 ADR 显式演进 Research Workflow Boundary
+1. **提交本日改动** — Web UI 视觉重设计（第五轮审查 R-184~R-192 处理完毕）；提交时必须 `git add web/dist` 全量新构建资产（R-192），TODO.md 的 `local_kb_search` 条目建议拆成独立提交
+2. **下一步联动候选：`local_kb_search` 注册为 Web 工具（方案 3）** — 触发条件与中间档已记录于 TODO.md"Retrieval And Web Tools"节；先观察 deposit 增长后初始 Top-5 是否漏材料再决定
+3. **择机加固 R-173 家族** — 锁时序偶发测试，让 fake runtime 可阻塞
 
 ### 阶段 8（功能全部实现）
 

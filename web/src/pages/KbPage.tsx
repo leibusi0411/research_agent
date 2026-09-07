@@ -31,9 +31,9 @@ export function KbPage({
           <dt>status</dt>
           <dd>{status.status}</dd>
           <dt>file_count</dt>
-          <dd>{status.file_count}</dd>
+          <dd className="num">{status.file_count}</dd>
           <dt>chunk_count</dt>
-          <dd>{status.chunk_count}</dd>
+          <dd className="num">{status.chunk_count}</dd>
           <dt>last_indexed_at</dt>
           <dd>{status.last_indexed_at ?? "none"}</dd>
         </dl>

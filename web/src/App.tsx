@@ -50,11 +50,19 @@ export function App() {
   /** Shared factory: creates onResult/onError callbacks for SSE task completion. */
   function createTaskFinisher(mode: "local" | "web") {
     const setResult = mode === "local" ? setLocalResult : setWebResult;
+    const clearEvents = mode === "local" ? () => setLocalEvents([]) : () => setWebEvents([]);
     return async (taskId: string) => {
-      const finalResult = await api.taskResult(taskId);
-      setResult(finalResult);
-      setSelectedResult(finalResult);
-      await refreshTasks();
+      try {
+        const finalResult = await api.taskResult(taskId);
+        setResult(finalResult);
+        setSelectedResult(finalResult);
+        await refreshTasks();
+      } catch (error) {
+        // Result fetch failed after the stream ended: clear events so the
+        // lane's running state (events && !result) does not stick forever.
+        clearEvents();
+        setMessage(String(error));
+      }
     };
   }
 
@@ -90,6 +98,7 @@ export function App() {
     event.preventDefault();
     setLocalEvents([]);
     setLocalPhase(null);
+    setLocalResult(null);
     setBusy("local");
     try {
       const started = await api.runLocal(localQuestion);
@@ -123,6 +132,7 @@ export function App() {
     event.preventDefault();
     setWebEvents([]);
     setWebPhase(null);
+    setWebResult(null);
     setBusy("web");
     try {
       const started = await api.runWeb(webQuestion);

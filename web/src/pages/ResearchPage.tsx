@@ -1,9 +1,8 @@
 import { FormEvent } from "react";
-import { BookOpen, Sparkles, Wifi } from "lucide-react";
 import { type ProgressEvent, type ResearchResult } from "../api";
 import { ConnectionBadge } from "../components/ConnectionBadge";
 import { PhaseIndicator } from "../components/PhaseIndicator";
-import { LocalResultView, WebResultView } from "../components/ResultView";
+import { LocalResultView, LiveResultPanel, WebResultView } from "../components/ResultView";
 
 export function ResearchPage({
   localQuestion,
@@ -34,8 +33,10 @@ export function ResearchPage({
   localPhase: string | null;
   webPhase: string | null;
 }) {
-  const localRunning = busy === "local";
-  const webRunning = busy === "web";
+  // Running = request in flight, or events streaming in with no result yet.
+  // (busy only covers the POST; the trace should stay alive for the whole run.)
+  const localRunning = busy === "local" || (localEvents.length > 0 && !localResult);
+  const webRunning = busy === "web" || (webEvents.length > 0 && !webResult);
 
   return (
     <section className="research-page">
@@ -45,15 +46,11 @@ export function ResearchPage({
           <h1>Research</h1>
           <p className="page-summary">Run local knowledge-base retrieval or web research, then watch the agent trace its work in real time.</p>
         </div>
-        <span className="header-pill">
-          <Sparkles size={14} />
-          Agent ready
-        </span>
       </header>
       <div className="research-grid">
-        <form className="tool-panel local" onSubmit={runLocal}>
+        <form className={localRunning ? "tool-panel running" : "tool-panel"} onSubmit={runLocal}>
           <h2>
-            <BookOpen size={18} />
+            <span className="lane-glyph lane-local" aria-hidden="true" />
             Local RAG
             {localRunning && (
               <span className="tool-status">
@@ -67,13 +64,14 @@ export function ResearchPage({
             value={localQuestion}
             onChange={(event) => setLocalQuestion(event.target.value)}
             placeholder="Ask against your indexed notes..."
+            disabled={localRunning}
             required
           />
           <button disabled={localRunning}>Run Local</button>
         </form>
-        <form className="tool-panel web" onSubmit={runWeb}>
+        <form className={webRunning ? "tool-panel running" : "tool-panel"} onSubmit={runWeb}>
           <h2>
-            <Wifi size={18} />
+            <span className="lane-glyph lane-web" aria-hidden="true" />
             Web Research
             {webRunning && (
               <span className="tool-status">
@@ -87,13 +85,16 @@ export function ResearchPage({
             value={webQuestion}
             onChange={(event) => setWebQuestion(event.target.value)}
             placeholder="Ask for a current web-backed report..."
+            disabled={webRunning}
             required
           />
           <button disabled={webRunning}>Run Web</button>
         </form>
       </div>
       <div className="result-grid">
+        {localRunning && !localResult && <LiveResultPanel mode="local" question={localQuestion} events={localEvents} />}
         {localResult && <LocalResultView result={localResult} events={localEvents} />}
+        {webRunning && !webResult && <LiveResultPanel mode="web" question={webQuestion} events={webEvents} />}
         {webResult && <WebResultView result={webResult} events={webEvents} />}
       </div>
     </section>

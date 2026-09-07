@@ -2,9 +2,37 @@ import { useMemo, useState } from "react";
 import { api, ApiError, type ProgressEvent, type ResearchResult } from "../api";
 import { groupEvents, ProcessView } from "./ProcessView";
 
-export function StatusLine({ result }: { result: ResearchResult }) {
+function useGroupedEvents(events: ProgressEvent[]) {
+  const groupedEvents = useMemo(() => groupEvents(events), [events]);
+  const newestSeq = useMemo(() => {
+    let max = 0;
+    for (const e of events) if (e.seq !== undefined && e.seq > max) max = e.seq;
+    return max;
+  }, [events]);
+  return { groupedEvents, newestSeq };
+}
+
+// Live trace shown while a task is running, before its result exists.
+export function LiveResultPanel({ mode, question, events }: { mode: "local" | "web"; question: string; events: ProgressEvent[] }) {
+  const { groupedEvents, newestSeq } = useGroupedEvents(events);
   return (
-    <p className={result.status === "failed" ? "status failed" : "status completed"}>
+    <article className="result-panel">
+      <h2>
+        <span className={`lane-glyph lane-${mode}`} aria-hidden="true" />
+        {mode === "local" ? "Local Result" : "Web Report"}
+      </h2>
+      <p>{question}</p>
+      <p className="status running">running</p>
+      <ProcessView groupedEvents={groupedEvents} newestSeq={newestSeq} />
+    </article>
+  );
+}
+
+export function StatusLine({ result }: { result: ResearchResult }) {
+  const statusClass =
+    result.status === "failed" ? "status failed" : result.status === "running" ? "status running" : "status completed";
+  return (
+    <p className={statusClass}>
       {result.status}
       {result.error ? ` [${result.error.code}] ${result.error.message}` : ""}
     </p>
@@ -12,15 +40,13 @@ export function StatusLine({ result }: { result: ResearchResult }) {
 }
 
 export function LocalResultView({ result, events }: { result: ResearchResult; events: ProgressEvent[] }) {
-  const groupedEvents = useMemo(() => groupEvents(events), [events]);
-  const newestSeq = useMemo(() => {
-    let max = 0;
-    for (const e of events) if (e.seq !== undefined && e.seq > max) max = e.seq;
-    return max;
-  }, [events]);
+  const { groupedEvents, newestSeq } = useGroupedEvents(events);
   return (
     <article className="result-panel">
-      <h2>Local Result</h2>
+      <h2>
+        <span className="lane-glyph lane-local" aria-hidden="true" />
+        Local Result
+      </h2>
       <p>{result.question}</p>
       <StatusLine result={result} />
       <ProcessView groupedEvents={groupedEvents} newestSeq={newestSeq} />
@@ -36,15 +62,13 @@ export function LocalResultView({ result, events }: { result: ResearchResult; ev
 }
 
 export function WebResultView({ result, events }: { result: ResearchResult; events: ProgressEvent[] }) {
-  const groupedEvents = useMemo(() => groupEvents(events), [events]);
-  const newestSeq = useMemo(() => {
-    let max = 0;
-    for (const e of events) if (e.seq !== undefined && e.seq > max) max = e.seq;
-    return max;
-  }, [events]);
+  const { groupedEvents, newestSeq } = useGroupedEvents(events);
   return (
     <article className="result-panel">
-      <h2>Web Report</h2>
+      <h2>
+        <span className="lane-glyph lane-web" aria-hidden="true" />
+        Web Report
+      </h2>
       <p>{result.question}</p>
       <StatusLine result={result} />
       <ProcessView groupedEvents={groupedEvents} newestSeq={newestSeq} />

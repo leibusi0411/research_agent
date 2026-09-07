@@ -24,7 +24,10 @@ export function TasksPage({
           <div className="task-row" key={task.task_id}>
             <button className="task-open" onClick={() => onOpen(task)}>
               <span>{task.task_id}</span>
-              <span>{task.mode}</span>
+              <span className="mode-cell">
+                <span className={`lane-glyph lane-${task.mode}`} aria-hidden="true" />
+                {task.mode}
+              </span>
               <span>{task.status}</span>
               <span>{task.title_or_question}</span>
               <span>{task.created_at}</span>
