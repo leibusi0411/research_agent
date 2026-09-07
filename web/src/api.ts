@@ -126,6 +126,7 @@ export const api = {
   depositTask: (taskId: string) => request<DepositResult>(`/api/tasks/${encodeURIComponent(taskId)}/deposit`, { method: "POST" }),
   taskResult: (taskId: string) => request<ResearchResult>(`/api/tasks/${encodeURIComponent(taskId)}/result`),
   taskEvents: (taskId: string) => request<ProgressEvent[]>(`/api/tasks/${encodeURIComponent(taskId)}/events`),
+  activeTasks: () => request<{ active: Array<{ mode: string; task_id: string }> }>("/api/tasks/active"),
   kbStatus: () => request<KbStatus>("/api/kb/status"),
   kbRebuild: () => request<KbStatus>("/api/kb/rebuild", { method: "POST" })
 };

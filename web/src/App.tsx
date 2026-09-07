@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import {
   api,
+  ApiError,
   type KbStatus,
   type ProgressEvent,
   type ResearchResult,
@@ -47,12 +48,57 @@ export function App() {
       const finalResult = await api.taskResult(taskId);
       setResult(finalResult);
       setSelectedResult(finalResult);
+      try {
+        // Backfill the full trace so a reattached session shows history too.
+        // A still-running task serves SSE here (not JSON) — keep streamed events.
+        setEvents(await api.taskEvents(taskId));
+      } catch {
+        // keep the streamed events
+      }
       await refreshTasks();
     } catch (error) {
       // Result fetch failed after the stream ended: clear events so the
       // running state (events && !result) does not stick forever.
       setEvents([]);
       setMessage(String(error));
+    }
+  }
+
+  /** Subscribe the research view to a task's live event stream. */
+  function attachToTask(taskId: string) {
+    setEvents([]);
+    setPhase(null);
+    setResult(null);
+    const collected: ProgressEvent[] = [];
+    esCleanup.current?.();
+    esCleanup.current = subscribeTaskEvents(
+      taskId,
+      (evt) => {
+        collected.push(evt);
+        setEvents([...collected]);
+        if (evt.phase) setPhase(evt.phase);
+      },
+      () => finishTask(taskId),
+      () => finishTask(taskId),
+    );
+  }
+
+  /** Reattach to a running web task (page reload mid-run, or 409 busy). */
+  async function reattachToActiveWebTask(): Promise<boolean> {
+    try {
+      const { active } = await api.activeTasks();
+      const webActive = (active ?? []).find((entry) => entry.mode === "web");
+      if (!webActive) return false;
+      try {
+        const running = await api.taskResult(webActive.task_id);
+        setQuestion(running.question);
+      } catch {
+        // Question stays as-is; the trace still attaches.
+      }
+      attachToTask(webActive.task_id);
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -67,6 +113,8 @@ export function App() {
     if (configured) {
       refreshTasks();
       refreshKb();
+      // A web task may still be running from before a page reload — reattach.
+      reattachToActiveWebTask();
     }
   }, [configured]);
 
@@ -98,19 +146,14 @@ export function App() {
         await refreshTasks();
         return;
       }
-      const collected: ProgressEvent[] = [];
-      esCleanup.current?.();
-      esCleanup.current = subscribeTaskEvents(
-        started.task_id,
-        (evt) => {
-          collected.push(evt);
-          setEvents([...collected]);
-          if (evt.phase) setPhase(evt.phase);
-        },
-        () => finishTask(started.task_id),
-        () => finishTask(started.task_id),
-      );
+      attachToTask(started.task_id);
     } catch (error) {
+      // Another web task is already running: attach to it instead of
+      // leaving the user staring at a bare error.
+      if (error instanceof ApiError && error.code === "busy" && (await reattachToActiveWebTask())) {
+        setMessage("");
+        return;
+      }
       setMessage(String(error));
     } finally {
       setBusy(null);

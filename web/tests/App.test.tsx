@@ -141,6 +141,16 @@ describe("App", () => {
     expect(screen.getByText("local_rag")).toBeInTheDocument();
   });
 
+  it("reattaches to a running web task on load", async () => {
+    mockConfiguredFetch({ activeWeb: true });
+    render(<MemoryRouter><App /></MemoryRouter>);
+
+    // No click: the running task's trace appears, then its result arrives.
+    expect(await screen.findByText("Research Trace")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Web summary")).toBeInTheDocument());
+    expect(screen.getByRole("textbox", { name: "Research question" })).toHaveValue("web question");
+  });
+
   it("deletes a finished task from task history and clears selected details", async () => {
     mockConfiguredFetch();
     render(<MemoryRouter><App /></MemoryRouter>);
@@ -307,7 +317,7 @@ describe("App", () => {
   });
 });
 
-function mockConfiguredFetch(options: { webResultOverride?: ResearchResult; depositStatus?: number; secondWebTask?: boolean } = {}) {
+function mockConfiguredFetch(options: { webResultOverride?: ResearchResult; depositStatus?: number; secondWebTask?: boolean; activeWeb?: boolean } = {}) {
   const resolvedWebResult = options.webResultOverride ?? webResult;
   const webStatus: "completed" | "failed" = resolvedWebResult.status === "failed" ? "failed" : "completed";
   let finishedTasks = [
@@ -374,6 +384,8 @@ function mockConfiguredFetch(options: { webResultOverride?: ResearchResult; depo
       let body: unknown = {};
       if (url.endsWith("/api/setup/status")) {
         body = { configured: true };
+      } else if (url.endsWith("/api/tasks/active")) {
+        body = { active: options.activeWeb ? [{ mode: "web", task_id: resolvedWebResult.task_id }] : [] };
       } else if (url.endsWith("/api/tasks/finished")) {
         body = {
           tasks: finishedTasks

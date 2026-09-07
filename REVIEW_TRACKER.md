@@ -174,6 +174,7 @@
 | R-199 | loop 关闭后 `call_soon_threadsafe` 抛 RuntimeError 会打进 worker 线程 | ✅ try/except 降级为 debug 丢弃（与无 loop 分支对齐） |
 | R-200 | index.html meta description 未随改名更新 | ✅ Research Agent → Inkwell |
 | R-201 | `deleteTask` 残留 phase；state_graph import 非字母序 | ✅ 清理 |
+| R-202 | 刷新/撞 busy 后页面"忘记"正在运行的任务，用户误以为无响应重复提交 | ✅ 页面加载时查 `/api/tasks/active` 自动重连 SSE（回填问题与轨迹）；409 busy 时自动接管运行中任务；finishTask 补齐全量事件 |
 
 **实证**：真实服务起任务后 `curl -N` SSE 端点持续收到 data 帧（planning→prior knowledge→execution…）；任务完成 7 findings / 12 sources。
 

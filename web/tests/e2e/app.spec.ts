@@ -33,6 +33,10 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
       await route.fulfill({ json: { configured: true, config_path: "C:/config.toml" } });
       return;
     }
+    if (url.endsWith("/api/tasks/active")) {
+      await route.fulfill({ json: { active: [] } });
+      return;
+    }
     if (url.endsWith("/api/tasks/finished")) {
       await route.fulfill({
         json: {
