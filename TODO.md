@@ -58,6 +58,9 @@ This document collects complex capabilities discussed during v1 design but inten
 
 ## Retrieval And Web Tools
 
+- Local KB as a Web Research tool (`local_kb_search`).
+  Since ADR-0046, the Planner receives a one-time Prior Knowledge slice at task start, but the research loop cannot query the Knowledge Base mid-run. A future version may register `local_kb_search` in the Web ToolRegistry (reusing `retrieve_local_chunks`) so the agent can check local notes with new queries formulated only after seeing web findings — the read side of the deposit loop. Deferred until usage signals justify it: (1) the vault grows via deposits to a size where the initial Top-5 slice visibly misses relevant local material, or (2) Planner output shows it failing to use local knowledge it should have had. A cheaper intermediate step is re-retrieving and injecting local context at plan-revision boundaries, which captures most of the adaptivity without touching the tool registry.
+
 - Earlier URL deduplication.
   V1 deduplicates URLs at the Curator output stage only. During execution, repeated URLs may still create separate WebSource records and source snapshots. A future version may canonicalize and deduplicate URLs at the Tool Gateway or ResearchExecutor level to reduce redundant fetches and storage.
 
