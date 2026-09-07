@@ -626,3 +626,35 @@ class TestPrintWebEvent:
             # Must not raise
             out = self._capture_output(event)
             assert out, f"subtype={subtype} should produce output, got empty"
+
+
+class TestCrossThreadPublish:
+    """Regression: publish_nowait from a worker thread must reach loop subscribers.
+
+    The API runs research on a ThreadPoolExecutor; the worker thread has no
+    running event loop, so the old publish_nowait silently dropped every event
+    (no progress on the page, no completion signal, no result fetch).
+    """
+
+    @pytest.mark.asyncio
+    async def test_publish_nowait_from_worker_thread_reaches_subscriber(self):
+        bus = Bus()
+        received: list[dict] = []
+
+        async def consume():
+            async for payload in bus.subscribe("task.t1"):
+                received.append(payload)
+                break
+
+        consumer = asyncio.ensure_future(consume())
+        await asyncio.sleep(0.05)  # let the subscriber register on the loop
+
+        def publish_from_worker():
+            # No running event loop on this thread — the API's executor case.
+            bus.publish_nowait("task.t1", seq=1, message="hello from worker")
+
+        await asyncio.to_thread(publish_from_worker)
+        await asyncio.wait_for(consumer, timeout=2)
+
+        assert received, "worker-thread publish_nowait never reached the subscriber"
+        assert json.loads(received[0]["data"])["message"] == "hello from worker"

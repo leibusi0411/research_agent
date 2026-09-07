@@ -4,7 +4,7 @@ import { NavLink } from "react-router-dom";
 export function Sidebar() {
   return (
     <aside className="sidebar">
-      <div className="brand">Research Agent</div>
+      <div className="brand">Inkwell</div>
       <NavLink to="/" className={({ isActive }) => (isActive ? "active" : "")}>
         <Search size={18} />
         Research

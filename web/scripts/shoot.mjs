@@ -153,11 +153,9 @@ async function main() {
     await page.reload({ waitUntil: "networkidle" });
     await page.screenshot({ path: `${OUT_DIR}/02-research.png` });
 
-    // 3. Research page with both results
-    await page.getByRole("textbox", { name: "Local RAG question" }).fill("What does ADR-0036 say about running local and web independently?");
-    await page.getByRole("button", { name: "Run Local" }).click();
-    await page.getByRole("textbox", { name: "Web research question" }).fill("How do agent skill systems avoid generic-looking UI output?");
-    await page.getByRole("button", { name: "Run Web" }).click();
+    // 3. Research page with a finished run (trace + result cards)
+    await page.getByRole("textbox", { name: "Research question" }).fill("How do agent skill systems avoid generic-looking UI output?");
+    await page.getByRole("button", { name: "Research" }).click();
     await page.getByText("Current guidance skills push against").waitFor();
     await page.screenshot({ path: `${OUT_DIR}/03-research-results.png`, fullPage: true });
 
@@ -165,8 +163,8 @@ async function main() {
     // delayed so events stream while the task is still running.
     await mockApi(page, { delayWebResult: true });
     await page.goto(BASE, { waitUntil: "networkidle" });
-    await page.getByRole("textbox", { name: "Web research question" }).fill("What is new in agent tooling this week?");
-    await page.getByRole("button", { name: "Run Web" }).click();
+    await page.getByRole("textbox", { name: "Research question" }).fill("What is new in agent tooling this week?");
+    await page.getByRole("button", { name: "Research" }).click();
     await page.locator(".phase-indicator").waitFor();
     await page.getByText("Initial plan created").waitFor();
     await sleep(500);

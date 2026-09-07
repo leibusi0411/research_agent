@@ -119,8 +119,6 @@ export const api = {
   setupStatus: () => request<SetupStatus>("/api/setup/status"),
   setupInit: (payload: SetupPayload) =>
     request<SetupStatus>("/api/setup/init", { method: "POST", body: JSON.stringify(payload) }),
-  runLocal: (question: string) =>
-    request<ResearchResult>("/api/research/local", { method: "POST", body: JSON.stringify({ question }) }),
   runWeb: (question: string) =>
     request<ResearchResult>("/api/research/web", { method: "POST", body: JSON.stringify({ question }) }),
   finishedTasks: () => request<{ tasks: TaskSummary[] }>("/api/tasks/finished"),
@@ -131,14 +129,6 @@ export const api = {
   kbStatus: () => request<KbStatus>("/api/kb/status"),
   kbRebuild: () => request<KbStatus>("/api/kb/rebuild", { method: "POST" })
 };
-
-async function requestText(path: string): Promise<string> {
-  const response = await fetch(path);
-  if (!response.ok) {
-    throw new Error("Request failed.");
-  }
-  return response.text();
-}
 
 export function parseSseEvents(text: string): ProgressEvent[] {
   const events: ProgressEvent[] = [];

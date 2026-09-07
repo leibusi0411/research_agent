@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-07 | 测试：182 passed（Python，含 6 个 e2e）+ 20 passed（前端 Vitest）+ 1 passed（Playwright e2e）| 最新一轮审查 9 项处理完毕 ✅（R-184~R-192）| 新功能：Knowledge Deposit（ADR-0045）+ Web UI 沉淀按钮 + Prior Knowledge 注入（ADR-0046）+ Web UI 视觉重设计（纸墨/荧光笔体系）
+> 最后更新：2026-09-07 | 测试：184 passed（Python，178 离线 + 6 e2e）+ 20 passed（前端 Vitest）+ 1 passed（Playwright e2e）| 最新一轮审查 9 项处理完毕 ✅（R-184~R-192）+ 热修 2 项（R-193~R-194）+ 第六轮 7 项（R-195~R-201）| 新功能：Knowledge Deposit（ADR-0045）+ Web UI 沉淀按钮 + Prior Knowledge 注入（ADR-0046）+ Inkwell 重设计（Gemini 式深色 + 实时轨迹 + 结果卡片）
 
 ---
 
@@ -153,6 +153,35 @@
 - `cd web && npm test` — 20 passed
 - `cd web && npx playwright test` — 1 passed
 - 截图目检 7 页（setup / research / results / running / tasks×2 / kb）— 符合设计
+
+### 线上热修（2026-09-07，用户实测发现）
+
+| 编号 | 描述 | 修复 |
+|------|------|------|
+| R-193 | **生产路径 blocker**：`_default_web_runtime` 引用 `create_app` 局部变量 `bus` → NameError，API 发起的真实 Web 任务全部 500（5efdc74 SSE 重构引入；离线测试注入 factory 从未覆盖该路径） | ✅ `bus` 改为显式参数贯穿 `create_app` → `_register_research_routes` → `_default_web_runtime`；补无 factory 的 start_web 回归测试 |
+| R-194 | R-173 竞态家族第三次发作（高负载下连续失败） | ✅ 落实既定方案：`_TestWebRuntime.run` 加 0.5s 运行窗口，两个锁时序测试转确定性（三连跑 12/12） |
+
+### 第六轮审查（2026-09-07，SSE 生产链路修复 + Inkwell 重设计）
+
+**背景**：用户实测发现 API 发起的真实 Web 任务页面无进度、完成后无报告。根因：研究任务跑在 ThreadPoolExecutor 工作线程，`Bus.publish_nowait` 用 `asyncio.get_running_loop()` 找不到 loop，每个事件静默丢弃，SSE 流挂起。顺带完成 Research 页 Inkwell 重构（Gemini 式居中搜索 + 实时轨迹卡 + 结果卡片 + 深色谷歌配色）。subagent 审查：无 blocker，2 事务项（补本记录、提交带 dist）+ 3 minor 全部处理。
+
+| 编号 | 描述 | 修复 |
+|------|------|------|
+| R-195 | **blocker**：`publish_nowait` 工作线程静默丢事件（页面无进度、无完成信号） | ✅ Bus 捕获 ASGI loop（`attach`/`subscribe`/`subscribe_all` 登记时），跨线程 `call_soon_threadsafe`；补跨线程回归测试 |
+| R-196 | `events()` 先 replay 后订阅，窗口期事件丢失 | ✅ attach 先于 replay + queue drain 按 seq 去重（恰好一次），finally detach |
+| R-197 | Research 页无反馈、双栏输入割裂 | ✅ Inkwell 重构：单胶囊搜索框、TraceCard（实时计数+阶段轨+事件流）、ResultCards（报告/本地笔记/资料三卡）、全站深色谷歌风 |
+| R-198 | 死代码：`api.runLocal`、`requestText`、`useSSE` hook 无调用方 | ✅ 删除（`ConnectionState` 类型保留给 ConnectionBadge） |
+| R-199 | loop 关闭后 `call_soon_threadsafe` 抛 RuntimeError 会打进 worker 线程 | ✅ try/except 降级为 debug 丢弃（与无 loop 分支对齐） |
+| R-200 | index.html meta description 未随改名更新 | ✅ Research Agent → Inkwell |
+| R-201 | `deleteTask` 残留 phase；state_graph import 非字母序 | ✅ 清理 |
+
+**实证**：真实服务起任务后 `curl -N` SSE 端点持续收到 data 帧（planning→prior knowledge→execution…）；任务完成 7 findings / 12 sources。
+
+#### 已验证（第六轮终审后）
+
+- `uv run pytest -m "not e2e"` — 178 passed（含跨线程发布回归、无 factory start_web 回归）
+- `cd web && npm run build` + Vitest 20 passed + Playwright e2e 1 passed
+- 截图目检 7 页（深色主题）— 符合设计
 
 ### 已验证（终审后）
 

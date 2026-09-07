@@ -110,30 +110,26 @@ describe("App", () => {
     }
     await userEvent.click(screen.getByRole("button", { name: "Save Config" }));
 
-    expect(await screen.findByRole("heading", { name: "Research" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Inkwell" })).toBeInTheDocument();
   });
 
-  it("runs local and web research and renders results", async () => {
+  it("runs web research and renders the trace and result cards", async () => {
     mockConfiguredFetch();
     render(<MemoryRouter><App /></MemoryRouter>);
 
-    await screen.findByRole("heading", { name: "Research" });
-    await userEvent.type(screen.getAllByRole("textbox")[0], "local question");
-    await userEvent.click(screen.getByRole("button", { name: "Run Local" }));
-    await waitFor(() => expect(screen.getByText("Local content")).toBeInTheDocument());
-    expect(screen.getByText("local_rag")).toBeInTheDocument();
-
-    await userEvent.type(screen.getAllByRole("textbox")[1], "web question");
-    await userEvent.click(screen.getByRole("button", { name: "Run Web" }));
+    await screen.findByRole("heading", { name: "Inkwell" });
+    await userEvent.type(screen.getByRole("textbox", { name: "Research question" }), "web question");
+    await userEvent.click(screen.getByRole("button", { name: "Research" }));
     await waitFor(() => expect(screen.getByText("Web summary")).toBeInTheDocument());
     expect(screen.getByText("web_planning")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Web Report" })).toBeInTheDocument();
   });
 
   it("lists tasks and opens the mode-specific result view", async () => {
     mockConfiguredFetch();
     render(<MemoryRouter><App /></MemoryRouter>);
 
-    await screen.findByRole("heading", { name: "Research" });
+    await screen.findByRole("heading", { name: "Inkwell" });
     await userEvent.click(screen.getByRole("link", { name: "Tasks" }));
     await userEvent.click(await screen.findByText("web question"));
 
@@ -149,7 +145,7 @@ describe("App", () => {
     mockConfiguredFetch();
     render(<MemoryRouter><App /></MemoryRouter>);
 
-    await screen.findByRole("heading", { name: "Research" });
+    await screen.findByRole("heading", { name: "Inkwell" });
     await userEvent.click(screen.getByRole("link", { name: "Tasks" }));
     await userEvent.click(await screen.findByText("web question"));
     expect(await screen.findByText("Web Report")).toBeInTheDocument();
@@ -165,7 +161,7 @@ describe("App", () => {
     mockConfiguredFetch();
     render(<MemoryRouter><App /></MemoryRouter>);
 
-    await screen.findByRole("heading", { name: "Research" });
+    await screen.findByRole("heading", { name: "Inkwell" });
     await userEvent.click(screen.getByRole("link", { name: "Tasks" }));
     await userEvent.click(await screen.findByText("web question"));
     expect(await screen.findByText("Web Report")).toBeInTheDocument();
@@ -189,7 +185,7 @@ describe("App", () => {
     mockConfiguredFetch({ depositStatus: 409 });
     render(<MemoryRouter><App /></MemoryRouter>);
 
-    await screen.findByRole("heading", { name: "Research" });
+    await screen.findByRole("heading", { name: "Inkwell" });
     await userEvent.click(screen.getByRole("link", { name: "Tasks" }));
     await userEvent.click(await screen.findByText("web question"));
     expect(await screen.findByText("Web Report")).toBeInTheDocument();
@@ -203,7 +199,7 @@ describe("App", () => {
     mockConfiguredFetch({ secondWebTask: true });
     render(<MemoryRouter><App /></MemoryRouter>);
 
-    await screen.findByRole("heading", { name: "Research" });
+    await screen.findByRole("heading", { name: "Inkwell" });
     await userEvent.click(screen.getByRole("link", { name: "Tasks" }));
     await userEvent.click(await screen.findByText("web question"));
     expect(await screen.findByText("Web summary")).toBeInTheDocument();
@@ -222,7 +218,7 @@ describe("App", () => {
     mockConfiguredFetch();
     render(<MemoryRouter><App /></MemoryRouter>);
 
-    await screen.findByRole("heading", { name: "Research" });
+    await screen.findByRole("heading", { name: "Inkwell" });
     await userEvent.click(screen.getByRole("link", { name: "Knowledge Base" }));
 
     expect(await screen.findByText("Knowledge Base Index")).toBeInTheDocument();
@@ -257,7 +253,7 @@ describe("App", () => {
 
     render(<MemoryRouter><App /></MemoryRouter>);
 
-    await screen.findByRole("heading", { name: "Research" });
+    await screen.findByRole("heading", { name: "Inkwell" });
     await userEvent.click(screen.getByRole("link", { name: "Tasks" }));
     await userEvent.click(screen.getByRole("button", { name: "Delete task web question" }));
 
@@ -270,19 +266,20 @@ describe("App", () => {
     mockConfiguredFetch();
     render(<MemoryRouter><App /></MemoryRouter>);
 
-    await screen.findByRole("heading", { name: "Research" });
+    await screen.findByRole("heading", { name: "Inkwell" });
 
-    // Start local research — creates one EventSource
-    await userEvent.type(screen.getAllByRole("textbox")[0], "local q1");
-    await userEvent.click(screen.getByRole("button", { name: "Run Local" }));
-    await waitFor(() => expect(screen.getByText("Local content")).toBeInTheDocument());
+    // Start a research run — creates one EventSource
+    await userEvent.type(screen.getByRole("textbox", { name: "Research question" }), "q1");
+    await userEvent.click(screen.getByRole("button", { name: "Research" }));
+    await waitFor(() => expect(screen.getByText("Web summary")).toBeInTheDocument());
 
     const firstEsCount = _esInstances.length;
     expect(firstEsCount).toBeGreaterThanOrEqual(1);
 
-    // Start another local research — should close the previous EventSource
-    await userEvent.type(screen.getAllByRole("textbox")[0], "local q2");
-    await userEvent.click(screen.getByRole("button", { name: "Run Local" }));
+    // Start another research run — should close the previous EventSource
+    await userEvent.clear(screen.getByRole("textbox", { name: "Research question" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Research question" }), "q2");
+    await userEvent.click(screen.getByRole("button", { name: "Research" }));
     await waitFor(() => expect(_esInstances.length).toBeGreaterThan(firstEsCount));
 
     // First EventSource should have been closed
@@ -301,9 +298,9 @@ describe("App", () => {
     });
     render(<MemoryRouter><App /></MemoryRouter>);
 
-    await screen.findByRole("heading", { name: "Research" });
-    await userEvent.type(screen.getAllByRole("textbox")[1], "web question");
-    await userEvent.click(screen.getByRole("button", { name: "Run Web" }));
+    await screen.findByRole("heading", { name: "Inkwell" });
+    await userEvent.type(screen.getByRole("textbox", { name: "Research question" }), "web question");
+    await userEvent.click(screen.getByRole("button", { name: "Research" }));
 
     expect(await screen.findByText(/file_write_error/)).toBeInTheDocument();
     expect(screen.getByText(/Failed to write Web Report File/)).toBeInTheDocument();

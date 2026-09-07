@@ -101,14 +101,10 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
     await input.fill("x");
   }
   await page.getByRole("button", { name: "Save Config" }).click();
-  await expect(page.getByRole("heading", { name: "Research", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Inkwell" })).toBeVisible();
 
-  await page.getByRole("textbox", { name: "Local RAG question" }).fill("local question");
-  await page.getByRole("button", { name: "Run Local" }).click();
-  await expect(page.getByText("Local content")).toBeVisible();
-
-  await page.getByRole("textbox", { name: "Web research question" }).fill("web question");
-  await page.getByRole("button", { name: "Run Web" }).click();
+  await page.getByRole("textbox", { name: "Research question" }).fill("web question");
+  await page.getByRole("button", { name: "Research" }).click();
   await expect(page.getByText("Web summary")).toBeVisible();
   await expect(page.getByText("web_planning")).toBeVisible();
 

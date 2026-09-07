@@ -18,12 +18,9 @@ import { KbPage } from "./pages/KbPage";
 export function App() {
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [setup, setSetup] = useState<SetupPayload>(emptySetup);
-  const [localQuestion, setLocalQuestion] = useState("");
-  const [webQuestion, setWebQuestion] = useState("");
-  const [localResult, setLocalResult] = useState<ResearchResult | null>(null);
-  const [webResult, setWebResult] = useState<ResearchResult | null>(null);
-  const [localEvents, setLocalEvents] = useState<ProgressEvent[]>([]);
-  const [webEvents, setWebEvents] = useState<ProgressEvent[]>([]);
+  const [question, setQuestion] = useState("");
+  const [result, setResult] = useState<ResearchResult | null>(null);
+  const [events, setEvents] = useState<ProgressEvent[]>([]);
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [kbStatus, setKbStatus] = useState<KbStatus | null>(null);
   const [selectedResult, setSelectedResult] = useState<ResearchResult | null>(null);
@@ -31,39 +28,32 @@ export function App() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [deletingTaskIds, setDeletingTaskIds] = useState<string[]>([]);
-  const [localPhase, setLocalPhase] = useState<string | null>(null);
-  const [webPhase, setWebPhase] = useState<string | null>(null);
+  const [phase, setPhase] = useState<string | null>(null);
 
   const navigate = useNavigate();
 
-  const localEsCleanup = useRef<(() => void) | null>(null);
-  const webEsCleanup = useRef<(() => void) | null>(null);
+  const esCleanup = useRef<(() => void) | null>(null);
 
-  // Clean up EventSource connections on unmount
+  // Clean up the EventSource connection on unmount
   useEffect(() => {
     return () => {
-      localEsCleanup.current?.();
-      webEsCleanup.current?.();
+      esCleanup.current?.();
     };
   }, []);
 
-  /** Shared factory: creates onResult/onError callbacks for SSE task completion. */
-  function createTaskFinisher(mode: "local" | "web") {
-    const setResult = mode === "local" ? setLocalResult : setWebResult;
-    const clearEvents = mode === "local" ? () => setLocalEvents([]) : () => setWebEvents([]);
-    return async (taskId: string) => {
-      try {
-        const finalResult = await api.taskResult(taskId);
-        setResult(finalResult);
-        setSelectedResult(finalResult);
-        await refreshTasks();
-      } catch (error) {
-        // Result fetch failed after the stream ended: clear events so the
-        // lane's running state (events && !result) does not stick forever.
-        clearEvents();
-        setMessage(String(error));
-      }
-    };
+  /** Fetch the final result once the SSE stream reports completion. */
+  async function finishTask(taskId: string) {
+    try {
+      const finalResult = await api.taskResult(taskId);
+      setResult(finalResult);
+      setSelectedResult(finalResult);
+      await refreshTasks();
+    } catch (error) {
+      // Result fetch failed after the stream ended: clear events so the
+      // running state (events && !result) does not stick forever.
+      setEvents([]);
+      setMessage(String(error));
+    }
   }
 
   useEffect(() => {
@@ -94,63 +84,28 @@ export function App() {
     }
   }
 
-  async function runLocal(event: FormEvent) {
+  async function runResearch(event: FormEvent) {
     event.preventDefault();
-    setLocalEvents([]);
-    setLocalPhase(null);
-    setLocalResult(null);
-    setBusy("local");
-    try {
-      const started = await api.runLocal(localQuestion);
-      if (started.status !== "running") {
-        setLocalResult(started);
-        setSelectedResult(started);
-        await refreshTasks();
-        return;
-      }
-      const collected: ProgressEvent[] = [];
-      const finishTask = createTaskFinisher("local");
-      localEsCleanup.current?.();
-      localEsCleanup.current = subscribeTaskEvents(
-        started.task_id,
-        (evt) => {
-          collected.push(evt);
-          setLocalEvents([...collected]);
-          if (evt.phase) setLocalPhase(evt.phase);
-        },
-        () => finishTask(started.task_id),
-        () => finishTask(started.task_id),
-      );
-    } catch (error) {
-      setMessage(String(error));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function runWeb(event: FormEvent) {
-    event.preventDefault();
-    setWebEvents([]);
-    setWebPhase(null);
-    setWebResult(null);
+    setEvents([]);
+    setPhase(null);
+    setResult(null);
     setBusy("web");
     try {
-      const started = await api.runWeb(webQuestion);
+      const started = await api.runWeb(question);
       if (started.status !== "running") {
-        setWebResult(started);
+        setResult(started);
         setSelectedResult(started);
         await refreshTasks();
         return;
       }
       const collected: ProgressEvent[] = [];
-      const finishTask = createTaskFinisher("web");
-      webEsCleanup.current?.();
-      webEsCleanup.current = subscribeTaskEvents(
+      esCleanup.current?.();
+      esCleanup.current = subscribeTaskEvents(
         started.task_id,
         (evt) => {
           collected.push(evt);
-          setWebEvents([...collected]);
-          if (evt.phase) setWebPhase(evt.phase);
+          setEvents([...collected]);
+          if (evt.phase) setPhase(evt.phase);
         },
         () => finishTask(started.task_id),
         () => finishTask(started.task_id),
@@ -210,19 +165,16 @@ export function App() {
     try {
       await api.deleteTask(tid);
       setTasks((current) => current.filter((item) => item.task_id !== tid));
-      // Clear selected result and all result/events states when they reference
-      // the deleted task so no page still displays removed data.
+      // Clear selected result and the live result when they reference the
+      // deleted task so no page still displays removed data.
       if (selectedResult?.task_id === tid) {
         setSelectedResult(null);
         setSelectedEvents([]);
       }
-      if (localResult?.task_id === tid) {
-        setLocalResult(null);
-        setLocalEvents([]);
-      }
-      if (webResult?.task_id === tid) {
-        setWebResult(null);
-        setWebEvents([]);
+      if (result?.task_id === tid) {
+        setResult(null);
+        setEvents([]);
+        setPhase(null);
       }
       setMessage("");
       await refreshTasks();
@@ -259,19 +211,13 @@ export function App() {
             path="/"
             element={
               <ResearchPage
-                localQuestion={localQuestion}
-                webQuestion={webQuestion}
-                setLocalQuestion={setLocalQuestion}
-                setWebQuestion={setWebQuestion}
-                runLocal={runLocal}
-                runWeb={runWeb}
+                question={question}
+                setQuestion={setQuestion}
+                runResearch={runResearch}
                 busy={busy}
-                localResult={localResult}
-                webResult={webResult}
-                localEvents={localEvents}
-                webEvents={webEvents}
-                localPhase={localPhase}
-                webPhase={webPhase}
+                result={result}
+                events={events}
+                phase={phase}
               />
             }
           />

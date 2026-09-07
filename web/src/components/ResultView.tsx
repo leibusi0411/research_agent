@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { api, ApiError, type ProgressEvent, type ResearchResult } from "../api";
 import { groupEvents, ProcessView } from "./ProcessView";
+import { ConnectionBadge } from "./ConnectionBadge";
+import { PhaseIndicator } from "./PhaseIndicator";
 
 function useGroupedEvents(events: ProgressEvent[]) {
   const groupedEvents = useMemo(() => groupEvents(events), [events]);
@@ -12,17 +14,68 @@ function useGroupedEvents(events: ProgressEvent[]) {
   return { groupedEvents, newestSeq };
 }
 
-// Live trace shown while a task is running, before its result exists.
-export function LiveResultPanel({ mode, question, events }: { mode: "local" | "web"; question: string; events: ProgressEvent[] }) {
+/** Live counters derived from the event stream: searches / sources / findings. */
+function traceStats(events: ProgressEvent[]) {
+  let searches = 0;
+  let sources = 0;
+  let findings = 0;
+  for (const event of events) {
+    for (const item of event.details?.items ?? []) {
+      if (!item || typeof item !== "object") continue;
+      if (item.kind === "tool_call") searches += 1;
+      else if (item.kind === "source" && item.url) sources += 1;
+      else if (item.kind === "finding") findings += 1;
+    }
+  }
+  return { searches, sources, findings };
+}
+
+/** Prior-knowledge note paths injected before planning (ADR-0046), deduped. */
+function usePriorKnowledgePaths(events: ProgressEvent[]): string[] {
+  return useMemo(() => {
+    const seen = new Set<string>();
+    const paths: string[] = [];
+    for (const event of events) {
+      if (event.phase !== "web_planning") continue;
+      for (const item of event.details?.items ?? []) {
+        if (!item || typeof item !== "object") continue;
+        if (item.kind === "source" && item.path) {
+          const path = String(item.path);
+          if (!seen.has(path)) {
+            seen.add(path);
+            paths.push(path);
+          }
+        }
+      }
+    }
+    return paths;
+  }, [events]);
+}
+
+/** The live research trace: stats, phase rail, and the streaming event log. */
+export function TraceCard({
+  events,
+  phase,
+  running,
+}: {
+  events: ProgressEvent[];
+  phase: string | null;
+  running: boolean;
+}) {
   const { groupedEvents, newestSeq } = useGroupedEvents(events);
+  const stats = useMemo(() => traceStats(events), [events]);
+  if (events.length === 0) return null;
+  const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
   return (
-    <article className="result-panel">
-      <h2>
-        <span className={`lane-glyph lane-${mode}`} aria-hidden="true" />
-        {mode === "local" ? "Local Result" : "Web Report"}
-      </h2>
-      <p>{question}</p>
-      <p className="status running">running</p>
+    <article className={running ? "card trace-card running" : "card trace-card"}>
+      <div className="trace-head">
+        <h2>Research Trace</h2>
+        {running && <ConnectionBadge status="connected" />}
+        <span className="trace-stats">
+          {plural(stats.searches, "search")} · {plural(stats.sources, "source")} · {plural(stats.findings, "finding")}
+        </span>
+      </div>
+      {phase && <PhaseIndicator currentPhase={phase} mode="web" />}
       <ProcessView groupedEvents={groupedEvents} newestSeq={newestSeq} />
     </article>
   );
@@ -42,7 +95,7 @@ export function StatusLine({ result }: { result: ResearchResult }) {
 export function LocalResultView({ result, events }: { result: ResearchResult; events: ProgressEvent[] }) {
   const { groupedEvents, newestSeq } = useGroupedEvents(events);
   return (
-    <article className="result-panel">
+    <article className="card result-panel">
       <h2>
         <span className="lane-glyph lane-local" aria-hidden="true" />
         Local Result
@@ -61,30 +114,77 @@ export function LocalResultView({ result, events }: { result: ResearchResult; ev
   );
 }
 
-export function WebResultView({ result, events }: { result: ResearchResult; events: ProgressEvent[] }) {
-  const { groupedEvents, newestSeq } = useGroupedEvents(events);
+/** The finished-research cards: report, local knowledge used, all sources. */
+export function ResultCards({ result, events }: { result: ResearchResult; events: ProgressEvent[] }) {
+  const notePaths = usePriorKnowledgePaths(events);
+  const sources = result.curator_output?.sources ?? [];
   return (
-    <article className="result-panel">
-      <h2>
-        <span className="lane-glyph lane-web" aria-hidden="true" />
-        Web Report
-      </h2>
-      <p>{result.question}</p>
-      <StatusLine result={result} />
-      <ProcessView groupedEvents={groupedEvents} newestSeq={newestSeq} />
-      {result.curator_output && (
-        <>
-          <h3>Summary</h3>
-          <p>{result.curator_output.summary}</p>
-          <h3>Findings</h3>
-          <ul>{result.curator_output.findings.map((finding) => <li key={finding.finding_id}>{finding.text}</li>)}</ul>
-          <h3>Sources</h3>
-          <ul>{result.curator_output.sources.map((source) => <li key={source.source_id}>{source.title} - {source.url}</li>)}</ul>
-        </>
+    <div className="result-cards">
+      <article className="card report-card">
+        <h2>
+          <span className="lane-glyph lane-web" aria-hidden="true" />
+          Web Report
+        </h2>
+        <p className="report-question">{result.question}</p>
+        <StatusLine result={result} />
+        {result.curator_output && (
+          <>
+            <h3>Summary</h3>
+            <p>{result.curator_output.summary}</p>
+            <h3>Findings</h3>
+            <ul>
+              {result.curator_output.findings.map((finding) => (
+                <li key={finding.finding_id}>{finding.text}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        {result.report_path && <code>{result.report_path}</code>}
+        {result.status === "completed" && result.report_path && (
+          <DepositPanel key={result.task_id} taskId={result.task_id} />
+        )}
+      </article>
+      {notePaths.length > 0 && (
+        <article className="card notes-card">
+          <h2>
+            <span className="lane-glyph lane-local" aria-hidden="true" />
+            From Your Notes
+          </h2>
+          <p className="card-note">These local notes were injected into the planner before the web run.</p>
+          <ul>
+            {notePaths.map((path) => (
+              <li key={path}>
+                <code>{path}</code>
+              </li>
+            ))}
+          </ul>
+        </article>
       )}
-      {result.report_path && <code>{result.report_path}</code>}
-      {result.status === "completed" && result.report_path && <DepositPanel key={result.task_id} taskId={result.task_id} />}
-    </article>
+      {sources.length > 0 && (
+        <article className="card sources-card">
+          <h2>Sources</h2>
+          <ul>
+            {sources.map((source) => (
+              <li key={source.source_id}>
+                <a href={source.url} target="_blank" rel="noopener noreferrer">
+                  {source.title}
+                </a>
+                <code>{source.url}</code>
+              </li>
+            ))}
+          </ul>
+        </article>
+      )}
+    </div>
+  );
+}
+
+export function WebResultView({ result, events }: { result: ResearchResult; events: ProgressEvent[] }) {
+  return (
+    <div className="result-stack">
+      <TraceCard events={events} phase={null} running={false} />
+      <ResultCards result={result} events={events} />
+    </div>
   );
 }
 

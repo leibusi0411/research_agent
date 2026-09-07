@@ -45,6 +45,12 @@ class _TestWebRuntime:
             "event_type": "started", "created_at": now,
             "message": "Planning started.", "details": {"items": []},
         })
+
+        # Hold the running state briefly so tests can observe the live SSE /
+        # lock window deterministically (fixes R-173 family: the runtime used
+        # to finish before the test's next HTTP request landed).
+        time.sleep(0.5)
+
         self._workspace.append_event(resolved_id, {
             "task_id": resolved_id, "mode": "web", "phase": "web_planning",
             "event_type": "completed", "created_at": now,
@@ -345,3 +351,46 @@ def test_sse_fallback_streams_events_from_file(tmp_path):
     assert events_path.exists()
     events_text = events_path.read_text(encoding="utf-8")
     assert "web_planning" in events_text
+
+
+def test_start_web_without_factory_uses_default_runtime_with_bus(tmp_path, monkeypatch):
+    """Regression: POST /api/research/web without web_runtime_factory must not 500.
+
+    The SSE refactor (5efdc74) referenced the create_app-local ``bus`` from the
+    module-level ``_default_web_runtime``, raising NameError on every real web
+    task started through the API. The default runtime must receive the app's Bus.
+    """
+    from research_agent.api import app as app_module
+    from research_agent.core.bus import Bus
+
+    config_path = tmp_path / "config.toml"
+    workspace = tmp_path / "runtime"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    service = CoreService(default_workspace=workspace, config_path=config_path)
+    service.init_config(
+        InitConfigRequest(
+            default_workspace=workspace,
+            knowledge_base_path=vault,
+            chat_base_url="https://models.example/v1",
+            chat_api_key="chat-key",
+            chat_model="chat-model",
+            embedding_base_url="https://embeddings.example/v1",
+            embedding_api_key="embedding-key",
+            embedding_model="embedding-model",
+            search_api_key="search-key",
+        )
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_create_provider_runtime(_config_path, workspace_root, **kwargs):
+        captured["bus"] = kwargs.get("bus")
+        return _TestWebRuntime(workspace_path=str(workspace_root))
+
+    monkeypatch.setattr(app_module, "create_provider_runtime", fake_create_provider_runtime)
+    client = TestClient(create_app(config_path=config_path))  # no web_runtime_factory
+
+    response = client.post("/api/research/web", json={"question": "web question"})
+    assert response.status_code == 202
+    assert isinstance(captured["bus"], Bus)

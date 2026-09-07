@@ -82,7 +82,7 @@ def create_app(
         return _error_response(exc)
 
     _register_setup_routes(app, resolved_config_path)
-    _register_research_routes(app, get_service, executor, web_runtime_factory)
+    _register_research_routes(app, get_service, executor, web_runtime_factory, bus)
     _register_task_routes(app, get_service)
     _register_kb_routes(app, get_service, resolved_config_path, embedding_client_factory)
 
@@ -125,6 +125,7 @@ def _register_research_routes(
     get_service: Callable[[], CoreService],
     executor: ThreadPoolExecutor,
     web_runtime_factory: WebRuntimeFactory | None,
+    bus: Bus,
 ) -> None:
     """Register /api/research/* routes."""
 
@@ -148,7 +149,7 @@ def _register_research_routes(
         task_id = generate_task_id()
         question = _question(payload)
         if runtime is None:
-            runtime = _default_web_runtime(current_service)
+            runtime = _default_web_runtime(current_service, bus)
         _active_runtimes[task_id] = runtime
         _create_running_task(current_service, task_id=task_id, mode="web", question=question)
         _submit_background_task(
@@ -415,7 +416,7 @@ def _is_terminal_result(result_path: Path) -> bool:
         return False
 
 
-def _default_web_runtime(service: CoreService) -> ProviderBackedWebResearchRuntime:
+def _default_web_runtime(service: CoreService, bus: Bus) -> ProviderBackedWebResearchRuntime:
     """Create a provider-backed runtime using the shared factory (fixes R-20, R-44).
 
     The ``on_event`` callback is intentionally omitted here because the API

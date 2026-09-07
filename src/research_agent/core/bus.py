@@ -30,6 +30,9 @@ class Bus:
         self._wildcard: list[asyncio.Queue[dict[str, Any]]] = []
         self._closed = False
         self._queue_size = queue_size
+        # The ASGI event loop, captured on the first loop-side attach/subscribe.
+        # ``publish_nowait`` runs on worker threads and must hop to this loop.
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     # ------------------------------------------------------------------
     # publish
@@ -67,18 +70,51 @@ class Bus:
         /,
         **properties: Any,
     ) -> None:
-        """Fire-and-forget publish — schedules :meth:`publish` on the running loop.
+        """Fire-and-forget publish — schedules :meth:`publish` on the app loop.
 
-        Safe to call from a synchronous thread (e.g. ThreadPoolExecutor).
+        Safe to call from a synchronous thread (e.g. ThreadPoolExecutor):
+        the call hops to the loop captured by :meth:`attach`/:meth:`subscribe`.
+        Without any subscriber yet (no loop captured, no loop on this thread)
+        the event is only persisted by the caller, never streamed — drop it.
         """
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return  # no event loop (e.g. CLI tests)
+        loop = self._loop
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                logger.debug("publish_nowait dropped (no loop): event_type=%s", event_type)
+                return
 
-        loop.call_soon_threadsafe(
-            lambda: asyncio.ensure_future(self.publish(event_type, **properties))
-        )
+        try:
+            loop.call_soon_threadsafe(
+                lambda: asyncio.ensure_future(self.publish(event_type, **properties))
+            )
+        except RuntimeError:
+            # Loop closed mid-shutdown (uvicorn reload / test teardown tail).
+            logger.debug("publish_nowait dropped (loop closed): event_type=%s", event_type)
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def attach(self, event_type: str) -> asyncio.Queue[dict[str, Any]]:
+        """Register and return a subscriber queue. Must be called on the loop thread.
+
+        Captures the running loop so worker-thread publishers can hop over.
+        Callers that replay persisted events should attach *before* replaying
+        so nothing published during the replay is lost.
+        """
+        self._loop = asyncio.get_running_loop()
+        q: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=self._queue_size)
+        self._subscribers.setdefault(event_type, []).append(q)
+        logger.debug("attach event_type=%s", event_type)
+        return q
+
+    def detach(self, event_type: str, q: asyncio.Queue[dict[str, Any]]) -> None:
+        """Remove a queue previously returned by :meth:`attach`."""
+        with contextlib.suppress(ValueError):
+            self._subscribers.get(event_type, []).remove(q)
+        logger.debug("detach event_type=%s", event_type)
 
     # ------------------------------------------------------------------
     # subscribe
@@ -86,10 +122,7 @@ class Bus:
 
     async def subscribe(self, event_type: str) -> AsyncGenerator[dict[str, Any], None]:
         """Async-generator yielding events of *event_type* as they arrive."""
-        q: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=self._queue_size)
-        subs = self._subscribers.setdefault(event_type, [])
-        subs.append(q)
-        logger.debug("subscribe event_type=%s", event_type)
+        q = self.attach(event_type)
         try:
             while not self._closed:
                 try:
@@ -98,12 +131,11 @@ class Bus:
                 except TimeoutError:
                     continue
         finally:
-            with contextlib.suppress(ValueError):
-                subs.remove(q)
-            logger.debug("unsubscribe event_type=%s", event_type)
+            self.detach(event_type, q)
 
     async def subscribe_all(self) -> AsyncGenerator[dict[str, Any], None]:
         """Async-generator yielding every published event."""
+        self._loop = asyncio.get_running_loop()
         q: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=self._queue_size)
         self._wildcard.append(q)
         logger.debug("subscribe * (wildcard)")

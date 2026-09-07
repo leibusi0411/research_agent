@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Callable
@@ -258,31 +259,42 @@ class StateGraphRunner:
         events_path = self.workspace.task_dir(self._task_id) / "events.jsonl"
         last_seq = -1
 
-        # 1) Replay persisted events (catch-up).
-        if events_path.exists():
-            with open(events_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        evt = json.loads(line)
-                    except Exception:
-                        logger.warning("Failed to parse event line in %s: %s", events_path, line[:100])
-                        continue
-                    yield {"data": json.dumps(evt, ensure_ascii=False)}
-                    last_seq = max(last_seq, evt.get("seq", -1))
+        # Attach before replaying: events published by the worker thread while
+        # we replay land in the queue and are deduped by seq below.
+        queue = bus.attach(bus_channel)
+        try:
+            # 1) Replay persisted events (catch-up).
+            if events_path.exists():
+                with open(events_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            evt = json.loads(line)
+                        except Exception:
+                            logger.warning("Failed to parse event line in %s: %s", events_path, line[:100])
+                            continue
+                        yield {"data": json.dumps(evt, ensure_ascii=False)}
+                        last_seq = max(last_seq, evt.get("seq", -1))
 
-        # 2) Live phase — subscribe to the bus, filtering by seq to skip
-        #    events already replayed.
-        async for payload in bus.subscribe(bus_channel):
-            try:
-                evt = json.loads(payload["data"])
-            except Exception:
-                continue
-            if evt.get("seq", -1) <= last_seq:
-                continue
-            yield payload
+            # 2) Live phase — drain the bus queue, skipping events already replayed.
+            while not bus.closed:
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=1.0)
+                except TimeoutError:
+                    continue
+                try:
+                    evt = json.loads(payload["data"])
+                except Exception:
+                    continue
+                seq = evt.get("seq", -1)
+                if seq <= last_seq:
+                    continue
+                last_seq = max(last_seq, seq)
+                yield payload
+        finally:
+            bus.detach(bus_channel, queue)
 
     # ── graph execution ───────────────────────────────────────────────
 
