@@ -6,6 +6,8 @@ Research progress streaming is phase-based rather than based on global progress 
 
 Local RAG and Web Research are separate workflows, so their phases are separate in practice. Local RAG uses `local_rag`. Web Research uses `web_planning`, `web_execution`, `web_supervision`, `web_revision`, and `web_curation`. `web_planning` is the first Planner run that creates the initial subtask plan, while `web_revision` is a later Planner run that appends new pending subtasks based on Supervisor-maintained research gaps.
 
+> **演进注记（2026-09-07，随 ADR-0046）**：Web Research 管道新增 `web_local_context` 阶段，位于 `web_planning` 之前——本地知识库检索（Prior Knowledge 注入）从 `web_planning` 的一条 progress 事件升级为一等阶段（`started` / `progress`（携带 source items）/ `completed`）。仅当配置了 local retriever 时才发射；未配置或索引不可用时该阶段不产生事件。历史任务的笔记事件仍在 `web_planning` 阶段，前端两个来源都认。
+
 V1 progress records use this shape:
 
 ```json

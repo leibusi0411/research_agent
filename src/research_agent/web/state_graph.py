@@ -230,7 +230,9 @@ class StateGraphRunner:
         # ADR-0046: inject Prior Knowledge (local KB chunks) into the initial
         # state so the Planner can aim web research at genuine gaps. Retrieval
         # failure must never break Web Research — degrade to no injection.
+        # This stage is a first-class pipeline phase (web_local_context).
         if self.local_retriever is not None:
+            self._emit(task_id, "web_local_context", "started", "Checking your notes before planning…")
             try:
                 chunks = self.local_retriever(question) or []
             except Exception:
@@ -240,12 +242,16 @@ class StateGraphRunner:
             if chunks:
                 self._emit(
                     task_id,
-                    "web_planning",
+                    "web_local_context",
                     "progress",
                     f"Found {len(chunks)} relevant local notes.",
                     items=[{"kind": "source", "path": chunk.source_path, "title": chunk.source_path} for chunk in chunks],
                     event_subtype="source",
                 )
+                completed_message = f"Injected {len(chunks)} local notes into the planner."
+            else:
+                completed_message = "No relevant local notes — continuing with web only."
+            self._emit(task_id, "web_local_context", "completed", completed_message)
 
         try:
             return self._run_graph(state, task_id, question, created_at)

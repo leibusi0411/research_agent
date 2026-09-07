@@ -14,8 +14,9 @@ function useGroupedEvents(events: ProgressEvent[]) {
   return { groupedEvents, newestSeq };
 }
 
-/** Live counters derived from the event stream: searches / sources / findings. */
+/** Live counters derived from the event stream: notes / searches / sources / findings. */
 function traceStats(events: ProgressEvent[]) {
+  let notes = 0;
   let searches = 0;
   let sources = 0;
   let findings = 0;
@@ -24,19 +25,21 @@ function traceStats(events: ProgressEvent[]) {
       if (!item || typeof item !== "object") continue;
       if (item.kind === "tool_call") searches += 1;
       else if (item.kind === "source" && item.url) sources += 1;
+      else if (item.kind === "source" && item.path) notes += 1;
       else if (item.kind === "finding") findings += 1;
     }
   }
-  return { searches, sources, findings };
+  return { notes, searches, sources, findings };
 }
 
-/** Prior-knowledge note paths injected before planning (ADR-0046), deduped. */
+/** Prior-knowledge note paths injected before planning (ADR-0046), deduped.
+    Reads web_local_context; web_planning kept for pre-phase-split history. */
 function usePriorKnowledgePaths(events: ProgressEvent[]): string[] {
   return useMemo(() => {
     const seen = new Set<string>();
     const paths: string[] = [];
     for (const event of events) {
-      if (event.phase !== "web_planning") continue;
+      if (event.phase !== "web_local_context" && event.phase !== "web_planning") continue;
       for (const item of event.details?.items ?? []) {
         if (!item || typeof item !== "object") continue;
         if (item.kind === "source" && item.path) {
@@ -72,7 +75,7 @@ export function TraceCard({
         <h2>Research Trace</h2>
         {running && <ConnectionBadge status="connected" />}
         <span className="trace-stats">
-          {plural(stats.searches, "search")} · {plural(stats.sources, "source")} · {plural(stats.findings, "finding")}
+          {plural(stats.notes, "note")} · {plural(stats.searches, "search")} · {plural(stats.sources, "source")} · {plural(stats.findings, "finding")}
         </span>
       </div>
       {phase && <PhaseIndicator currentPhase={phase} mode="web" running={running} />}

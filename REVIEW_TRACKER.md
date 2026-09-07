@@ -314,7 +314,8 @@
 | R-202 | 刷新/撞 busy 后页面"忘记"正在运行的任务，用户误以为无响应重复提交 | ✅ 页面加载时查 `/api/tasks/active` 自动重连 SSE（回填问题与轨迹）；409 busy 时自动接管运行中任务；finishTask 补齐全量事件 |
 | R-203 | `llm_call_failed` 未注册进 `VALID_ERROR_CODES`，`ResearchError` 构造时抛 ValueError，真实 provider 错误被掩盖成 "unknown error code"（用户任务 task_20260907_132359 因此 failed；CLIP 任务首轮子任务全灭同源） | ✅ 注册错误码 + role_invocation 回归测试（真实错误信息透出） |
 | R-204 | **SSE 启动窗口 500**：provider runtime 在 `run()` 内才创建 runner 并绑定 task_id，浏览器在 POST 返回后毫秒内订阅事件 → `runner.events()` 抛 RuntimeError → EventSource 永久关闭，页面无进度（日志实证两次）。这是"页面没反馈"在 bus 修复后仍存在的另一半原因 | ✅ 路由检查 `runner.task_id == task_id`，未就绪回退文件轮询 SSE；StateGraphRunner 加 `task_id` 只读属性；补回归测试 |
-| R-205 | 模型在 function-calling 下返回语法损坏的 JSON（`_parse_llm_json` 三道防线全败），executor 工具规划直接失败；无重试/修复机制，反复触发会致命 | ⚠️ 记录在案：归入阶段 9"LLM 调用重试机制"，届时加 parse-failure 重试与原始输出落盘诊断 |
+| R-205 | 模型在 function-calling 下返回语法损坏的 JSON（`_parse_llm_json` 三道防线全败），executor 工具规划直接失败；无重试/修复机制，反复触发会致命 | ⚠️ 记录在案：归入阶段 9"LLM 调用重试机制"，届时加 parse-failure 重试与原始输出落盘诊断。**补充观察（2026-09-07）**：真实 e2e 出现整轮 3/6 失败、不改代码重跑 6/6 通过——正是本问题的间歇性发作，真实链路测试在 R-205 落地前会有固有抖动 |
+| R-206 | 事件设计未反映"先本地后网络"的管道结构：Prior Knowledge 检索只是 `web_planning` 里的一条 progress 事件 | ✅ 升级为一等阶段 `web_local_context`（started/progress/completed）；阶段轨、trace 统计（notes 计数）、From Your Notes 卡同步；ADR-0023 加演进注记 |
 
 **测试策略约定更新（2026-09-07，用户指令）**：纯本地逻辑的离线单测保留（配置/存储/ID 等），但涉及生产装配链路（API 路由、SSE、运行时接线）的功能必须在提交前跑真实链路 e2e（`pytest -m e2e`）；fake runtime 注入不再作为这类路径的充分验证。ADR-0042 适用范围相应收窄，待下次文档轮次显式演进。
 

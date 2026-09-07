@@ -69,7 +69,10 @@ function webResult(status) {
 }
 
 const webEvents = [
-  { task_id: webTaskId, mode: "web", phase: "web_planning", event_type: "progress", created_at: "now", message: "Prior knowledge: 2 local chunks injected into the planner.", details: { items: [{ kind: "source", path: "D:/vault/docs/adr/0046-prior-knowledge.md", title: "ADR-0046" }] } },
+  { task_id: webTaskId, mode: "web", phase: "web_local_context", event_type: "started", created_at: "now", message: "Checking your notes before planning…", details: { items: [] } },
+  { task_id: webTaskId, mode: "web", phase: "web_local_context", event_type: "progress", event_subtype: "source", created_at: "now", message: "Found 2 relevant local notes.", details: { items: [{ kind: "source", path: "D:/vault/docs/adr/0046-prior-knowledge.md", title: "ADR-0046" }, { kind: "source", path: "D:/vault/notes/design-skills.md", title: "design-skills" }] } },
+  { task_id: webTaskId, mode: "web", phase: "web_local_context", event_type: "completed", created_at: "now", message: "Injected 2 local notes into the planner.", details: { items: [] } },
+  { task_id: webTaskId, mode: "web", phase: "web_planning", event_type: "started", created_at: "now", message: "Planning web research.", details: { items: [] } },
   { task_id: webTaskId, mode: "web", phase: "web_planning", event_type: "completed", created_at: "now", message: "Initial plan created: 3 subtasks.", details: { items: [] } },
   { task_id: webTaskId, mode: "web", phase: "web_execution", event_type: "progress", created_at: "now", message: "Subtask st_1 finished.", details: { items: [{ kind: "tool_call", name: "web_search", input: "agent skill design guidance" }, { kind: "source", url: "https://example.com/skills/frontend-design", title: "Frontend Design skill" }, { kind: "finding", text: "Design skills frame the model as a design lead with a distinctive point of view.", subtask_id: "st_1" }] } },
   { task_id: webTaskId, mode: "web", phase: "web_supervision", event_type: "completed", created_at: "now", message: "Supervisor: coverage sufficient, no revision needed.", details: { items: [] } },

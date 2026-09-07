@@ -200,7 +200,7 @@ A minimal display-only item inside a Research Progress Stream record's `details.
 _Avoid_: tool result, evidence record, internal state
 
 **Research Phase**:
-A product-level phase value used as the primary discriminator in Research Progress Stream records. Local RAG uses `local_rag`. Web Research uses `web_planning`, `web_execution`, `web_supervision`, `web_revision`, and `web_curation`. Phases describe user-visible progress without exposing LangGraph internals. `web_planning` is the first Planner run that creates the initial subtask plan, while `web_revision` is a later Planner run that appends new pending subtasks based on Supervisor-maintained research gaps.
+A product-level phase value used as the primary discriminator in Research Progress Stream records. Local RAG uses `local_rag`. Web Research uses `web_local_context`（ADR-0046 Prior Knowledge 检索，位于 planning 之前）, `web_planning`, `web_execution`, `web_supervision`, `web_revision`, and `web_curation`. Phases describe user-visible progress without exposing LangGraph internals. `web_planning` is the first Planner run that creates the initial subtask plan, while `web_revision` is a later Planner run that appends new pending subtasks based on Supervisor-maintained research gaps.
 _Avoid_: graph node, checkpoint state
 
 **Debug Trace**:

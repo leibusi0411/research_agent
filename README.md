@@ -523,7 +523,7 @@ cd web && npm run test:e2e
   "seq": 42,
   "task_id": "task_xxx",
   "mode": "web",
-  "phase": "web_planning | web_execution | web_supervision | web_revision | web_curation",
+  "phase": "web_local_context | web_planning | web_execution | web_supervision | web_revision | web_curation",
   "event_type": "started | progress | completed | failed",
   "message": "Human-readable description",
   "details": { "items": [] }

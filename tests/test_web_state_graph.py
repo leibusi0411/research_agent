@@ -804,6 +804,14 @@ def test_state_graph_runner_injects_prior_knowledge_into_planner(tmp_path):
     assert "LangGraph uses a state graph." in planner_prompt
     assert "notes/langgraph.md" in planner_prompt
 
+    # The local-knowledge stage is a first-class phase in the event stream.
+    events_path = workspace / "tasks" / result["task_id"] / "events.jsonl"
+    events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    local_events = [e for e in events if e["phase"] == "web_local_context"]
+    assert [e["event_type"] for e in local_events] == ["started", "progress", "completed"]
+    assert local_events[1]["event_subtype"] == "source"
+    assert local_events[1]["details"]["items"][0]["path"] == "notes/langgraph.md"
+
 
 def test_state_graph_runner_survives_local_retriever_failure(tmp_path):
     """A failing local retriever must not break Web Research (workflow independence)."""

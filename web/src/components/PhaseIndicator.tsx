@@ -1,7 +1,8 @@
-const WEB_PHASES = ["web_planning", "web_execution", "web_supervision", "web_revision", "web_curation"];
+const WEB_PHASES = ["web_local_context", "web_planning", "web_execution", "web_supervision", "web_revision", "web_curation"];
 const LOCAL_PHASES = ["local_rag"];
 
-const phaseLabel = (phase: string) => phase.replace("web_", "").replace("local_", "");
+// Strip the leading mode prefix and humanise (web_local_context → local context).
+const phaseLabel = (phase: string) => phase.replace(/^(web|local)_/, "").replace(/_/g, " ");
 
 export function PhaseIndicator({
   currentPhase,

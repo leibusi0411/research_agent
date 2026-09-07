@@ -195,4 +195,4 @@ cd web && npm run test:e2e             # Playwright E2E（自动起 5174 端口 
 | GET | `/api/kb/status` | 知识库索引状态 |
 | POST | `/api/kb/rebuild` | 重建索引 |
 
-SSE 事件为 phase-based（`web_planning` / `web_execution` / `web_supervision` / `web_revision` / `web_curation` / `local_rag`），`event_type` 为 `started | progress | completed | failed | task_result`；经 `_emit` 的事件带单调递增 `seq` 用于去重（local 与 API 层 originated 事件无 seq）；持久化层是 `events.jsonl`，传输层是 EventStream（asyncio Bus，core/bus.py，每订阅者队列容量 1024）。已完成/历史任务的 events 端点直接返回 JSON 数组（非 SSE 流）。
+SSE 事件为 phase-based（`web_local_context` / `web_planning` / `web_execution` / `web_supervision` / `web_revision` / `web_curation` / `local_rag`），`event_type` 为 `started | progress | completed | failed | task_result`；经 `_emit` 的事件带单调递增 `seq` 用于去重（local 与 API 层 originated 事件无 seq）；持久化层是 `events.jsonl`，传输层是 EventStream（asyncio Bus，core/bus.py，每订阅者队列容量 1024）。已完成/历史任务的 events 端点直接返回 JSON 数组（非 SSE 流）。
