@@ -32,6 +32,15 @@ class ResearchSubtask:
 
 
 @dataclass(frozen=True)
+class PriorKnowledgeChunk:
+    """A Knowledge Base chunk injected into the Planner as Prior Knowledge (ADR-0046)."""
+
+    text: str
+    source_path: str
+    heading_path: list[str]
+
+
+@dataclass(frozen=True)
 class WebSource:
     source_id: str
     title: str
@@ -163,6 +172,7 @@ class WebResearchStateDict(TypedDict, total=False):
 
     original_question: str
     research_title: str | None
+    prior_knowledge: list[PriorKnowledgeChunk]
     subtasks: Annotated[list[ResearchSubtask], _merge_subtasks]
     executor_outputs: Annotated[list[ExecutorOutput], operator.add]
     findings: Annotated[list[Finding], operator.add]
@@ -188,11 +198,16 @@ def check_required_field(payload: dict[str, Any], field: str, expected_type: typ
         raise ValueError(f"{field} must be non-empty")
 
 
-def create_initial_state(original_question: str) -> WebResearchStateDict:
+def create_initial_state(
+    original_question: str,
+    *,
+    prior_knowledge: list[PriorKnowledgeChunk] | None = None,
+) -> WebResearchStateDict:
     """Return a fresh ``WebResearchStateDict`` with all fields initialized."""
     return {
         "original_question": original_question,
         "research_title": None,
+        "prior_knowledge": list(prior_knowledge or []),
         "subtasks": [],
         "executor_outputs": [],
         "findings": [],

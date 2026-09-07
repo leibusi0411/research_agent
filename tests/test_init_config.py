@@ -44,7 +44,7 @@ def test_core_service_init_writes_user_config_and_workspace(tmp_path):
     data = tomllib.loads(config_path.read_text(encoding="utf-8"))
     assert data["workspace"]["default_workspace"] == str(workspace)
     assert data["workspace"]["knowledge_base_path"] == str(vault)
-    assert data["research"] == {"max_retrieval_rounds": 3, "max_concurrent_subtasks": 3}
+    assert data["research"] == {"max_retrieval_rounds": 3, "max_concurrent_subtasks": 3, "inject_local_context": True}
     assert data["chat_model"] == {
         "provider": "openai_compatible",
         "base_url": "https://models.example/v1",
@@ -239,3 +239,50 @@ def test_cli_init_invalid_config_prints_research_error(tmp_path):
     assert result.returncode == 1
     assert "[config_invalid] Knowledge Base path must be an existing directory." in result.stdout
     assert not config_path.exists()
+
+
+def test_research_config_inject_local_context_defaults_true(tmp_path):
+    config_path = tmp_path / "config.toml"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    service = CoreService(default_workspace=tmp_path / "runtime", config_path=config_path)
+    service.init_config(valid_init_request(tmp_path / "runtime", vault))
+
+    loaded = load_user_config(config_path)
+
+    assert loaded.research.inject_local_context is True
+
+
+def test_research_config_inject_local_context_parses_false(tmp_path):
+    config_path = tmp_path / "config.toml"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    service = CoreService(default_workspace=tmp_path / "runtime", config_path=config_path)
+    service.init_config(valid_init_request(tmp_path / "runtime", vault))
+    content = config_path.read_text(encoding="utf-8").replace(
+        "inject_local_context = true",
+        "inject_local_context = false",
+    )
+    config_path.write_text(content, encoding="utf-8")
+
+    loaded = load_user_config(config_path)
+
+    assert loaded.research.inject_local_context is False
+
+
+def test_research_config_inject_local_context_rejects_non_bool(tmp_path):
+    config_path = tmp_path / "config.toml"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    service = CoreService(default_workspace=tmp_path / "runtime", config_path=config_path)
+    service.init_config(valid_init_request(tmp_path / "runtime", vault))
+    content = config_path.read_text(encoding="utf-8").replace(
+        "inject_local_context = true",
+        'inject_local_context = "false"',
+    )
+    config_path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ResearchError) as excinfo:
+        load_user_config(config_path)
+
+    assert excinfo.value.code == "config_invalid"

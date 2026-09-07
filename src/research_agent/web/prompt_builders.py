@@ -12,7 +12,7 @@ from research_agent.web.context import (
     build_planner_context,
     build_supervisor_context,
 )
-from research_agent.web.schemas import WebResearchStateDict
+from research_agent.web.schemas import PriorKnowledgeChunk, WebResearchStateDict
 
 
 def build_planner_prompt(state: WebResearchStateDict, *, revision: bool = False) -> str:
@@ -58,13 +58,33 @@ def build_curator_prompt(state: WebResearchStateDict) -> str:
 
 
 def _build_initial_planner_prompt(context: PlannerInput) -> str:
+    prior_knowledge_text = _render_prior_knowledge(context.prior_knowledge)
     return (
         "You are the Planner for a web research task.\n"
         "Your job is to create an initial research plan.\n\n"
         f"Research question: {context.original_question}\n\n"
+        f"{prior_knowledge_text}"
         "Create 3-5 subtask question drafts that together will answer the research question.\n"
         "Each subtask should be a focused, searchable question.\n"
     )
+
+
+def _render_prior_knowledge(prior_knowledge: list[PriorKnowledgeChunk], *, max_chunks: int = 5, max_chars_per_chunk: int = 800) -> str:
+    """Render the Prior Knowledge section for the initial Planner prompt.
+
+    Local knowledge that already covers the question lets the Planner skip
+    redundant subtasks and aim web research at genuine gaps (ADR-0046).
+    """
+    if not prior_knowledge:
+        return ""
+    lines = [
+        "Prior knowledge from the local knowledge base (do NOT plan web research for what this already covers; aim subtasks at what is missing):\n",
+    ]
+    for index, chunk in enumerate(prior_knowledge[:max_chunks], start=1):
+        heading = " > ".join(chunk.heading_path) or "(untitled)"
+        text = chunk.text[:max_chars_per_chunk]
+        lines.append(f"[{index}] Source: {chunk.source_path} — {heading}\n{text}\n")
+    return "\n".join(lines) + "\n"
 
 
 def _build_revision_planner_prompt(context: PlannerInput) -> str:

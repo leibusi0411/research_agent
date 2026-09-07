@@ -2,6 +2,8 @@
 
 V1 keeps Local RAG and Web Research as independent task modes with separate runtime paths. A user may run only Local RAG, only Web Research, or start both for the same question as separate tasks. Local RAG and Web Research may run concurrently because Web Research does not read Local RAG indexes or Local Results, and Local RAG does not call Web Research tools.
 
+> 演进注记（2026-09-06）：ADR-0046 引入了一个例外——Web Research 图启动前会对 `indexes/local/` 做一次一次性、只读的 Prior Knowledge 检索注入 Planner。它只读派生索引、不调用 Local RAG 流程，因此本 ADR 的并发结论不受影响。
+
 Concurrency is limited by task family, not globally:
 
 - Only one Local RAG task runs at a time.

@@ -12,6 +12,7 @@ from research_agent.core.errors import ResearchError
 DEFAULT_RESEARCH = {
     "max_retrieval_rounds": 3,
     "max_concurrent_subtasks": 3,
+    "inject_local_context": True,
 }
 DEFAULT_WEB_TOOLS = {
     "request_timeout_seconds": 45,
@@ -48,6 +49,7 @@ class SearchConfig:
 class ResearchConfig:
     max_retrieval_rounds: int
     max_concurrent_subtasks: int
+    inject_local_context: bool
 
 
 @dataclass(frozen=True)
@@ -179,6 +181,7 @@ def _parse_user_config(data: dict) -> UserConfig:
             research=ResearchConfig(
                 max_retrieval_rounds=int(research["max_retrieval_rounds"]),
                 max_concurrent_subtasks=int(research["max_concurrent_subtasks"]),
+                inject_local_context=_parse_bool(research["inject_local_context"], "research.inject_local_context"),
             ),
             chat_model=ModelConfig(
                 provider=chat_model.get("provider", "openai_compatible"),
@@ -276,6 +279,7 @@ def _render_config_toml(
             "[research]",
             "max_retrieval_rounds = 3",
             "max_concurrent_subtasks = 3",
+            "inject_local_context = true",
             "",
             "[chat_model]",
             'provider = "openai_compatible"',
@@ -307,6 +311,16 @@ def _render_config_toml(
             "",
         ]
     )
+
+
+def _parse_bool(value: object, label: str) -> bool:
+    """Strict bool parse: TOML gives real booleans; a string like "false" is a user error."""
+    if not isinstance(value, bool):
+        raise ResearchError(
+            code="config_invalid",
+            message=f"{label} must be a boolean, got {value!r}",
+        )
+    return value
 
 
 def _safe_int(value: object, label: str) -> int:

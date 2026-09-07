@@ -7,8 +7,8 @@ This document collects complex capabilities discussed during v1 design but inten
 - Combined Local + Web research workflow.
   V1 keeps Local RAG and Web Research as separate task modes. This keeps implementation simple, but it also means Web Research cannot use the user's existing local knowledge to improve search strategy, and the user does not get one unified report that combines local knowledge with network research. A future version may add a true combined workflow where Local Results can inform Web Research, Web Research can compare against local knowledge, and the final output can explicitly reconcile both source sets.
 
-- Local-aware Planner or Curator.
-  V1 Planner and Curator do not receive Local Results. A future version may allow Planner to inspect relevant local knowledge before creating Web subtasks, or allow Curator to include clearly labeled Local Results alongside Web Findings in the final synthesis. This should preserve provenance so local source paths and web source URLs stay distinguishable.
+- Local-aware Curator.
+  Since ADR-0046, the Planner receives Prior Knowledge (a one-time local retrieval slice) before creating Web subtasks. The Curator still does not see local knowledge: a future version may allow Curator to include clearly labeled Local Results alongside Web Findings in the final synthesis. This should preserve provenance so local source paths and web source URLs stay distinguishable.
 
 - Parent task for `both`.
   V1 `research-agent both "question"` is only a CLI convenience that creates one Local task and one Web task. A future version may introduce a parent task that groups both children, tracks aggregate status, and presents a combined result view.

@@ -37,11 +37,11 @@ The independent flow that finds and presents relevant existing content from the 
 _Avoid_: local-first research, local search mode
 
 **Web Research Workflow**:
-The independent workflow that researches a question using network search, fetch, and extraction. It does not call Local RAG during execution.
+The independent workflow that researches a question using network search, fetch, and extraction. It does not call Local RAG during execution; its only Knowledge Base touchpoint is the one-time Prior Knowledge retrieval before the graph starts (ADR-0046).
 _Avoid_: online mode, web search mode
 
 **Research Workflow Boundary**:
-The task-level boundary that keeps Local RAG Research and Web Research as separate execution modes. A Local RAG task does not run Web Research, and a Web Research task does not receive Local Results or Knowledge Base context. Knowledge Deposit does not cross this boundary: it is an explicit post-hoc copy of a finished Web Report File into the Markdown Vault, never a channel into a running task.
+The task-level boundary that keeps Local RAG Research and Web Research as separate execution modes. A Local RAG task does not run Web Research, and a Web Research task does not receive Local Results at execution time; the single sanctioned exception is Prior Knowledge: a one-time, read-only hybrid retrieval over the Knowledge Base performed before the graph starts and injected into the Planner (ADR-0046). Knowledge Deposit does not cross this boundary either: it is an explicit post-hoc copy of a finished Web Report File into the Markdown Vault, never a channel into a running task.
 _Avoid_: research scope, permission prompt
 
 **Knowledge Base**:
@@ -165,7 +165,7 @@ The globally configured working directory used by Research Agent regardless of t
 _Avoid_: current directory, markdown vault
 
 **User Config**:
-The user-level TOML configuration file at `%APPDATA%/research_agent/config.toml`. It stores application settings such as the Default Workspace, Knowledge Base path, retrieval limits, `max_concurrent_subtasks`, chat and embedding model base URLs, model names, provider API keys, search provider, index backend, and Web Tool engineering boundaries.
+The user-level TOML configuration file at `%APPDATA%/research_agent/config.toml`. It stores application settings such as the Default Workspace, Knowledge Base path, retrieval limits, `max_concurrent_subtasks`, `inject_local_context` (Prior Knowledge toggle), chat and embedding model base URLs, model names, provider API keys, search provider, index backend, and Web Tool engineering boundaries.
 _Avoid_: project config, example config
 
 **Initialization**:
@@ -237,8 +237,12 @@ The initial Local RAG retrieval strategy that combines SQLite FTS5 full-text sea
 _Avoid_: semantic search, reranking
 
 **Planner**:
-The Web Research role that turns the original user question into web research goals, subquestions, source strategy, stopping criteria, and an expected report shape. It does not receive Local Results or Knowledge Base context, and it revises the plan only when requested by the Supervisor.
+The Web Research role that turns the original user question into web research goals, subquestions, source strategy, stopping criteria, and an expected report shape. For initial planning it also receives Prior Knowledge — a one-time, read-only retrieval slice from the Knowledge Base (ADR-0046) — so it can avoid planning web research for what local notes already cover; it never receives live Local Results mid-run, and it revises the plan only when requested by the Supervisor.
 _Avoid_: researcher, search agent
+
+**Prior Knowledge**:
+A small set of Knowledge Base Chunks (default top 5, text truncated) retrieved once with the research question before a Web Research graph starts and injected into the initial Research Task State as `prior_knowledge`. Only the Planner's initial planning context includes it. Injection is controlled by `research.inject_local_context` (default true), is skipped when no usable index exists, and degrades to FTS5-only without an embedding model. It never blocks or fails the Web Research task.
+_Avoid_: local context, memory injection
 
 **ResearchSubtask**:
 A runtime-normalized unit of Web Research work with `subtask_id`, `question`, and execution `status`. Planner proposes subtask questions, while runtime assigns stable `subtask_id` values such as `st_1` and initial `pending` status before writing subtasks into the Blackboard. Later status updates come from ResearchExecutor results, or the Supervisor may mark pending subtasks as `skipped` via `SupervisorOutput.skip_subtask_ids`. The `question` tells ResearchExecutor what to investigate; v1 does not keep a separate `goal` field because subtask completion is judged by ResearchExecutor and returned through `ExecutorOutput.status`.

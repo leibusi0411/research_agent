@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-06 | 测试：169 passed（Python，含 6 个 e2e）+ 20 passed（前端 Vitest）+ 1 passed（Playwright e2e）| 本轮三轮审查共 24 项问题处理完毕 ✅（R-149~R-173）| 新功能：Knowledge Deposit（ADR-0045）+ Web UI 沉淀按钮
+> 最后更新：2026-09-06 | 测试：182 passed（Python，含 6 个 e2e）+ 20 passed（前端 Vitest）+ 1 passed（Playwright e2e）| 最新一轮审查 10 项处理完毕 ✅（R-174~R-183）| 新功能：Knowledge Deposit（ADR-0045）+ Web UI 沉淀按钮 + Prior Knowledge 注入（ADR-0046）
 
 ---
 
@@ -47,7 +47,7 @@
 
 ### 待解决问题（共 0 项）
 
-✅ 三轮审查共 24 项（R-149~R-173），22 项修复、2 项明确接受或记录在案（R-165、R-173），均于 2026-09-06 处理完毕。
+✅ 四轮审查共 35 项（R-149~R-183），31 项修复、4 项明确接受或记录在案（R-165、R-173、R-182、R-183），均于 2026-09-06 处理完毕。
 
 ### 第二轮复审（2026-09-06，修复后终审）
 
@@ -93,6 +93,34 @@
 | R-171 | rebuild 失败吞掉错误详情 | ✅ 展示 `[code] message`，按钮转为 retry |
 | R-172 | `web/test-results/.last-run.json` 被 git 跟踪 | ✅ 加入 .gitignore（取消跟踪留待提交时 `git rm --cached`） |
 | R-173 | `test_api_second_same_family_start_returns_busy_without_fake_task` 全量运行时偶发失败（重跑全绿） | ⚠️ 记录在案：疑为并发时序敏感，与本改动无关，待观察 |
+
+### 第四轮审查（2026-09-06，Prior Knowledge 注入 / ADR-0046）
+
+本轮改动：Web Research 启动前一次性只读检索本地知识库，注入 Planner（`prior_knowledge` state 字段 + `RunnerConfig.local_retriever` 接缝 + `build_local_retriever` 装配 + `[research] inject_local_context` 开关）。显式演进 ADR-0017/0036。审查无 P0/P1/P2，10 项 P3 全部处理（8 修复、2 接受）。
+
+#### P3
+| 编号 | 描述 | 修复 |
+|------|------|------|
+| R-174 | `local_retriever` 契约外返回 None 会使 `list(None)` 崩溃 | ✅ `or []` 兜底 + 回归测试 |
+| R-175 | Prior Knowledge progress 事件缺 `event_subtype` | ✅ 补 `event_subtype="source"`（ADR-0023 词汇内） |
+| R-176 | `bool("false")` 静默得 True（用户误写字符串） | ✅ `_parse_bool` 严格校验，非 bool 报 `config_invalid` + 测试 |
+| R-177 | 每次启动 web 任务重复解析 config 三次 | ✅ `build_local_retriever` 改收已加载的 `UserConfig` |
+| R-178 | `RunnerConfig.local_retriever` 标注为 Any | ✅ `Callable[[str], list[PriorKnowledgeChunk]] \| None` |
+| R-179 | 测试缺口：prompt 截断上限（5 chunk/800 字符）、stale 索引路径 | ✅ +2 测试 |
+| R-180 | ADR-0046 措辞："有索引即多一条事件"与实际（非空才发）不符 | ✅ 修正 |
+| R-181 | 被演进的 ADR-0017/0036 无回链 | ✅ 两个 ADR 加演进注记 |
+| R-182 | `web_planning` progress 先于 `started` 事件 | ⚠️ 接受：ADR-0023 未禁止，CLI/前端均无顺序假设 |
+| R-183 | API `start_web` 请求路径同步扫 vault（kb.status） | ⚠️ 接受：与既有 `/api/kb/status` 同模式，个人 vault 规模可忽略 |
+
+### R-173 更新
+
+同文件另一锁时序测试 `test_api_reports_active_real_task_id_and_streams_running_events` 亦观察到偶发失败（5 次单跑 2 败 3 过）。两者同属"fake runtime 秒完成 vs 锁窗口"的既有竞态家族，与本日改动无关（改动不在其执行路径上），继续观察，若再犯则修测试基础设施（如让 fake runtime 可阻塞）。
+
+### 已验证（第四轮终审后）
+
+- `uv run pytest -m "not e2e"` — 176 passed（R-173 家族偶发项重跑即过）
+- 审查 subagent 全量含 e2e — 178 passed（当时计数；后续 +4 测试为 P3 修复新增）
+- `cd web && npx vitest run` — 20 passed（本轮未动前端）
 
 ### 已验证（终审后）
 
@@ -236,6 +264,16 @@
 | R-171 rebuild 失败展示错误详情 | ✅ 2026-09-06 |
 | R-172 `web/test-results/` 加入 .gitignore | ✅ 2026-09-06 |
 | R-173 记录：`test_api_second_same_family_start_returns_busy_without_fake_task` 全量运行偶发失败 | ⚠️ 2026-09-06 |
+| R-174 local_retriever 返回 None 的 `or []` 兜底 + 测试 | ✅ 2026-09-06 |
+| R-175 Prior Knowledge 事件补 `event_subtype="source"` | ✅ 2026-09-06 |
+| R-176 `inject_local_context` 严格 bool 解析（`_parse_bool`） | ✅ 2026-09-06 |
+| R-177 `build_local_retriever` 收 UserConfig 去重复解析 | ✅ 2026-09-06 |
+| R-178 `RunnerConfig.local_retriever` 补 Callable 类型注解 | ✅ 2026-09-06 |
+| R-179 补截断上限 + stale 索引路径测试 | ✅ 2026-09-06 |
+| R-180 ADR-0046 事件措辞修正 | ✅ 2026-09-06 |
+| R-181 ADR-0017/0036 加演进注记回链 | ✅ 2026-09-06 |
+| R-182 接受：web_planning progress 先于 started | ⚠️ 2026-09-06 |
+| R-183 接受：start_web 请求路径同步 vault 扫描 | ⚠️ 2026-09-06 |
 
 ---
 

@@ -254,6 +254,7 @@ uv run research-agent web "Best practices for RAG systems in production"
 ```
 
 Web Research 执行流程：
+0. **Prior Knowledge**（默认开启）：启动前先在本地知识库检索一次，Planner 据此避开本地已覆盖的内容（可用 `inject_local_context = false` 关闭）
 1. **Planner** 分析问题，制定调研计划（拆分为若干子任务）
 2. **Executor** 逐个执行子任务：规划工具调用 → 搜索/抓取 → 合成发现
 3. **Supervisor** 评估进度，决定继续/修订/完成

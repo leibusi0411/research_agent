@@ -745,3 +745,99 @@ def test_runner_config_encapsulates_all_params(tmp_path):
     assert runner.max_retrieval_rounds == 5
     assert runner.max_concurrent_subtasks == 2
     assert runner.executor is not None
+
+
+def _full_flow_completions() -> list[str]:
+    return [
+        _make_planner_response("LangGraph Research", ["What is LangGraph?", "How to use LangGraph?"]),
+        _make_tool_plan_response("What is LangGraph"),
+        _make_executor_response("st_1", "LangGraph is a state graph framework.", "https://example.com/1"),
+        _make_tool_plan_response("How to use LangGraph"),
+        _make_executor_response("st_2", "LangGraph example code.", "https://example.com/2"),
+        _make_supervisor_response("curate", "Enough evidence gathered.", saturation=True),
+        _make_curator_response("LangGraph Research", "LangGraph is a framework for building state graphs."),
+    ]
+
+
+def _ok_gateway() -> MagicMock:
+    mock_gateway = MagicMock()
+    mock_gateway.call.return_value = MagicMock(
+        status="ok",
+        data={"results": [{"title": "Test", "url": "https://example.com", "content": "Test content"}]},
+    )
+    return mock_gateway
+
+
+def test_state_graph_runner_injects_prior_knowledge_into_planner(tmp_path):
+    """RunnerConfig.local_retriever results reach the Planner prompt (ADR-0046)."""
+    from research_agent.web.schemas import PriorKnowledgeChunk
+
+    _service, _config_path, workspace = configured_service(tmp_path)
+    mock_chat = _SequencedChatClient(_full_flow_completions())
+
+    runner = StateGraphRunner(
+        config=RunnerConfig(
+            workspace=str(workspace),
+            chat_models=_make_chat_models(mock_chat),
+            tool_gateway=_ok_gateway(),
+            max_concurrent_subtasks=1,
+            local_retriever=lambda question: [
+                PriorKnowledgeChunk(
+                    text="LangGraph uses a state graph.",
+                    source_path="notes/langgraph.md",
+                    heading_path=["LangGraph"],
+                )
+            ],
+        ),
+    )
+
+    result = runner.run("What is LangGraph?")
+
+    assert result["status"] == "completed"
+    planner_prompt = mock_chat.prompts[0]
+    assert "LangGraph uses a state graph." in planner_prompt
+    assert "notes/langgraph.md" in planner_prompt
+
+
+def test_state_graph_runner_survives_local_retriever_failure(tmp_path):
+    """A failing local retriever must not break Web Research (workflow independence)."""
+    _service, _config_path, workspace = configured_service(tmp_path)
+    mock_chat = _SequencedChatClient(_full_flow_completions())
+
+    def broken_retriever(question: str) -> list:
+        raise OSError("index corrupted")
+
+    runner = StateGraphRunner(
+        config=RunnerConfig(
+            workspace=str(workspace),
+            chat_models=_make_chat_models(mock_chat),
+            tool_gateway=_ok_gateway(),
+            max_concurrent_subtasks=1,
+            local_retriever=broken_retriever,
+        ),
+    )
+
+    result = runner.run("What is LangGraph?")
+
+    assert result["status"] == "completed"
+    assert "Prior knowledge" not in mock_chat.prompts[0]
+
+
+def test_state_graph_runner_tolerates_retriever_returning_none(tmp_path):
+    """A retriever violating the list contract (returns None) degrades to no injection."""
+    _service, _config_path, workspace = configured_service(tmp_path)
+    mock_chat = _SequencedChatClient(_full_flow_completions())
+
+    runner = StateGraphRunner(
+        config=RunnerConfig(
+            workspace=str(workspace),
+            chat_models=_make_chat_models(mock_chat),
+            tool_gateway=_ok_gateway(),
+            max_concurrent_subtasks=1,
+            local_retriever=lambda question: None,
+        ),
+    )
+
+    result = runner.run("What is LangGraph?")
+
+    assert result["status"] == "completed"

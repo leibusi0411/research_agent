@@ -87,6 +87,9 @@ knowledge_base_path = "F:\\MyVault"
 max_retrieval_rounds = 3
 # Web Research 最大并发子任务数
 max_concurrent_subtasks = 3
+# Web Research 启动前注入本地知识库检索结果（Prior Knowledge）给 Planner，
+# 让调研瞄准本地未覆盖的缺口；设为 false 则回到完全独立的纯网络调研
+inject_local_context = true
 
 [chat_model]
 # 全局默认 chat 模型（所有角色回退到此配置）

@@ -63,7 +63,7 @@ research_agent/
 │       ├── provider_runtime.py   # Provider-backed 真实运行时
 │       ├── fake_runtime.py       # 确定性 Fake Runtime（离线测试用）
 │       └── report.py             # Markdown 报告生成
-├── tests/                        # pytest，17 个测试文件，169 个测试（6 个 e2e 需真实 API key）
+├── tests/                        # pytest，18 个测试文件，182 个测试（6 个 e2e 需真实 API key）
 ├── web/                          # React + Vite 前端
 │   ├── src/
 │   │   ├── App.tsx               # 主应用（Research / Tasks / KB / Setup 页面路由）
@@ -78,7 +78,7 @@ research_agent/
 │   ├── playwright.config.ts      # E2E 配置（自动起 5174 端口的 dev server）
 │   └── package.json
 ├── docs/
-│   ├── adr/                      # 45 个架构决策记录（0001~0045，顺序编号）
+│   ├── adr/                      # 46 个架构决策记录（0001~0046，顺序编号）
 │   └── agents/                   # agent 协作约定（issue tracker、triage labels、domain docs）
 ├── CONTEXT.md                    # 领域术语表（命名前必读）
 ├── TODO.md                       # v1 有意延期的功能清单
@@ -117,7 +117,7 @@ cd web && npm run dev:all
 ## 测试
 
 ```bash
-# Python：全部 169 个测试，默认离线且确定性（ADR-0042；6 个 e2e 需真实 API key，否则自动 skip）
+# Python：全部 182 个测试，默认离线且确定性（ADR-0042；6 个 e2e 需真实 API key，否则自动 skip）
 uv run pytest                          # 全部
 uv run pytest -x                       # 首次失败即停
 uv run pytest -k "state_graph"         # 按关键字筛选
@@ -145,7 +145,7 @@ cd web && npm run test:e2e             # Playwright E2E（自动起 5174 端口 
 
 - **中文优先**：Review 生成的文件（代码审查报告、ADR 审查等）一律用中文编写，中文翻译版作为主文件（不加 `-zh` 后缀），不保留英文原版。文档（README/USAGE）也是中文。
 - **命名遵守术语表**：`CONTEXT.md` 定义了领域语言（Local RAG、Web Research、Blackboard、Tool Gateway 等）。命名领域概念时使用其中的术语，避免使用被明确否决的同义词（每个词条下有 `_Avoid_` 列表）。
-- **ADR 冲突规则**：若改动与 `docs/adr/` 中已有决策冲突，必须显式提出冲突，而不是静默推翻决策。ADR 共 45 个，顺序编号。
+- **ADR 冲突规则**：若改动与 `docs/adr/` 中已有决策冲突，必须显式提出冲突，而不是静默推翻决策。ADR 共 46 个，顺序编号。
 - **类型注解**：方法签名使用显式类型参数，不用 `*args, **kwargs`；运行时抽象用 `WebResearchRuntime` Protocol 而非 `object`。
 - **简单优先**：用最少代码解决问题，不做未要求的抽象或功能；精准修改，不顺手重构相邻代码；自己改动产生的孤立 import/变量/函数必须清理。
 - **错误模型**：用户可见错误统一为 `ResearchError`（`code` + `message`），CLI 渲染为 `[code] message` 并以非零码退出。

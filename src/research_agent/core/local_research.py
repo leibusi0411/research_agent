@@ -52,7 +52,7 @@ def run_local_research(
         },
     )
 
-    local_results = _retrieve_hybrid(
+    local_results = retrieve_local_chunks(
         sqlite_path=workspace.local_index_dir / "fts.sqlite",
         chroma_path=workspace.local_index_dir.parent / "chroma",
         question=question,
@@ -162,7 +162,7 @@ def _search_fts5(
     return results
 
 
-def _retrieve_hybrid(
+def retrieve_local_chunks(
     *,
     sqlite_path: Path,
     chroma_path: Path,
@@ -172,8 +172,10 @@ def _retrieve_hybrid(
 ) -> list[dict[str, Any]]:
     """Hybrid retrieval: FTS5 keyword + Chroma vector search with RRF fusion.
 
-    Falls back gracefully to FTS5-only when no embedding_client is available
-    (e.g. in tests or when the embedding model isn't configured).
+    Public seam shared by Local RAG and the Web Research Prior Knowledge
+    retriever (ADR-0046). Falls back gracefully to FTS5-only when no
+    embedding_client is available (e.g. in tests or when the embedding
+    model isn't configured).
     """
     # Fetch more candidates than needed so RRF has enough to fuse
     fetch_k = top_k * 2

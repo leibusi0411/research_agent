@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,6 +21,7 @@ from research_agent.web.schemas import (
     CuratorOutput,
     ExecutorOutput,
     Finding,
+    PriorKnowledgeChunk,
     ProgressEvent,
     ResearchSubtask,
     WebResearchStateDict,
@@ -170,6 +172,9 @@ class RunnerConfig:
     workspace_obj: Workspace | None = None
     task_store: TaskStore | None = None
     bus: Any | None = None  # research_agent.core.bus.Bus (lazy import to avoid cycles)
+    # ADR-0046: optional Prior Knowledge retriever over the Knowledge Base;
+    # None disables injection.
+    local_retriever: Callable[[str], list[PriorKnowledgeChunk]] | None = None
 
 
 class StateGraphRunner:
@@ -184,6 +189,7 @@ class StateGraphRunner:
         self.max_concurrent_subtasks = config.max_concurrent_subtasks
         self.on_event = config.on_event
         self._bus = config.bus
+        self.local_retriever = config.local_retriever
         self._task_id: str | None = None
         self._event_seq: int = 0
         self._saved_source_ids: set[str] = set()
@@ -210,6 +216,26 @@ class StateGraphRunner:
                 task_metadata={"task_id": task_id, "mode": "web", "question": question, "created_at": created_at},
                 result={"task_id": task_id, "mode": "web", "question": question, "status": "running", "created_at": created_at},
             )
+
+        # ADR-0046: inject Prior Knowledge (local KB chunks) into the initial
+        # state so the Planner can aim web research at genuine gaps. Retrieval
+        # failure must never break Web Research — degrade to no injection.
+        if self.local_retriever is not None:
+            try:
+                chunks = self.local_retriever(question) or []
+            except Exception:
+                logger.warning("Local retriever failed; continuing without prior knowledge", exc_info=True)
+                chunks = []
+            state["prior_knowledge"] = chunks
+            if chunks:
+                self._emit(
+                    task_id,
+                    "web_planning",
+                    "progress",
+                    f"Found {len(chunks)} relevant local notes.",
+                    items=[{"kind": "source", "path": chunk.source_path, "title": chunk.source_path} for chunk in chunks],
+                    event_subtype="source",
+                )
 
         try:
             return self._run_graph(state, task_id, question, created_at)

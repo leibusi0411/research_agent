@@ -3,7 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from research_agent.core.errors import ResearchError
-from research_agent.web.schemas import ExecutorOutput, Finding, ResearchSubtask, WebResearchStateDict, WebSource
+from research_agent.web.schemas import (
+    ExecutorOutput,
+    Finding,
+    PriorKnowledgeChunk,
+    ResearchSubtask,
+    WebResearchStateDict,
+    WebSource,
+)
 
 
 @dataclass(frozen=True)
@@ -12,6 +19,7 @@ class PlannerInput:
     current_plan: list[ResearchSubtask]
     executor_outputs: list[ExecutorOutput]
     research_gaps: list[str]
+    prior_knowledge: list[PriorKnowledgeChunk]
     plan_revision_request: str | None = None
 
 
@@ -42,6 +50,7 @@ def build_planner_context(state: WebResearchStateDict, plan_revision_request: st
         current_plan=list(state["subtasks"]),
         executor_outputs=list(state["executor_outputs"]),
         research_gaps=list(state.get("research_gaps", [])),
+        prior_knowledge=list(state.get("prior_knowledge", [])),
         plan_revision_request=plan_revision_request,
     )
 

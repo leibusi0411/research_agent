@@ -15,6 +15,7 @@ from research_agent.web.schemas import (
     Finding,
     PlannerOutput,
     PlannerSubtaskDraft,
+    PriorKnowledgeChunk,
     ResearchSubtask,
     SupervisorOutput,
     WebResearchStateDict,
@@ -156,3 +157,37 @@ def test_build_executor_context_raises_research_error_for_missing_subtask():
     state = create_initial_state(original_question="What is LangGraph?")
     with pytest.raises(ResearchError, match="not found"):
         build_executor_context(state, "st_nonexistent")
+
+
+def test_build_planner_prompt_includes_prior_knowledge_when_present():
+    state = create_initial_state(original_question="What is LangGraph?")
+    state["prior_knowledge"] = [
+        PriorKnowledgeChunk(
+            text="LangGraph uses a state graph.",
+            source_path="notes/langgraph.md",
+            heading_path=["LangGraph"],
+        ),
+    ]
+    prompt = build_planner_prompt(state)
+    assert "LangGraph uses a state graph." in prompt
+    assert "notes/langgraph.md" in prompt
+
+
+def test_build_planner_prompt_omits_prior_knowledge_section_when_empty():
+    state = create_initial_state(original_question="What is LangGraph?")
+    prompt = build_planner_prompt(state)
+    assert "Prior knowledge" not in prompt
+
+
+def test_build_planner_prompt_bounds_prior_knowledge_section():
+    state = create_initial_state(original_question="What is LangGraph?")
+    state["prior_knowledge"] = [
+        PriorKnowledgeChunk(text="x" * 1000, source_path=f"notes/n{i}.md", heading_path=[])
+        for i in range(7)
+    ]
+
+    prompt = build_planner_prompt(state)
+
+    assert "notes/n4.md" in prompt
+    assert "notes/n5.md" not in prompt  # at most 5 chunks rendered
+    assert "x" * 801 not in prompt  # each chunk truncated to 800 chars

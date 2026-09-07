@@ -10,20 +10,64 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Protocol
 
-from research_agent.core.config import InitConfigRequest, init_user_config, load_user_config
+from research_agent.core.config import InitConfigRequest, UserConfig, init_user_config, load_user_config
 from research_agent.core.deposit import deposit_web_report
 from research_agent.core.errors import ResearchError
 from research_agent.core.ids import generate_task_id
 
 logger = logging.getLogger(__name__)
 from research_agent.core.kb import KnowledgeBaseIndex
-from research_agent.core.local_research import run_local_research
+from research_agent.core.local_research import retrieve_local_chunks, run_local_research
 from research_agent.core.providers import EmbeddingClient, OpenAICompatibleChatModel, OpenAICompatibleEmbeddingModel, build_chat_models, build_role_chat_model_config, ChatModelClient
 from research_agent.core.tasks import TaskStore
 from research_agent.core.workspace import Workspace, read_lock_task_id
 from research_agent.web.provider_runtime import ProviderBackedWebResearchRuntime
+from research_agent.web.schemas import PriorKnowledgeChunk
 from research_agent.web.state_graph import RunnerConfig
 from research_agent.web.tools import ToolGateway, ToolRunner, TavilySearchProvider, create_default_web_tool_registry
+
+
+def build_local_retriever(
+    *,
+    config: UserConfig,
+    config_path: str | Path | None,
+    workspace: Workspace,
+) -> Callable[[str], list[PriorKnowledgeChunk]] | None:
+    """Build the Prior Knowledge retriever for Web Research (ADR-0046).
+
+    Returns ``None`` when injection is disabled in config
+    (``research.inject_local_context = false``) or when no usable Knowledge
+    Base Index exists. Offline mode (``RESEARCH_AGENT_OFFLINE=1``) degrades
+    to FTS5-only retrieval without an embedding client.
+    """
+    if not config.research.inject_local_context:
+        return None
+    status = KnowledgeBaseIndex(workspace, config_path).status()["status"]
+    # "stale" is still usable: the FTS5 keyword index is available.
+    if status not in ("ready", "stale"):
+        return None
+    embedding_client: EmbeddingClient | None = None
+    if os.environ.get("RESEARCH_AGENT_OFFLINE") != "1":
+        embedding_client = OpenAICompatibleEmbeddingModel.from_config(config.embedding_model)
+
+    def retrieve(question: str) -> list[PriorKnowledgeChunk]:
+        results = retrieve_local_chunks(
+            sqlite_path=workspace.local_index_dir / "fts.sqlite",
+            chroma_path=workspace.local_index_dir.parent / "chroma",
+            question=question,
+            embedding_client=embedding_client,
+            top_k=5,
+        )
+        return [
+            PriorKnowledgeChunk(
+                text=result.get("text", ""),
+                source_path=result.get("source_path", ""),
+                heading_path=list(result.get("heading_path", [])),
+            )
+            for result in results
+        ]
+
+    return retrieve
 
 
 def create_provider_runtime(
@@ -51,6 +95,7 @@ def create_provider_runtime(
     search_provider = TavilySearchProvider(api_key=config.search.api_key)
     tool_runner = ToolRunner(config=config.web_tools, search_provider=search_provider)
     tool_gateway = ToolGateway(registry=create_default_web_tool_registry(), runner=tool_runner)
+    resolved_workspace = workspace_obj if workspace_obj is not None else Workspace(workspace_root)
     runner_config = RunnerConfig(
         workspace=workspace_root,
         chat_models=resolved_models,
@@ -61,6 +106,7 @@ def create_provider_runtime(
         workspace_obj=workspace_obj,
         task_store=task_store,
         bus=bus,
+        local_retriever=build_local_retriever(config=config, config_path=config_path, workspace=resolved_workspace),
     )
     return ProviderBackedWebResearchRuntime(config=runner_config)
 
