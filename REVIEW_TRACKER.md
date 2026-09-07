@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-07-20 | 测试：150 passed（Python）+ 15 passed（前端 Vitest）| 本轮 18 项问题全部修复 ✅（R-131~R-148）| 当前：阶段 7 ✅ → 阶段 8 📋
+> 最后更新：2026-09-06 | 测试：169 passed（Python，含 6 个 e2e）+ 20 passed（前端 Vitest）+ 1 passed（Playwright e2e）| 本轮三轮审查共 24 项问题处理完毕 ✅（R-149~R-173）| 新功能：Knowledge Deposit（ADR-0045）+ Web UI 沉淀按钮
 
 ---
 
@@ -27,18 +27,127 @@
 
 ---
 
-## 二、本轮 Review（2026-07-17）
+## 二、本轮 Review（2026-09-06）
 
 ### 审查范围
 
-当前**未提交的工作区改动**（git diff HEAD），内容为两大特性：
+**Knowledge Deposit（知识沉淀）** 新功能（git diff HEAD）：把已完成 Web Research 任务的 Web Report File 显式复制进知识库 vault 的 `web-research/` 子目录，打通 Web → Local 的单向联动（两条线的执行边界不变）。
+
+- 新增 `core/deposit.py` + `CoreService.deposit_web_report`；CLI `task deposit <task_id>`；API `POST /api/tasks/{task_id}/deposit`
+- 新增 ADR-0045（显式演进 ADR-0006 的适用范围：vault 允许 deposit 追加新笔记，ingestion 对既有笔记仍只读）
+- 附带修复 R-132 遗留：`task_not_found` 此前未注册进 `VALID_ERROR_CODES`，删除不存在任务会抛 `ValueError` 而非 404
+- 测试：`tests/test_kb_deposit.py` 18 个（service 11 + CLI 子进程 3 + API 4，含 DELETE 404 回归），全部离线确定
+- 文档：CONTEXT.md（新词条 + 4 处条目修订）、TODO.md（移除对应延期项）、USAGE.md、README.md、AGENTS.md
+
+审查方式：subagent 独立审查 + 全量测试验证。
+
+### 审查总结
+
+设计约束（显式动作、只增不改、幂等、统一错误码）落实正确，无 P0 问题。发现 8 项（P1×2、P2×2、P3×4），全部当日修复。
+
+### 待解决问题（共 0 项）
+
+✅ 三轮审查共 24 项（R-149~R-173），22 项修复、2 项明确接受或记录在案（R-165、R-173），均于 2026-09-06 处理完毕。
+
+### 第二轮复审（2026-09-06，修复后终审）
+
+验证 R-149~R-156 修复全部成立，另确认 API 路由无匹配冲突。新发现 8 项（P2×1、P3×7），7 项当日修复，1 项明确接受。
+
+#### P2
+| 编号 | 描述 | 修复 |
+|------|------|------|
+| R-157 | 并发 deposit 同名报告的 TOCTOU + tmp 文件撞名 | ✅ `_claim_deposit_path` 用 `O_CREAT\|O_EXCL` 原子占位，tmp 名混入 task_id |
+
+#### P3
+| 编号 | 描述 | 修复 |
+|------|------|------|
+| R-158 | deposit docstring 漏 `config_invalid` 错误码 | ✅ 补齐 |
+| R-159 | 报告文件读取的 UnicodeDecodeError 未包装 | ✅ 包装为 `file_write_error`（对称 R-149） |
+| R-160 | 幂等 marker 全文件子串匹配，正文误提 task_id 会误判 | ✅ 只扫 frontmatter 区（`_frontmatter_block`） |
+| R-161 | 幂等机制与 report.py frontmatter 格式隐式耦合 | ✅ 两模块互加指向注释 |
+| R-162 | 崩溃遗留 `{stem}.tmp` + 注释误称 "same pattern as kb.py" | ✅ 失败路径清理 tmp/占位文件；注释改为如实描述 |
+| R-163 | 文件名后缀逻辑硬编码 `.md` | ✅ 改用 `Path.suffix`（并入 `_claim_deposit_path`） |
+| R-164 | README 历史错行：报告位置误写为 `tasks/<task_id>/` | ✅ 改为 `reports/web/`（本轮顺带发现的历史问题） |
+| R-165 | 测试假设 "init_config 不写 vault"（`vault.rmdir()`） | ⚠️ 接受：若假设打破会以 OSError 大声自暴露 |
+
+### 第三轮审查（2026-09-06，Web UI 沉淀按钮 + deposit 引导重建）
+
+本轮改动：`api.ts` 新增 `depositTask`；`ResultView.tsx` 新增 `DepositPanel`（deposit → 成功后引导 Rebuild Index）；闭环集成测试（deposit → rebuild → Local RAG 命中沉淀笔记）；e2e 增加 deposit 流程。审查发现 7 项（P1×1、P2×2、P3×4），全部修复；另修复 2 项既存 e2e 红线（该套件此前整体失败但未被发现）。
+
+#### P1
+| 编号 | 描述 | 修复 |
+|------|------|------|
+| R-168 | DepositPanel 无 key，Tasks 页 web→web 切换时 deposit 状态残留（实证复现） | ✅ `key={result.task_id}` + 双 web 任务切换回归测试 |
+
+#### P2
+| 编号 | 描述 | 修复 |
+|------|------|------|
+| R-166 | e2e 既存红线①：events mock 返回 JSON，EventSource 因 MIME 不符拒绝连接，phase 文本从不出现（HEAD 可复现） | ✅ `fulfillEvents` 按 Accept 头分流：EventSource 给 SSE body，普通 fetch 给 JSON |
+| R-167 | e2e 既存红线②：Playwright 默认 dismiss 对话框，delete 的 `window.confirm` 静默中止 | ✅ `page.on("dialog", d => d.accept())` |
+| R-169 | USAGE.md API 表缺 deposit / delete 端点 | ✅ 补齐 |
+
+#### P3
+| 编号 | 描述 | 修复 |
+|------|------|------|
+| R-170 | `[already_deposited]` 前缀字符串匹配脆弱 | ✅ `api.ts` 抛 `ApiError`（带 `code` 属性），按码分支 |
+| R-171 | rebuild 失败吞掉错误详情 | ✅ 展示 `[code] message`，按钮转为 retry |
+| R-172 | `web/test-results/.last-run.json` 被 git 跟踪 | ✅ 加入 .gitignore（取消跟踪留待提交时 `git rm --cached`） |
+| R-173 | `test_api_second_same_family_start_returns_busy_without_fake_task` 全量运行时偶发失败（重跑全绿） | ⚠️ 记录在案：疑为并发时序敏感，与本改动无关，待观察 |
+
+### 已验证（终审后）
+
+- `uv run pytest -m "not e2e"` — 163 passed
+- `uv run pytest tests/test_web_e2e_simple.py -m e2e`（真实 LLM）— 通过
+- `cd web && npx vitest run` — 20 passed
+- `cd web && npx playwright test` — 1 passed（含 deposit→rebuild e2e 流程）
+
+<details>
+<summary>已修复详情（点击展开）</summary>
+
+#### P1（应修）
+| 编号 | 描述 | 修复 |
+|------|------|------|
+| R-149 | `_already_deposited` 遇非 UTF-8 笔记抛 UnicodeDecodeError 逃逸 | ✅ `except (OSError, UnicodeDecodeError)` 跳过 |
+| R-150 | REVIEW_TRACKER.md 未按维护规则更新 | ✅ 本次更新补齐 |
+
+#### P2
+| 编号 | 描述 | 修复 |
+|------|------|------|
+| R-151 | AGENTS.md 测试/ADR 计数过时 | ✅ 166 测试 / 45 ADR |
+| R-152 | 测试缺口：已删报告、同名冲突 -2、API 409、DELETE 404 回归 | ✅ 补 7 个测试（9→16） |
+
+#### P3
+| 编号 | 描述 | 修复 |
+|------|------|------|
+| R-153 | CLI 非法 task_id 兜底为 runtime_error，与 API 不一致 | ✅ 入口先 `validate_task_id` 转 `config_invalid` |
+| R-154 | deposit 写入非原子 + vault 目录缺失时静默创建整棵目录树 | ✅ tmp+rename 原子写入；vault 缺失报 `config_invalid` |
+| R-155 | `_resolve_report_path` 无逃逸检查 | ✅ 注释说明：写入端只取 basename，落点严格在 `<vault>/web-research/` 内 |
+| R-156 | README.md 未提及 deposit 功能 | ✅ 补 Knowledge Deposit 小节 |
+
+</details>
+
+### 安全审查
+
+✅ 无新增风险面：写入端只取报告文件 basename，落点严格限制在 `<vault>/web-research/`；task_id 经 `validate_task_id` 校验；vault 目录缺失时显式报错而非静默创建；无密钥、无注入面。
+
+### 已验证
+
+- `uv run pytest -m "not e2e"` — 162 passed（终审后）
+- `uv run pytest tests/test_web_e2e_simple.py -m e2e`（真实 LLM）— 重跑通过（首轮失败为线上模型输出抖动，与本改动无关）
+- `cd web && npm run test` — 15 passed
+
+---
+
+## 附：上一轮 Review（2026-07-17）存档
+
+### 审查范围（2026-07-17）
+
+当时**未提交的工作区改动**（git diff HEAD），内容为两大特性：
 
 1. **原生 function calling 迁移** — `complete_tool` 替换 JSON-mode + schema repair（providers.py、role_invocation.py、executor.py、graph.py、prompt_builders.py 及对应测试）
 2. **任务删除功能** — `DELETE /api/tasks/{task_id}` 端点 + 前端 Tasks 页删除按钮（service.py、workspace.py、app.py、App.tsx、TasksPage.tsx、api.ts 及对应测试）
 
-审查文件：后端 9 个源文件 + 6 个测试文件，前端 4 个源文件 + 2 个测试文件（排除 styles.css、dist/ 构建产物）。另运行全量测试套件验证。
-
-### 审查总结
+### 审查总结（2026-07-17）
 
 改动方向正确、测试覆盖基本到位。值得肯定的方面：
 
@@ -48,56 +157,7 @@
 - 前端无 XSS 风险（无 `dangerouslySetInnerHTML`）；TasksPage 消除了嵌套交互元素的可访问性问题
 - 无硬编码密钥；executor 线程池异常路径完整
 
-### 待解决问题（共 0 项）
-
-✅ 全部 18 项已于 2026-07-17 修复完成。
-
-<details>
-<summary>已修复详情（点击展开）</summary>
-
-#### P0（阻塞）
-| 编号 | 描述 | 修复 |
-|------|------|------|
-| R-131 | 12 个测试离线确定性被 A+G 自动创建真实 client 破坏 | ✅ 添加 `RESEARCH_AGENT_OFFLINE` env var + 测试注入 fake client |
-
-#### P1
-| 编号 | 描述 | 修复 |
-|------|------|------|
-| R-132 | 用错误文案字符串匹配决定 404 | ✅ 改用 `code="task_not_found"` 专用错误码 |
-| R-133 | 所有异常包装为 `schema_validation_failed` | ✅ 分离 LLM 调用异常（`llm_call_failed`）和校验异常 |
-| R-141 | 删除任务无确认步骤 | ✅ 添加 `window.confirm` 确认对话框 |
-
-#### P2
-| 编号 | 描述 | 修复 |
-|------|------|------|
-| R-134 | 删除操作非事务化 | ✅ DB 记录先删（权威移除），文件清理降级为 best-effort + 日志警告 |
-| R-135 | busy 检查 fail-open | ✅ 不可读锁按 busy 处理（fail-closed） |
-| R-142 | 全局单槽 busy 并发竞态 | ✅ 改用 `deletingTaskIds: string[]` 数组跟踪多并发删除 |
-| R-143 | openTask 无错误处理 | ✅ 添加 try/catch + 删除中任务守卫 |
-| R-144 | 删除未清理 Research 页结果 | ✅ 同步清理 `localResult`/`webResult`/对应 events |
-
-#### P3
-| 编号 | 描述 | 修复 |
-|------|------|------|
-| R-136 | `_parse_llm_json` 单引号替换损坏撇号 | ✅ 添加 `ast.literal_eval` 优先尝试 |
-| R-137 | docstring 声称保证 schema 匹配 | ✅ 修正为 "caller MUST validate" |
-| R-138 | 删除任务后 SSE 轮询空转 30 分钟 | ✅ 检测 task 目录消失时主动 break |
-| R-139 | prompt_builders.py 末尾无换行 | ✅ 添加文件末尾换行 |
-| R-140 | executor e2e 测试无断言 | ✅ 添加 `tool_calls` 结构断言 |
-| R-145 | api.ts deleteTask 未 encodeURIComponent | ✅ 添加 `encodeURIComponent(taskId)` |
-| R-146 | 删除测试只覆盖成功路径 | ✅ 添加 409 busy 失败路径测试 |
-| R-147 | e2e toBeHidden 不精确 | ✅ 改为 `toHaveCount(0)` |
-| R-148 | EventSource 清理函数从未调用 | ✅ 添加 `useRef` cleanup 保存并在启动新任务/卸载时调用 |
-
-</details>
-
-### 安全审查
-
-✅ **无 P1 安全问题**：
-- 无硬编码密钥/密码
-- SQL 全部参数化，无注入风险
-- 删除路径有遍历防护（validate_task_id + resolve + reports_dir 逃逸检查）
-- 前端无 XSS 风险
+✅ 全部 18 项（R-131~R-148）已于 2026-07-17 修复完成。
 
 ### 已完成修复
 
@@ -151,6 +211,31 @@
 | R-146 添加删除失败（409 busy）测试 | ✅ 2026-07-17 |
 | R-147 e2e 断言 `toBeHidden` → `toHaveCount(0)` | ✅ 2026-07-17 |
 | R-148 EventSource cleanup 保存到 ref 并正确清理 | ✅ 2026-07-17 |
+| R-149 `_already_deposited` 跳过非 UTF-8 笔记（UnicodeDecodeError 逃逸） | ✅ 2026-09-06 |
+| R-150 REVIEW_TRACKER 随本轮更新 | ✅ 2026-09-06 |
+| R-151 AGENTS.md 计数更新（测试数 / ADR 数） | ✅ 2026-09-06 |
+| R-152 deposit 补 7 个覆盖测试（含 DELETE 404 回归） | ✅ 2026-09-06 |
+| R-153 CLI deposit 非法 task_id 报 `config_invalid` | ✅ 2026-09-06 |
+| R-154 deposit 原子写入 + vault 缺失守卫 | ✅ 2026-09-06 |
+| R-155 `_resolve_report_path` 逃逸检查说明注释 | ✅ 2026-09-06 |
+| R-156 README 补 Knowledge Deposit 小节 | ✅ 2026-09-06 |
+| R-157 deposit 并发 TOCTOU：`O_EXCL` 原子占位 + task-unique tmp 名 | ✅ 2026-09-06 |
+| R-158 deposit docstring 补 `config_invalid` | ✅ 2026-09-06 |
+| R-159 报告读取 UnicodeDecodeError 包装为 `file_write_error` | ✅ 2026-09-06 |
+| R-160 幂等检查限定 frontmatter 区 | ✅ 2026-09-06 |
+| R-161 deposit ↔ report.py frontmatter 格式双向注释 | ✅ 2026-09-06 |
+| R-162 deposit 失败路径清理 tmp/占位文件 + 注释失实修正 | ✅ 2026-09-06 |
+| R-163 deposit 文件名后缀改用 `Path.suffix` | ✅ 2026-09-06 |
+| R-164 README 报告位置错行修正（`reports/web/`） | ✅ 2026-09-06 |
+| R-165 接受：`vault.rmdir()` 测试假设脆弱（自暴露） | ⚠️ 2026-09-06 |
+| R-166 e2e 既存红线：events mock JSON MIME 导致 EventSource 拒连 | ✅ 2026-09-06 |
+| R-167 e2e 既存红线：Playwright 默认 dismiss confirm 对话框 | ✅ 2026-09-06 |
+| R-168 DepositPanel 加 `key={task_id}` 消除跨任务状态残留 | ✅ 2026-09-06 |
+| R-169 USAGE.md API 表补 deposit/delete 端点 | ✅ 2026-09-06 |
+| R-170 `ApiError` 携带错误码，替代字符串前缀匹配 | ✅ 2026-09-06 |
+| R-171 rebuild 失败展示错误详情 | ✅ 2026-09-06 |
+| R-172 `web/test-results/` 加入 .gitignore | ✅ 2026-09-06 |
+| R-173 记录：`test_api_second_same_family_start_returns_busy_without_fake_task` 全量运行偶发失败 | ⚠️ 2026-09-06 |
 
 ---
 
@@ -158,9 +243,10 @@
 
 ### 立即
 
-1. **提交当前工作区改动** — 29 个文件包含 function calling 迁移 + 任务删除 + R-131~R-148 全部修复，建议一次 squash commit
+1. **提交本日改动** — Knowledge Deposit 后端 + Web UI 沉淀按钮 + e2e 修复 + R-149~R-173 全部处理完毕；提交时顺带 `git rm --cached web/test-results/.last-run.json`（R-172）
+2. **下一大步：Local 知识注入 Web Planner**（方案 2）— deposit 打通 Web→Local 后，反向让 Planner 看到本地已有知识，形成"调研→沉淀→复用"回路；需新 ADR 显式演进 Research Workflow Boundary
 
-### 阶段 8（功能全部实现）← 当前
+### 阶段 8（功能全部实现）
 
 1. CLI `task show <id>` — 查看单个任务详情
 2. Source 快照查看器（Web UI）

@@ -259,7 +259,22 @@ Web Research 执行流程：
 3. **Supervisor** 评估进度，决定继续/修订/完成
 4. **Curator** 整合所有发现，生成最终 Markdown 报告
 
-执行完成后，报告保存在工作区目录的 `tasks/<task_id>/` 下。
+执行完成后，报告文件保存在工作区的 `reports/web/` 下，任务结果与中间产物在 `tasks/<task_id>/` 下。
+
+#### 沉淀报告到知识库（Knowledge Deposit）
+
+把已完成的 Web Research 报告显式保存进知识库 vault，让后续 Local RAG 检索能命中：
+
+```bash
+uv run research-agent task deposit <task_id>
+
+# 之后重建索引即可检索到
+uv run research-agent kb rebuild
+```
+
+报告会复制到 vault 的 `web-research/` 子目录（只新增笔记，不修改已有内容；同一任务重复沉淀会提示 `already_deposited`）。详见 [USAGE.md](USAGE.md)。
+
+Web UI 中，已完成的 Web Report 页面（Research 页或 Tasks 页打开的报告视图）提供 **Deposit to Knowledge Base** 按钮，沉淀成功后可直接点 **Rebuild Index** 重建索引。
 
 #### 同时运行两种检索
 

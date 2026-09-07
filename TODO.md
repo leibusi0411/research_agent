@@ -41,9 +41,6 @@ This document collects complex capabilities discussed during v1 design but inten
 
 ## Knowledge Base
 
-- Automatic knowledge deposit into the Markdown Vault.
-  V1 writes Web Reports under `reports/web/` and does not modify the user's vault. A future version may let users explicitly save selected reports or findings into the Markdown Vault.
-
 - Knowledge Base editing and management.
   V1 ingestion is read-only. Future versions may support adding tags, updating frontmatter, merging notes, moving files, deleting duplicates, or reorganizing directories, but only behind explicit user actions.
 

@@ -41,7 +41,7 @@ The independent workflow that researches a question using network search, fetch,
 _Avoid_: online mode, web search mode
 
 **Research Workflow Boundary**:
-The task-level boundary that keeps Local RAG Research and Web Research as separate execution modes. A Local RAG task does not run Web Research, and a Web Research task does not receive Local Results or Knowledge Base context.
+The task-level boundary that keeps Local RAG Research and Web Research as separate execution modes. A Local RAG task does not run Web Research, and a Web Research task does not receive Local Results or Knowledge Base context. Knowledge Deposit does not cross this boundary: it is an explicit post-hoc copy of a finished Web Report File into the Markdown Vault, never a channel into a running task.
 _Avoid_: research scope, permission prompt
 
 **Knowledge Base**:
@@ -340,12 +340,16 @@ _Avoid_: knowledge base management, note management
 The user-facing state returned by `kb status`: `missing`, `ready`, `stale`, `building`, or `failed`. Local RAG queries are allowed when status is `ready` or `stale` (FTS5 keyword index is available even if ChromaDB vectors are outdated); `missing`, `building`, and `failed` make Local RAG fail before retrieval and instruct the user to run `research-agent kb rebuild`. V1 stale checks compare indexed file path, mtime, and file size, not hashes.
 _Avoid_: partial_success, completed_with_warning
 
+**Knowledge Deposit**:
+An explicit user action that copies a finished Web Research task's Web Report File into the Markdown Vault under a `web-research/` subdirectory, preserving the report's frontmatter (including `task_id`) for provenance. Deposit is additive-only: it never modifies, moves, or deletes existing vault notes. A task whose `task_id` already appears in the deposit directory is rejected with `already_deposited`. Deposit does not rebuild indexes; the user runs `kb rebuild` afterwards.
+_Avoid_: auto-save, sync
+
 **Capability Surface**:
 The complete set of research and Knowledge Base capabilities available through both Web UI and CLI. Each interface may add form-specific helpers, but neither is a reduced version of the other.
 _Avoid_: frontend features, CLI features
 
 **Core Service**:
-The shared application layer that exposes the Capability Surface to interfaces such as Web UI and CLI. It owns research, Local RAG retrieval, Web Research, and Knowledge Base Index workflows so interfaces do not implement separate behavior. V1 exposes a small use-case surface: `init_config`, `run_local_research`, `run_web_research`, `run_both`, `list_finished_tasks`, `get_kb_status`, and `rebuild_kb_index`.
+The shared application layer that exposes the Capability Surface to interfaces such as Web UI and CLI. It owns research, Local RAG retrieval, Web Research, Knowledge Base Index, and Knowledge Deposit workflows so interfaces do not implement separate behavior. V1 exposes a small use-case surface: `init_config`, `run_local_research`, `run_web_research`, `run_both`, `list_finished_tasks`, `deposit_web_report`, `get_kb_status`, and `rebuild_kb_index`.
 _Avoid_: backend, API server
 
 **Research Runtime**:
@@ -373,7 +377,7 @@ The graphical interface for the Capability Surface, optimized for starting Local
 _Avoid_: dashboard, admin panel
 
 **Web API**:
-The minimal local FastAPI surface used by Web UI. V1 exposes setup status/init, Local RAG start, Web Research start, active task lookup, finished task list, task progress SSE, current-run result lookup, Knowledge Base status, and Knowledge Base rebuild. It does not expose a Run Both endpoint, task-history detail endpoint, task delete endpoint, settings editor, or note-management API.
+The minimal local FastAPI surface used by Web UI. V1 exposes setup status/init, Local RAG start, Web Research start, active task lookup, finished task list, task progress SSE, current-run result lookup, task delete, Knowledge Deposit, Knowledge Base status, and Knowledge Base rebuild. It does not expose a Run Both endpoint, task-history detail endpoint, settings editor, or note-management API.
 _Avoid_: public API, remote backend
 
 **Setup View**:
@@ -389,7 +393,7 @@ The Web UI result view shown immediately after a Local RAG task completes. It sh
 _Avoid_: comparison view, local report
 
 **Web Report Page**:
-The Web UI result view shown immediately after a Web Research task completes. It shows `question`, `status`, Process View grouped by phase, Summary, Findings, Sources, and `report_path` for the generated Web Report File. Opening the current result view does not resume Web Research, call tools, regenerate CuratorOutput, or rewrite the Web Report File. If report file writing fails after CuratorOutput succeeds, this page shows the task as `failed` with the `file_write_error` instead of showing a completed task without a report.
+The Web UI result view shown immediately after a Web Research task completes. It shows `question`, `status`, Process View grouped by phase, Summary, Findings, Sources, and `report_path` for the generated Web Report File. A completed Web Report Page offers a Knowledge Deposit action that copies the Web Report File into the Markdown Vault and then offers to rebuild the Knowledge Base Index so the deposited note becomes searchable. Opening the current result view does not resume Web Research, call tools, regenerate CuratorOutput, or rewrite the Web Report File. If report file writing fails after CuratorOutput succeeds, this page shows the task as `failed` with the `file_write_error` instead of showing a completed task without a report.
 _Avoid_: comparison view, merged report
 
 **Tasks Page**:
@@ -401,5 +405,5 @@ The Web UI page for Local RAG index maintenance. It shows `vault_path`, index st
 _Avoid_: note manager, vault editor
 
 **CLI**:
-The command-line interface for the Capability Surface, optimized for starting Local RAG tasks with `local`, Web Research tasks with `web`, starting both independent task families for the same question with `both`, listing finished task history, and maintaining the Knowledge Base Index through `kb status` and `kb rebuild`. It streams phase progress while active commands run, prints human-readable results, renders Research Errors as `[code] message`, and exits non-zero for failed tasks, busy conflicts, invalid setup, index failures, runtime failures, and Web Report File write failures. `both` starts separate Local RAG and Web Research tasks, displays separate final statuses, and exits non-zero if either task fails or Web report file writing fails; it does not create a combined workflow or combined report. The CLI does not expose a generic `research` command, machine-readable JSON output mode, task show/delete commands, `kb update`, `kb clean`, `kb delete`, deposit, or note-editing commands in v1.
+The command-line interface for the Capability Surface, optimized for starting Local RAG tasks with `local`, Web Research tasks with `web`, starting both independent task families for the same question with `both`, listing finished task history, depositing finished Web Report Files into the Knowledge Base with `task deposit`, and maintaining the Knowledge Base Index through `kb status` and `kb rebuild`. It streams phase progress while active commands run, prints human-readable results, renders Research Errors as `[code] message`, and exits non-zero for failed tasks, busy conflicts, invalid setup, index failures, runtime failures, and Web Report File write failures. `both` starts separate Local RAG and Web Research tasks, displays separate final statuses, and exits non-zero if either task fails or Web report file writing fails; it does not create a combined workflow or combined report. The CLI does not expose a generic `research` command, machine-readable JSON output mode, task show/delete commands, `kb update`, `kb clean`, `kb delete`, or note-editing commands in v1.
 _Avoid_: terminal page, limited mode

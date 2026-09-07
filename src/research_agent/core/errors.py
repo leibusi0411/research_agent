@@ -17,6 +17,10 @@ VALID_ERROR_CODES = {
     "schema_validation_failed",
     "runtime_error",
     "file_write_error",
+    "task_not_found",
+    "invalid_task_mode",
+    "report_missing",
+    "already_deposited",
 }
 
 

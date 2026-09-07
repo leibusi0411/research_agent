@@ -1,7 +1,19 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
 
 const webTaskId = "task_20260624_000001_bbbbbb";
 const localTaskId = "task_20260624_000000_aaaaaa";
+
+// EventSource requires a real text/event-stream body; plain fetch
+// (api.taskEvents on the Tasks page) expects a JSON array. Serve by Accept.
+async function fulfillEvents(route: Route, events: Record<string, unknown>[]) {
+  const accept = route.request().headers()["accept"] ?? "";
+  if (accept.includes("text/event-stream")) {
+    const body = events.map((event) => `data: ${JSON.stringify(event)}`).join("\n\n") + "\n\n";
+    await route.fulfill({ contentType: "text/event-stream", body });
+    return;
+  }
+  await route.fulfill({ json: events });
+}
 
 test("setup, research, task navigation, and kb flows", async ({ page }) => {
   let configured = false;
@@ -46,12 +58,10 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
       return;
     }
     if (url.endsWith(`/api/tasks/${localTaskId}/events`)) {
-      await route.fulfill({
-        json: [
-          { task_id: localTaskId, mode: "local", phase: "local_rag", event_type: "completed", created_at: "now", message: "Local RAG completed.", details: { items: [] } },
-          { task_id: localTaskId, mode: "local", phase: "local_rag", event_type: "task_result", created_at: "now", message: "Task completed.", details: { items: [] } },
-        ],
-      });
+      await fulfillEvents(route, [
+        { task_id: localTaskId, mode: "local", phase: "local_rag", event_type: "completed", created_at: "now", message: "Local RAG completed.", details: { items: [] } },
+        { task_id: localTaskId, mode: "local", phase: "local_rag", event_type: "task_result", created_at: "now", message: "Task completed.", details: { items: [] } },
+      ]);
       return;
     }
     if (url.endsWith(`/api/tasks/${webTaskId}/result`)) {
@@ -59,12 +69,14 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
       return;
     }
     if (url.endsWith(`/api/tasks/${webTaskId}/events`)) {
-      await route.fulfill({
-        json: [
-          { task_id: webTaskId, mode: "web", phase: "web_planning", event_type: "completed", created_at: "now", message: "Initial plan created.", details: { items: [] } },
-          { task_id: webTaskId, mode: "web", phase: "web_curation", event_type: "task_result", created_at: "now", message: "Task completed.", details: { items: [] } },
-        ],
-      });
+      await fulfillEvents(route, [
+        { task_id: webTaskId, mode: "web", phase: "web_planning", event_type: "completed", created_at: "now", message: "Initial plan created.", details: { items: [] } },
+        { task_id: webTaskId, mode: "web", phase: "web_curation", event_type: "task_result", created_at: "now", message: "Task completed.", details: { items: [] } },
+      ]);
+      return;
+    }
+    if (url.endsWith(`/api/tasks/${webTaskId}/deposit`) && method === "POST") {
+      await route.fulfill({ json: { task_id: webTaskId, vault_path: "D:/vault/web-research/report.md" } });
       return;
     }
     if (url.endsWith(`/api/tasks/${webTaskId}`) && method === "DELETE") {
@@ -79,6 +91,9 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
     }
     await route.fulfill({ status: 404, json: {} });
   });
+
+  // Playwright auto-dismisses dialogs by default; the delete flow needs an accept.
+  page.on("dialog", (dialog) => dialog.accept());
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Research Agent Setup" })).toBeVisible();
@@ -100,9 +115,18 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
   await page.getByRole("link", { name: "Tasks" }).click();
   await page.getByRole("button", { name: new RegExp(webTaskId) }).click();
   await expect(page.getByRole("heading", { name: "Web Report" })).toBeVisible();
+
+  // Knowledge Deposit: deposit the finished report, then rebuild the index.
+  await page.getByRole("button", { name: "Deposit to Knowledge Base" }).click();
+  await expect(page.getByText("Deposited to Knowledge Base.")).toBeVisible();
+  await expect(page.getByText("D:/vault/web-research/report.md")).toBeVisible();
+  await page.getByRole("button", { name: "Rebuild Index" }).click();
+  await expect(page.getByText(/Index rebuilt/)).toBeVisible();
+
   await page.getByRole("button", { name: new RegExp(localTaskId) }).click();
   await expect(page.getByRole("heading", { name: "Local Result" })).toBeVisible();
   await expect(page.getByText("local_rag")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Deposit to Knowledge Base" })).toHaveCount(0);
   await page.getByRole("button", { name: "Delete task web question" }).click();
   await expect(page.getByText("web question")).toHaveCount(0);
 

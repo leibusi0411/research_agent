@@ -81,6 +81,11 @@ export type KbStatus = {
   error?: string;
 };
 
+export type DepositResult = {
+  task_id: string;
+  vault_path: string;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
@@ -95,9 +100,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     const code = err?.code ?? "runtime_error";
     const message = err?.message ?? "Request failed.";
-    throw new Error(`[${code}] ${message}`);
+    throw new ApiError(code, message);
   }
   return data as T;
+}
+
+// Carries the backend ResearchError code so callers can branch on it
+// (e.g. already_deposited) without parsing the message string.
+export class ApiError extends Error {
+  code: string;
+  constructor(code: string, message: string) {
+    super(`[${code}] ${message}`);
+    this.code = code;
+  }
 }
 
 export const api = {
@@ -110,6 +125,7 @@ export const api = {
     request<ResearchResult>("/api/research/web", { method: "POST", body: JSON.stringify({ question }) }),
   finishedTasks: () => request<{ tasks: TaskSummary[] }>("/api/tasks/finished"),
   deleteTask: (taskId: string) => request<{ task_id: string; deleted: boolean }>(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" }),
+  depositTask: (taskId: string) => request<DepositResult>(`/api/tasks/${encodeURIComponent(taskId)}/deposit`, { method: "POST" }),
   taskResult: (taskId: string) => request<ResearchResult>(`/api/tasks/${encodeURIComponent(taskId)}/result`),
   taskEvents: (taskId: string) => request<ProgressEvent[]>(`/api/tasks/${encodeURIComponent(taskId)}/events`),
   kbStatus: () => request<KbStatus>("/api/kb/status"),

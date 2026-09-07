@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterator, Protocol
 
 from research_agent.core.config import InitConfigRequest, init_user_config, load_user_config
+from research_agent.core.deposit import deposit_web_report
 from research_agent.core.errors import ResearchError
 from research_agent.core.ids import generate_task_id
 
@@ -160,6 +161,15 @@ class CoreService:
     def list_finished_tasks(self) -> list[TaskRecord]:
         self.task_store.initialize()
         return self.task_store.list_finished_tasks()
+
+    def deposit_web_report(self, task_id: str) -> dict[str, str]:
+        """Knowledge Deposit: copy a completed Web Report File into the Markdown Vault."""
+        return deposit_web_report(
+            task_id=task_id,
+            workspace=self.workspace,
+            task_store=self.task_store,
+            config_path=self.config_path,
+        )
 
     def delete_finished_task(self, task_id: str) -> dict[str, Any]:
         # Fail-closed: if lock is unreadable, treat family as busy.

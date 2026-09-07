@@ -235,6 +235,21 @@ def _register_task_routes(app: FastAPI, get_service: Callable[[], CoreService]) 
             status_code = 409 if error.code == "busy" else 404 if error.code == "task_not_found" else 400
             return _error_response(error, status_code=status_code)
 
+    @app.post("/api/tasks/{task_id}/deposit")
+    def deposit_task(task_id: str) -> JSONResponse:
+        _validate_task_id_as_research_error(task_id)
+        try:
+            return JSONResponse(get_service().deposit_web_report(task_id))
+        except ResearchError as error:
+            status_code = (
+                404
+                if error.code in {"task_not_found", "report_missing"}
+                else 409
+                if error.code == "already_deposited"
+                else 400
+            )
+            return _error_response(error, status_code=status_code)
+
 
 def _register_kb_routes(
     app: FastAPI,

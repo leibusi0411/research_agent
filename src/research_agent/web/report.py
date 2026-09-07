@@ -30,6 +30,8 @@ def slugify_report_topic(topic: str) -> str:
 
 def render_web_report(task_id: str, created_at: str, output: CuratorOutput) -> str:
     source_numbers = {source.source_id: index for index, source in enumerate(output.sources, start=1)}
+    # NOTE: core/deposit.py's _already_deposited relies on the exact
+    # `task_id: "..."` frontmatter line below — keep the two in sync.
     lines = [
         "---",
         f'title: "{_escape_frontmatter(output.title)}"',

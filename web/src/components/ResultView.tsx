@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { type ProgressEvent, type ResearchResult } from "../api";
+import { useMemo, useState } from "react";
+import { api, ApiError, type ProgressEvent, type ResearchResult } from "../api";
 import { groupEvents, ProcessView } from "./ProcessView";
 
 export function StatusLine({ result }: { result: ResearchResult }) {
@@ -59,6 +59,79 @@ export function WebResultView({ result, events }: { result: ResearchResult; even
         </>
       )}
       {result.report_path && <code>{result.report_path}</code>}
+      {result.status === "completed" && result.report_path && <DepositPanel key={result.task_id} taskId={result.task_id} />}
     </article>
+  );
+}
+
+type DepositPhase = "idle" | "depositing" | "deposited";
+type RebuildPhase = "idle" | "rebuilding" | "rebuilt" | "failed";
+
+// Knowledge Deposit: explicitly save the finished Web Report File into the
+// Markdown Vault, then offer to rebuild the index so the note is searchable.
+export function DepositPanel({ taskId }: { taskId: string }) {
+  const [phase, setPhase] = useState<DepositPhase>("idle");
+  const [vaultPath, setVaultPath] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [rebuild, setRebuild] = useState<RebuildPhase>("idle");
+  const [rebuildError, setRebuildError] = useState<string | null>(null);
+
+  async function deposit() {
+    setPhase("depositing");
+    setError(null);
+    try {
+      const result = await api.depositTask(taskId);
+      setVaultPath(result.vault_path);
+      setPhase("deposited");
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "already_deposited") {
+        setVaultPath(null);
+        setPhase("deposited");
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+        setPhase("idle");
+      }
+    }
+  }
+
+  async function rebuildIndex() {
+    setRebuild("rebuilding");
+    setRebuildError(null);
+    try {
+      await api.kbRebuild();
+      setRebuild("rebuilt");
+    } catch (err) {
+      setRebuildError(err instanceof Error ? err.message : String(err));
+      setRebuild("failed");
+    }
+  }
+
+  if (phase === "deposited") {
+    return (
+      <div className="deposit-panel">
+        <p className="status completed">
+          {vaultPath ? "Deposited to Knowledge Base." : "Already deposited to Knowledge Base."}
+        </p>
+        {vaultPath && <code>{vaultPath}</code>}
+        {rebuild === "rebuilt" ? (
+          <p>Index rebuilt — the deposited note is now searchable.</p>
+        ) : (
+          <>
+            <button type="button" onClick={rebuildIndex} disabled={rebuild === "rebuilding"}>
+              {rebuild === "rebuilding" ? "Rebuilding…" : rebuild === "failed" ? "Rebuild failed — retry" : "Rebuild Index"}
+            </button>
+            {rebuild === "failed" && rebuildError && <p className="status failed">{rebuildError}</p>}
+          </>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="deposit-panel">
+      <button type="button" onClick={deposit} disabled={phase === "depositing"}>
+        {phase === "depositing" ? "Depositing…" : "Deposit to Knowledge Base"}
+      </button>
+      {error && <p className="status failed">{error}</p>}
+    </div>
   );
 }

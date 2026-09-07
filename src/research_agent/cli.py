@@ -6,6 +6,7 @@ from pathlib import Path
 
 from research_agent.core.config import InitConfigRequest, default_config_path, load_user_config
 from research_agent.core.errors import ResearchError
+from research_agent.core.ids import validate_task_id
 from research_agent.core.service import CoreService
 
 
@@ -39,6 +40,8 @@ def build_parser() -> argparse.ArgumentParser:
     task_parser = subparsers.add_parser("task", help="Manage task history.")
     task_subparsers = task_parser.add_subparsers(dest="task_command")
     task_subparsers.add_parser("list", help="List finished tasks.")
+    deposit_parser = task_subparsers.add_parser("deposit", help="Deposit a completed Web Report File into the Knowledge Base.")
+    deposit_parser.add_argument("task_id")
 
     kb_parser = subparsers.add_parser("kb", help="Maintain the Knowledge Base Index.")
     kb_subparsers = kb_parser.add_subparsers(dest="kb_command")
@@ -246,14 +249,23 @@ def _run_both(args: argparse.Namespace, service: CoreService) -> int:
 
 def _run_task(args: argparse.Namespace, service: CoreService) -> int:
     try:
-        if args.task_command != "list":
-            print("[runtime_error] Unsupported task subcommand in v1.")
-            return 1
-        records = service.list_finished_tasks()
-        print("task_id mode status title_or_question created_at")
-        for record in records:
-            print(f"{record.task_id} {record.mode} {record.status} {record.title_or_question} {record.created_at}")
-        return 0
+        if args.task_command == "list":
+            records = service.list_finished_tasks()
+            print("task_id mode status title_or_question created_at")
+            for record in records:
+                print(f"{record.task_id} {record.mode} {record.status} {record.title_or_question} {record.created_at}")
+            return 0
+        if args.task_command == "deposit":
+            try:
+                validate_task_id(args.task_id)
+            except ValueError as exc:
+                raise ResearchError(code="config_invalid", message=str(exc)) from exc
+            result = service.deposit_web_report(args.task_id)
+            print(f"Deposited: {result['vault_path']}")
+            print("Run research-agent kb rebuild to index the deposited report.")
+            return 0
+        print("[runtime_error] Unsupported task subcommand in v1.")
+        return 1
     except ResearchError as error:
         print(f"[{error.code}] {error.message}")
         return 1

@@ -27,6 +27,20 @@ const webResult: ResearchResult = {
   report_path: "D:/reports/web/report.md"
 };
 
+const webResult2: ResearchResult = {
+  task_id: "task_20260624_000002_cccccc",
+  mode: "web",
+  question: "second web question",
+  status: "completed",
+  curator_output: {
+    title: "Web2",
+    summary: "Second summary",
+    findings: [{ finding_id: "f_2", subtask_id: "st_1", text: "Finding 2", source_ids: ["src_2"] }],
+    sources: [{ source_id: "src_2", title: "Source 2", url: "https://example.com/2", fetched_at: "now" }]
+  },
+  report_path: "D:/reports/web/report2.md"
+};
+
 const webEvents =
   'data: {"task_id":"task_20260624_000001_bbbbbb","mode":"web","phase":"web_planning","event_type":"completed","created_at":"now","message":"Initial plan created.","details":{"items":[]}}\n\n';
 const localEvents =
@@ -147,6 +161,63 @@ describe("App", () => {
     expect(screen.getByText("local question")).toBeInTheDocument();
   });
 
+  it("deposits a finished web report into the knowledge base and rebuilds the index", async () => {
+    mockConfiguredFetch();
+    render(<MemoryRouter><App /></MemoryRouter>);
+
+    await screen.findByRole("heading", { name: "Research" });
+    await userEvent.click(screen.getByRole("link", { name: "Tasks" }));
+    await userEvent.click(await screen.findByText("web question"));
+    expect(await screen.findByText("Web Report")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Deposit to Knowledge Base" }));
+
+    expect(await screen.findByText("Deposited to Knowledge Base.")).toBeInTheDocument();
+    expect(screen.getByText("D:/vault/web-research/report.md")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Rebuild Index" }));
+
+    expect(await screen.findByText(/Index rebuilt/)).toBeInTheDocument();
+
+    // Local results have no deposit affordance.
+    await userEvent.click(screen.getByText("local question"));
+    expect(await screen.findByText("Local Result")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Deposit to Knowledge Base" })).not.toBeInTheDocument();
+  });
+
+  it("shows already-deposited state when the task was deposited before", async () => {
+    mockConfiguredFetch({ depositStatus: 409 });
+    render(<MemoryRouter><App /></MemoryRouter>);
+
+    await screen.findByRole("heading", { name: "Research" });
+    await userEvent.click(screen.getByRole("link", { name: "Tasks" }));
+    await userEvent.click(await screen.findByText("web question"));
+    expect(await screen.findByText("Web Report")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Deposit to Knowledge Base" }));
+
+    expect(await screen.findByText("Already deposited to Knowledge Base.")).toBeInTheDocument();
+  });
+
+  it("resets the deposit panel when switching between two web tasks", async () => {
+    mockConfiguredFetch({ secondWebTask: true });
+    render(<MemoryRouter><App /></MemoryRouter>);
+
+    await screen.findByRole("heading", { name: "Research" });
+    await userEvent.click(screen.getByRole("link", { name: "Tasks" }));
+    await userEvent.click(await screen.findByText("web question"));
+    expect(await screen.findByText("Web summary")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Deposit to Knowledge Base" }));
+    expect(await screen.findByText("Deposited to Knowledge Base.")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("second web question"));
+
+    expect(await screen.findByText("Second summary")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Deposit to Knowledge Base" })).toBeInTheDocument();
+    expect(screen.queryByText("Deposited to Knowledge Base.")).not.toBeInTheDocument();
+  });
+
   it("shows knowledge base status and rebuild action", async () => {
     mockConfiguredFetch();
     render(<MemoryRouter><App /></MemoryRouter>);
@@ -239,7 +310,7 @@ describe("App", () => {
   });
 });
 
-function mockConfiguredFetch(options: { webResultOverride?: ResearchResult } = {}) {
+function mockConfiguredFetch(options: { webResultOverride?: ResearchResult; depositStatus?: number; secondWebTask?: boolean } = {}) {
   const resolvedWebResult = options.webResultOverride ?? webResult;
   const webStatus: "completed" | "failed" = resolvedWebResult.status === "failed" ? "failed" : "completed";
   let finishedTasks = [
@@ -258,6 +329,18 @@ function mockConfiguredFetch(options: { webResultOverride?: ResearchResult } = {
       created_at: "2026-06-24T00:00:00Z"
     }
   ];
+  if (options.secondWebTask) {
+    finishedTasks = [
+      {
+        task_id: webResult2.task_id,
+        mode: "web",
+        status: "completed",
+        title_or_question: "second web question",
+        created_at: "2026-06-24T00:00:02Z"
+      },
+      ...finishedTasks
+    ];
+  }
 
   // Build SSE event map for EventSource mock
   _sseEventMap = {};
@@ -310,8 +393,33 @@ function mockConfiguredFetch(options: { webResultOverride?: ResearchResult } = {
         body = _sseEventMap[webResult.task_id] ?? [];
       } else if (url.endsWith(`/api/tasks/${webResult.task_id}/result`)) {
         body = resolvedWebResult;
+      } else if (url.endsWith(`/api/tasks/${webResult2.task_id}/result`)) {
+        body = webResult2;
+      } else if (url.endsWith(`/api/tasks/${webResult2.task_id}/events`)) {
+        body = [
+          {
+            task_id: webResult2.task_id,
+            mode: "web",
+            phase: "web_curation",
+            event_type: "completed",
+            created_at: "now",
+            message: "Task completed.",
+            details: { items: [] },
+          },
+        ];
+      } else if (url.endsWith(`/api/tasks/${webResult2.task_id}/deposit`) && init?.method === "POST") {
+        body = { task_id: webResult2.task_id, vault_path: "D:/vault/web-research/report2.md" };
       } else if (url.endsWith(`/api/tasks/${localResult.task_id}/result`)) {
         body = localResult;
+      } else if (url.endsWith(`/api/tasks/${webResult.task_id}/deposit`) && init?.method === "POST") {
+        if (options.depositStatus === 409) {
+          return {
+            ok: false,
+            status: 409,
+            text: async () => JSON.stringify({ error: { code: "already_deposited", message: "This task's report is already deposited in the Knowledge Base." } })
+          };
+        }
+        body = { task_id: webResult.task_id, vault_path: "D:/vault/web-research/report.md" };
       } else if (url.endsWith(`/api/tasks/${webResult.task_id}`) && init?.method === "DELETE") {
         finishedTasks = finishedTasks.filter((task) => task.task_id !== webResult.task_id);
         body = { task_id: webResult.task_id, deleted: true };

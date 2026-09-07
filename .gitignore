@@ -6,4 +6,5 @@ __pycache__/
 _test_chroma/
 node_modules/
 web/node_modules/
+web/test-results/
 .claude/
