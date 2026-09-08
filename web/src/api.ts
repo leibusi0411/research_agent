@@ -161,52 +161,115 @@ export function parseSseEvents(text: string): ProgressEvent[] {
 
 // R-101: onError before onResult is a more natural parameter order
 // (error handler typically precedes success/result handler).
+//
+// Stall watchdog: a live SSE connection can silently stop delivering frames
+// (proxy hiccup, dead generator) while the backend keeps writing events.
+// When no frame arrives within SSE_STALL_TIMEOUT_MS the stream is closed and
+// reconnected; the server replays the full history on reconnect and the seq
+// dedup below keeps the trace free of duplicates. Events without a seq (only
+// the initial "Task started." frame) are accepted until the first sequenced
+// frame arrives, and treated as replay artifacts afterwards.
+const SSE_STALL_TIMEOUT_MS = 45_000;
+
 export function subscribeTaskEvents(
   taskId: string,
   onEvent: (event: ProgressEvent) => void,
   onError: () => void,
   onResult: (event: ProgressEvent) => void,
 ): () => void {
-  let eventSource: EventSource;
-  try {
-    eventSource = new EventSource(`/api/tasks/${taskId}/events`);
-  } catch {
-    // EventSource constructor may throw (e.g. network unavailable).
-    // Treat as permanent error — no reconnection possible.
-    onError();
-    return () => {};
-  }
+  let eventSource: EventSource | null = null;
+  let disposed = false;
+  let stallTimer: number | null = null;
+  let lastSeq = -1;
+  let sawSequencedEvent = false;
 
-  eventSource.onmessage = (msg) => {
+  const clearStallTimer = () => {
+    if (stallTimer !== null) {
+      window.clearTimeout(stallTimer);
+      stallTimer = null;
+    }
+  };
+
+  const dispose = () => {
+    disposed = true;
+    clearStallTimer();
+    eventSource?.close();
+    eventSource = null;
+  };
+
+  const armStallTimer = () => {
+    clearStallTimer();
+    if (disposed) return;
+    stallTimer = window.setTimeout(() => {
+      if (disposed) return;
+      // Force a reconnect: the route re-runs and the fresh stream replays any
+      // events the stalled connection missed.
+      eventSource?.close();
+      connect();
+    }, SSE_STALL_TIMEOUT_MS);
+  };
+
+  const handleEvent = (event: ProgressEvent) => {
+    // Any frame at all proves the link is alive — feed the watchdog before
+    // deduping so a long replay cannot starve it into a reconnect loop.
+    armStallTimer();
+    if (typeof event.seq === "number") {
+      if (sawSequencedEvent && event.seq <= lastSeq) return;
+      lastSeq = Math.max(lastSeq, event.seq);
+      sawSequencedEvent = true;
+    } else if (sawSequencedEvent) {
+      // No-seq frames only exist at the very start of the history; seeing one
+      // after sequenced events means the stream replayed from the beginning.
+      return;
+    }
+    onEvent(event);
+  };
+
+  const connect = () => {
+    if (disposed) return;
     try {
-      const event = JSON.parse(msg.data) as ProgressEvent;
-      // S2: task_result event signals task completion — fetch result once, stop stream.
-      if (event.event_type === "task_result") {
-        eventSource.close();
-        onResult(event);
-        return;
+      eventSource = new EventSource(`/api/tasks/${taskId}/events`);
+    } catch {
+      // EventSource constructor may throw (e.g. network unavailable).
+      // Treat as permanent error — no reconnection possible.
+      dispose();
+      onError();
+      return;
+    }
+    eventSource.onmessage = (msg) => {
+      try {
+        const event = JSON.parse(msg.data) as ProgressEvent;
+        // S2: task_result event signals task completion — fetch result once, stop stream.
+        if (event.event_type === "task_result") {
+          dispose();
+          onResult(event);
+          return;
+        }
+        if (event.event_type === "stream_timeout") {
+          dispose();
+          onError();
+          return;
+        }
+        handleEvent(event);
+      } catch {
+        // Skip unparseable events
       }
-      if (event.event_type === "stream_timeout") {
-        eventSource.close();
+    };
+    eventSource.onerror = () => {
+      // R-72: Distinguish transient from permanent errors.
+      // EventSource.CONNECTING (0) means the browser will auto-retry — do NOT close.
+      // EventSource.CLOSED (2) means the connection is permanently dead.
+      if (eventSource && eventSource.readyState === EventSource.CLOSED) {
+        dispose();
         onError();
         return;
       }
-      onEvent(event);
-    } catch {
-      // Skip unparseable events
-    }
+      // Otherwise (CONNECTING), the browser will auto-reconnect; let it retry.
+      armStallTimer();
+    };
+    armStallTimer();
   };
 
-  eventSource.onerror = () => {
-    // R-72: Distinguish transient from permanent errors.
-    // EventSource.CONNECTING (0) means the browser will auto-retry — do NOT close.
-    // EventSource.CLOSED (2) means the connection is permanently dead.
-    if (eventSource.readyState === EventSource.CLOSED) {
-      eventSource.close();
-      onError();
-    }
-    // Otherwise (CONNECTING), the browser will auto-reconnect; let it retry.
-  };
-
-  return () => eventSource.close();
+  connect();
+  return dispose;
 }
