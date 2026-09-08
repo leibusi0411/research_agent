@@ -4,6 +4,7 @@ import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from research_agent.core.config import InitConfigRequest
 from research_agent.core.service import CoreService

@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from research_agent.api.app import create_app
-from research_agent.core.config import InitConfigRequest
+from research_agent.core.config import InitConfigRequest, load_user_config
 from research_agent.core.ids import generate_task_id, utc_now_iso
 from research_agent.core.service import CoreService
 from research_agent.core.tasks import TaskRecord, TaskStore
@@ -17,6 +17,13 @@ from research_agent.core.workspace import Workspace
 class _FixedEmbeddingClient:
     def embed(self, texts: list[str]) -> list[list[float]]:
         return [[0.1, 0.2, 0.3] for _text in texts]
+
+
+class _FixedChatModel:
+    """Deterministic offline chat model for Local RAG A+G summaries."""
+
+    def complete(self, prompt: str, *, json_mode: bool = False) -> str:
+        return "Local A+G summary."
 
 
 class _TestWebRuntime:
@@ -126,6 +133,7 @@ def configured_client(tmp_path: Path) -> tuple[TestClient, Path, Path]:
         config_path=config_path,
         web_runtime_factory=lambda workspace_path: _TestWebRuntime(workspace_path=str(workspace_path)),
         embedding_client_factory=lambda _config: _FixedEmbeddingClient(),
+        chat_model_factory=lambda _config: _FixedChatModel(),
     )
     return TestClient(app), workspace, vault
 
@@ -449,3 +457,117 @@ def test_events_endpoint_falls_back_while_runner_not_ready(tmp_path):
     events = client.get(f"/api/tasks/{task_id}/events")
     assert events.status_code == 200
     assert "data: " in events.text
+
+
+def test_setup_config_returns_current_settings_with_masked_keys(tmp_path):
+    client, workspace, vault = configured_client(tmp_path)
+
+    response = client.get("/api/setup/config")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["default_workspace"] == str(workspace)
+    assert body["knowledge_base_path"] == str(vault)
+    assert body["chat_base_url"] == "https://models.example/v1"
+    assert body["chat_model"] == "chat-model"
+    assert body["embedding_base_url"] == "https://embeddings.example/v1"
+    assert body["embedding_model"] == "embedding-model"
+    # API key values never leave the backend — only their presence does.
+    assert body["chat_api_key"] == ""
+    assert body["embedding_api_key"] == ""
+    assert body["search_api_key"] == ""
+    assert body["has_chat_api_key"] is True
+    assert body["has_embedding_api_key"] is True
+    assert body["has_search_api_key"] is True
+
+
+def test_setup_config_without_config_returns_config_missing(tmp_path):
+    client = TestClient(create_app(config_path=tmp_path / "config.toml"))
+
+    response = client.get("/api/setup/config")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "config_missing"
+
+
+def test_setup_init_blank_keys_keep_saved_values_on_existing_config(tmp_path):
+    client, workspace, vault = configured_client(tmp_path)
+
+    response = client.post(
+        "/api/setup/init",
+        json={
+            "default_workspace": str(workspace),
+            "knowledge_base_path": str(vault),
+            "chat_base_url": "https://changed.example/v1",
+            "chat_api_key": "",
+            "chat_model": "chat-model-2",
+            "embedding_base_url": "https://embeddings.example/v1",
+            "embedding_api_key": "",
+            "embedding_model": "embedding-model",
+            "search_api_key": "",
+        },
+    )
+
+    assert response.status_code == 200
+    config = load_user_config(tmp_path / "config.toml")
+    # Blank key fields mean "keep the saved key" so the settings page can
+    # let users edit other fields without re-entering secrets.
+    assert config.chat_model.api_key == "chat-key"
+    assert config.embedding_model.api_key == "embedding-key"
+    assert config.search.api_key == "search-key"
+    assert config.chat_model.base_url == "https://changed.example/v1"
+    assert config.chat_model.model == "chat-model-2"
+
+
+def test_setup_init_blank_keys_without_existing_config_is_rejected(tmp_path):
+    client = TestClient(create_app(config_path=tmp_path / "config.toml"))
+    vault = tmp_path / "vault"
+    vault.mkdir()
+
+    response = client.post(
+        "/api/setup/init",
+        json={
+            "default_workspace": str(tmp_path / "runtime"),
+            "knowledge_base_path": str(vault),
+            "chat_base_url": "https://models.example/v1",
+            "chat_api_key": "",
+            "chat_model": "chat-model",
+            "embedding_base_url": "https://embeddings.example/v1",
+            "embedding_api_key": "",
+            "embedding_model": "embedding-model",
+            "search_api_key": "",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "config_invalid"
+
+
+def test_research_start_without_config_fails_with_config_missing(tmp_path):
+    client = TestClient(create_app(config_path=tmp_path / "config.toml"))
+
+    local = client.post("/api/research/local", json={"question": "q"})
+    web = client.post("/api/research/web", json={"question": "q"})
+
+    # Research cannot start without User Config — the API must report the
+    # error synchronously instead of starting a task that is doomed to fail.
+    assert local.status_code == 400
+    assert local.json()["error"]["code"] == "config_missing"
+    assert web.status_code == 400
+    assert web.json()["error"]["code"] == "config_missing"
+
+
+def test_local_research_via_api_returns_llm_summary(tmp_path):
+    client, _workspace, _vault = configured_client(tmp_path)
+
+    started = client.post("/api/research/local", json={"question": "planner"})
+    assert started.status_code == 202
+    task_id = started.json()["task_id"]
+    wait_for_finished_tasks(client, expected_count=1)
+
+    result = client.get(f"/api/tasks/{task_id}/result")
+    body = result.json()
+    assert body["status"] == "completed"
+    # A+G: the API path must match the CLI capability surface — retrieved
+    # chunks are augmented with an LLM-generated summary.
+    assert body["summary"] == "Local A+G summary."

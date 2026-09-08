@@ -98,9 +98,6 @@ This document collects complex capabilities discussed during v1 design but inten
 - Web UI Run Both action.
   V1 Web UI starts Local and Web separately. A future version may add a Run Both action once parent task semantics or grouped results exist.
 
-- Settings page.
-  V1 has setup only when config is missing. Future versions may add a full settings editor for models, search providers, workspace paths, web tool boundaries, and index behavior.
-
 - Machine-readable CLI output.
   V1 CLI is human-readable only. Future versions may add `--json`, structured event streaming, or shell-friendly output modes.
 

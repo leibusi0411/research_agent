@@ -16,6 +16,14 @@ export type SetupPayload = {
   search_api_key: string;
 };
 
+// GET /api/setup/config — current settings with key values withheld;
+// has_* flags tell the settings UI whether a key is already saved.
+export type SetupConfig = Omit<SetupPayload, "chat_api_key" | "embedding_api_key" | "search_api_key"> & {
+  has_chat_api_key: boolean;
+  has_embedding_api_key: boolean;
+  has_search_api_key: boolean;
+};
+
 export type TaskSummary = {
   task_id: string;
   mode: "local" | "web";
@@ -49,6 +57,7 @@ export type ResearchResult = {
   mode: "local" | "web";
   question: string;
   status: "running" | "completed" | "failed";
+  summary?: string;
   local_results?: LocalResult[];
   curator_output?: {
     title: string;
@@ -117,6 +126,7 @@ export class ApiError extends Error {
 
 export const api = {
   setupStatus: () => request<SetupStatus>("/api/setup/status"),
+  setupConfig: () => request<SetupConfig>("/api/setup/config"),
   setupInit: (payload: SetupPayload) =>
     request<SetupStatus>("/api/setup/init", { method: "POST", body: JSON.stringify(payload) }),
   runWeb: (question: string) =>

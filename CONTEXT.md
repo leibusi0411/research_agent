@@ -381,12 +381,12 @@ The graphical interface for the Capability Surface, optimized for starting Local
 _Avoid_: dashboard, admin panel
 
 **Web API**:
-The minimal local FastAPI surface used by Web UI. V1 exposes setup status/init, Local RAG start, Web Research start, active task lookup, finished task list, task progress SSE, current-run result lookup, task delete, Knowledge Deposit, Knowledge Base status, and Knowledge Base rebuild. It does not expose a Run Both endpoint, task-history detail endpoint, settings editor, or note-management API.
+The minimal local FastAPI surface used by Web UI. V1 exposes setup status/init, setup config read (API key values withheld), Local RAG start, Web Research start, active task lookup, finished task list, task progress SSE, current-run result lookup, task delete, Knowledge Deposit, Knowledge Base status, and Knowledge Base rebuild. It does not expose a Run Both endpoint, task-history detail endpoint, or note-management API.
 _Avoid_: public API, remote backend
 
-**Setup View**:
-The Web UI view shown only when User Config is missing. It supports initial configuration and is not a general Settings page in v1.
-_Avoid_: settings page, admin settings
+**Settings Page**:
+The always-available Web UI page (sidebar entry `Settings`, route `/settings`) for viewing and editing User Config: workspace paths, chat and embedding model settings, and the search provider API key. It prefills from saved settings while withholding API key values (only their presence is shown); blank key fields keep the saved keys on save. Like initialization, it only collects and validates settings — it does not scan the Knowledge Base, build indexes, start services, or call providers. The Research Page stays usable without User Config; starting research then reports `config_missing`, and users configure here through the sidebar (ADR-0047, which supersedes the v1 setup-only view).
+_Avoid_: setup wizard, one-time setup, admin settings
 
 **Research Page**:
 The Web UI page with a Local RAG input area, a Web Research input area, and progress views for active Local RAG and Web Research tasks. It does not provide a combined Run Both action; users start Local RAG and Web Research separately if they want both. Local RAG and Web Research can run concurrently as separate tasks, but each task family allows only one active task at a time. Local mode leads to a Local Result Page, and Web mode leads to a Web Report Page.

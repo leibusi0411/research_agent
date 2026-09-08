@@ -10,6 +10,7 @@ const localResult: ResearchResult = {
   mode: "local",
   question: "local question",
   status: "completed",
+  summary: "Local summary from retrieved chunks",
   local_results: [{ text: "Local content", source_path: "D:/vault/note.md", heading_path: ["API"] }]
 };
 
@@ -91,26 +92,102 @@ beforeEach(() => {
 });
 
 describe("App", () => {
-  it("shows setup view when config is missing and creates config", async () => {
-    mockFetch([
-      { configured: false },
-      { configured: true, config_path: "C:/config.toml" },
-      { tasks: [] },
-      { status: "missing", vault_path: "D:/vault", file_count: 0, chunk_count: 0, last_indexed_at: null }
-    ]);
+  it("lets unconfigured users use the Research page; submitting reports the config error", async () => {
+    stubEventSource();
+    _sseEventMap = {};
+    function jsonResponse(body: unknown, ok = true, status = 200) {
+      return { ok, status, text: async () => JSON.stringify(body) };
+    }
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api/setup/status")) return jsonResponse({ configured: false });
+        if (url.endsWith("/api/research/web") && init?.method === "POST") {
+          return jsonResponse(
+            { error: { code: "config_missing", message: "User config is missing. Run research-agent init first." } },
+            false,
+            404
+          );
+        }
+        return jsonResponse({});
+      })
+    );
 
     render(<MemoryRouter><App /></MemoryRouter>);
 
-    expect(await screen.findByText("Research Agent Setup")).toBeInTheDocument();
-    for (const input of screen.getAllByRole("textbox")) {
-      await userEvent.type(input, "x");
+    // Research is the landing page even without config — the shell with all
+    // four pages renders and the question input works normally.
+    expect(await screen.findByRole("heading", { name: "Inkwell" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Research" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Tasks" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Knowledge Base" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument();
+    const question = await screen.findByRole("textbox", { name: "Research question" });
+    await userEvent.type(question, "my question");
+
+    // Submitting without config reports the error instead of starting a task.
+    await userEvent.click(screen.getByRole("button", { name: "Research" }));
+    expect(await screen.findByText(/config_missing/)).toBeInTheDocument();
+  });
+
+  it("prefills the Settings page from saved config and keeps saved keys blank", async () => {
+    stubEventSource();
+    _sseEventMap = {};
+    function jsonResponse(body: unknown, ok = true, status = 200) {
+      return { ok, status, text: async () => JSON.stringify(body) };
     }
-    for (const input of document.querySelectorAll("input[type='password']")) {
-      await userEvent.type(input, "x");
-    }
+    const initBodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api/setup/status")) return jsonResponse({ configured: true });
+        if (url.endsWith("/api/setup/config")) {
+          return jsonResponse({
+            default_workspace: "D:/runtime",
+            knowledge_base_path: "D:/vault",
+            chat_base_url: "https://models.example/v1",
+            chat_model: "chat-model",
+            embedding_base_url: "https://embeddings.example/v1",
+            embedding_model: "embedding-model",
+            chat_api_key: "",
+            embedding_api_key: "",
+            search_api_key: "",
+            has_chat_api_key: true,
+            has_embedding_api_key: true,
+            has_search_api_key: true
+          });
+        }
+        if (url.endsWith("/api/setup/init") && init?.method === "POST") {
+          initBodies.push(JSON.parse(String(init.body)));
+          return jsonResponse({ configured: true, config_path: "C:/config.toml" });
+        }
+        return jsonResponse({});
+      })
+    );
+
+    render(<MemoryRouter initialEntries={["/settings"]}><App /></MemoryRouter>);
+
+    // Non-secret fields are prefilled from the saved config.
+    const chatUrl = await screen.findByRole("textbox", { name: "chat_base_url" });
+    await waitFor(() => expect(chatUrl).toHaveValue("https://models.example/v1"));
+    expect(screen.getByRole("textbox", { name: "chat_model" })).toHaveValue("chat-model");
+
+    // Saved keys stay blank, are optional, and say so in the placeholder.
+    const chatKey = document.querySelector("input[name='chat_api_key']") as HTMLInputElement;
+    expect(chatKey).toHaveValue("");
+    expect(chatKey).not.toBeRequired();
+    expect(chatKey).toHaveAttribute("placeholder", "Saved — leave blank to keep");
+
+    // Editing and saving stays on the Settings page with a confirmation,
+    // submitting blank key fields so the backend keeps the saved keys.
+    await userEvent.clear(chatUrl);
+    await userEvent.type(chatUrl, "u");
     await userEvent.click(screen.getByRole("button", { name: "Save Config" }));
 
-    expect(await screen.findByRole("heading", { name: "Inkwell" })).toBeInTheDocument();
+    expect(await screen.findByText("Settings saved.")).toBeInTheDocument();
+    expect(initBodies[0]).toMatchObject({ chat_base_url: "u", chat_api_key: "" });
   });
 
   it("runs web research and renders the trace and result cards", async () => {
@@ -139,6 +216,7 @@ describe("App", () => {
     await userEvent.click(screen.getByText("local question"));
     expect(await screen.findByText("Local Result")).toBeInTheDocument();
     expect(screen.getByText("local_rag")).toBeInTheDocument();
+    expect(screen.getByText("Local summary from retrieved chunks")).toBeInTheDocument();
   });
 
   it("reattaches to a running web task on load", async () => {

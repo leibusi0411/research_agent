@@ -4,9 +4,9 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-green.svg)](https://fastapi.tiangolo.com/)
-[![React](https://img.shields.io/badge/React-18+-61DAFB.svg)](https://react.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-67%20passed-brightgreen.svg)](https://github.com/leibusi0411/research_agent)
+[![React](https://img.shields.io/badge/React-19+-61DAFB.svg)](https://react.dev/)
+[![LangGraph](https://img.shields.io/badge/agent%20编排-LangGraph-orange.svg)](https://langchain-ai.github.io/langgraph/)
+[![Tests](https://img.shields.io/badge/tests-186%20passed-brightgreen.svg)](https://github.com/leibusi0411/research_agent)
 
 ---
 
@@ -34,7 +34,6 @@
 - [常见问题](#常见问题)
 - [ADR（架构决策记录）](#adr架构决策记录)
 - [项目路线图](#项目路线图)
-- [License](#license)
 
 ---
 
@@ -54,11 +53,13 @@
 - **真实工具调用**：通过 ToolGateway 实际执行网络搜索（Tavily）、网页抓取提取（trafilatura）、PDF 下载解析（pypdf）
 - **多步骤执行**：每个子任务先规划工具调用 → 执行工具 → 合成结论，而非依赖 LLM 凭空生成
 - **迭代优化**：Supervisor 自动评估研究进度，支持补全计划、跳过已完成任务
+- **Prior Knowledge 注入**：启动前先检索本地知识库，Planner 据此避开已覆盖的内容（ADR-0046，可关闭）
+- **知识沉淀（Knowledge Deposit）**：完成的 Web 报告可显式沉淀进知识库 vault，供后续 Local RAG 检索（ADR-0045）
 - **产物持久化**：自动生成 Markdown 报告、blackboard 快照、web_sources 快照
 
 ### 通用特性
 
-- **离线测试**：所有 67 个测试均离线运行，使用确定性 fake 实现，无需网络或 API key
+- **离线测试**：Python 186 个测试中 180 个离线确定性运行（其余 6 个为可选真实链路 e2e），另有前端 21 个 Vitest 单元测试，均无需网络或 API key
 - **双界面**：CLI（argparse）+ Web UI（React + Vite），通过统一 FastAPI 接入
 - **任务锁**：同一 family（local/web）同时只允许一个活跃任务，防止资源冲突
 - **SSE 流式推送**：实时推送任务进度事件，支持 30 分钟超时
@@ -91,14 +92,14 @@
 │TOML  │ │FTS5+ │ │.py     │ │  context.py          │
 │      │ │Chroma│ │Local   │ │  tools.py (Gateway)  │
 │      │ │      │ │RAG     │ │  prompt_builders.py  │
-├──────┤ ├──────┤ ├────────┤ │  state_graph.py      │
-│tasks │ │worksp│ │        │ │  role_invocation.py  │
-│.py   │ │ace.py│ │        │ │  provider_runtime.py │
-│SQLite│ │dirs  │ │        │ │  fake_runtime.py     │
-├──────┤ ├──────┤ │        │ │  report.py           │
-│provi-│ │errors│ │        │ │                      │
-│ders  │ │.py   │ │        │ └──────────────────────┘
-│.py   │ │ids.py│ │        │
+├──────┤ ├──────┤ ├────────┤ │  executor.py         │
+│tasks │ │worksp│ │        │ │  graph.py (LangGraph)│
+│.py   │ │ace.py│ │        │ │  state_graph.py      │
+│SQLite│ │dirs  │ │        │ │  role_invocation.py  │
+├──────┤ ├──────┤ │        │ │  provider_runtime.py │
+│provi-│ │errors│ │        │ │  fake_runtime.py     │
+│ders  │ │.py   │ │        │ │  report.py           │
+│.py   │ │ids.py│ │        │ └──────────────────────┘
 │OpenAI│ │      │ │        │
 │compat│ │      │ │        │
 └──────┘ └──────┘ └────────┘
@@ -111,7 +112,7 @@
 | **CLI** | `cli.py` | argparse 命令行入口；默认使用 provider-backed runtime |
 | **Web UI** | `web/` | React + Vite 前端，通过 API 交互 |
 | **API** | `api/app.py` | FastAPI 工厂函数，SSE 流式推送任务进度，服务静态文件 |
-| **Core** | `core/` | 领域逻辑：配置、知识库索引、本地检索、任务存储、工作区 |
+| **Core** | `core/` | 领域逻辑：配置、知识库索引（FTS5+ChromaDB）、本地检索、知识沉淀（deposit）、事件总线（bus）、任务存储、工作区 |
 | **Web Runtime** | `web/` | Web Research 运行时：状态图、工具网关、prompt 构建、报告生成 |
 
 ---
@@ -201,7 +202,7 @@ uv run research-agent init
 
 #### 方式 B：通过 Web UI 初始化
 
-启动服务器后（见下方），浏览器打开 `http://localhost:8000`，如果未配置会自动跳转到 Setup 页面，填写表单提交即可。
+启动服务后（`cd web && npm run dev:all`，见下方），浏览器打开 `http://localhost:5173`，如果未配置会自动进入 Settings 页面，填写表单提交即可。
 
 #### 方式 C：手动创建配置文件
 
@@ -298,21 +299,17 @@ CLI 会在终端直接输出结果。完整的 Markdown 报告保存在：
 
 Web UI 提供可视化的研究界面，支持任务管理、实时进度查看和结果浏览。
 
-#### 构建并启动（生产模式）
+#### 启动 Web UI（前后端开发模式）
 
 ```bash
-# 步骤 1：构建前端（首次或前端代码变更后需要）
 cd web
-npm run build
-cd ..
-
-# 步骤 2：启动后端服务器（同时服务前端静态文件 + API）
-uv run uvicorn research_agent.api.app:create_app --factory --host 127.0.0.1 --port 8000
+npm install        # 首次安装依赖
+npm run dev:all    # 一条命令启动后端 API (8001) + 前端 Vite (5173)
 ```
 
-浏览器打开 **http://localhost:8000** 即可使用。
+浏览器打开 **http://localhost:5173** 即可使用。
 
-> **说明**：`--factory` 参数表示 `create_app` 是一个工厂函数（返回 FastAPI 实例），而非直接是 FastAPI 实例。
+> **说明**：当前后端只提供 API，**不直接服务前端静态文件**。若要独立部署前端，可执行 `npm run build` 后用任意静态服务器托管 `web/dist/`，并将 `/api` 反向代理到后端端口。
 
 Web UI 有三个页面：
 
@@ -321,10 +318,11 @@ Web UI 有三个页面：
 | **Research** | 主界面 — 输入问题，启动 Local RAG 或 Web Research，实时查看进度和结果 |
 | **Tasks** | 查看历史任务列表，点击可查看详情（结果 + 进度事件） |
 | **Knowledge Base** | 查看知识库索引状态，重建索引 |
+| **Settings** | 随时查看和修改全部配置（已保存的 API key 留空即保持不变） |
 
 #### 首次使用 Web UI
 
-如果尚未配置，打开浏览器后会自动跳转到 Setup 页面。填写以下信息：
+如果尚未配置，打开浏览器后会自动进入 Settings 页面。填写以下信息：
 
 | 字段 | 说明 | 示例 |
 |------|------|------|
@@ -372,7 +370,7 @@ npm run dev:all    # 同时启动后端 API (8001) + 前端 Vite (5173)
 | **一键启动** | `npm run dev:all` 通过 concurrently 同时启动前后端 |
 | **热更新 (HMR)** | 修改 `web/src/` 下的代码，浏览器自动刷新，无需手动构建 |
 | **API 代理** | Vite 自动将 `/api/*` 请求代理到后端 `http://127.0.0.1:8001` |
-| **端口** | 前端 `5173`，后端 `8001`（与生产模式的 `8000` 不同，避免冲突） |
+| **端口** | 前端 `5173`，后端 `8001`（Vite 将 `/api` 代理到 8001） |
 
 #### 前端项目结构
 
@@ -506,6 +504,8 @@ cd web && npm run test:e2e
 | `GET` | `/api/tasks/finished` | 查询已完成任务 |
 | `GET` | `/api/tasks/{task_id}/events` | SSE 流获取任务进度事件 |
 | `GET` | `/api/tasks/{task_id}/result` | 获取任务结果 |
+| `DELETE` | `/api/tasks/{task_id}` | 删除任务 |
+| `POST` | `/api/tasks/{task_id}/deposit` | 沉淀 Web 报告到知识库 vault |
 
 ### 知识库
 
@@ -518,6 +518,7 @@ cd web && npm run test:e2e
 
 ```json
 {
+  "seq": 42,
   "task_id": "task_xxx",
   "mode": "web",
   "phase": "web_planning | web_execution | web_supervision | web_revision | web_curation",
@@ -596,67 +597,70 @@ tool_retries = 2
 research_agent/
 ├── src/research_agent/
 │   ├── api/
-│   │   └── app.py              # FastAPI 应用工厂
-│   ├── cli.py                   # argparse CLI
+│   │   └── app.py              # FastAPI 应用工厂 + SSE 端点 + 静态文件服务
+│   ├── cli.py                  # argparse CLI
 │   ├── core/
-│   │   ├── config.py            # TOML 配置解析
-│   │   ├── errors.py            # 统一错误类型
-│   │   ├── ids.py               # ID 生成与校验
-│   │   ├── kb.py                # 知识库索引（FTS5 + 向量）
-│   │   ├── local_research.py    # Local RAG 检索
-│   │   ├── providers.py         # OpenAI 兼容模型客户端
-│   │   ├── service.py           # CoreService（应用层）
-│   │   ├── tasks.py             # 任务存储（SQLite）
-│   │   └── workspace.py         # 工作区目录管理
+│   │   ├── bus.py              # EventStream 事件总线（janus.Queue，SSE/CLI 共用）
+│   │   ├── chroma_store.py     # ChromaDB 向量存储封装
+│   │   ├── config.py           # TOML 配置解析（全局 + per-role 覆盖）
+│   │   ├── deposit.py          # Knowledge Deposit（Web 报告沉淀进 vault）
+│   │   ├── errors.py           # 统一错误类型
+│   │   ├── ids.py              # ID 生成与校验
+│   │   ├── kb.py               # 知识库索引（FTS5 + ChromaDB 混合）
+│   │   ├── local_research.py   # Local RAG 检索（含可选 LLM 总结）
+│   │   ├── providers.py        # OpenAI 兼容模型客户端
+│   │   ├── service.py          # CoreService（应用层 + 任务族锁）
+│   │   ├── tasks.py            # 任务存储（SQLite）
+│   │   └── workspace.py        # 工作区目录管理
 │   └── web/
 │       ├── context.py           # Per-role 上下文构建
 │       ├── executor.py          # ResearchExecutor（工具规划/执行/综合）
-│       ├── fake_runtime.py      # 确定性 Fake Runtime（测试/CLI）
+│       ├── fake_runtime.py      # 确定性 Fake Runtime（离线测试）
 │       ├── graph.py             # LangGraph 节点函数 + 图构建
 │       ├── prompt_builders.py   # Per-role Prompt 构建
-│       ├── provider_runtime.py  # Provider-backed Runtime
+│       ├── provider_runtime.py  # Provider-backed Runtime（CLI/API 默认）
 │       ├── report.py            # Markdown 报告生成
 │       ├── role_invocation.py   # LLM 角色调用 + schema 修复
-│       ├── schemas.py           # 数据模型与状态
-│       ├── state_graph.py       # StateGraphRunner
+│       ├── schemas.py           # 数据模型与 Blackboard 状态
+│       ├── state_graph.py       # StateGraphRunner（LangGraph + checkpoint）
 │       └── tools.py             # ToolGateway（搜索/抓取/提取）
-├── tests/
-│   ├── test_api_app.py
-│   ├── test_cli.py
-│   ├── test_config.py
-│   ├── test_core_service.py
-│   ├── test_kb.py
+├── tests/                       # 18 个测试模块（180 离线 + 6 e2e）
+│   ├── test_api_connections.py
+│   ├── test_api_surface.py
+│   ├── test_bootstrap_foundations.py
+│   ├── test_cli_both_tasks.py
+│   ├── test_event_stream.py
+│   ├── test_init_config.py
+│   ├── test_kb_deposit.py
+│   ├── test_kb_index.py
+│   ├── test_local_context_injection.py
 │   ├── test_local_research.py
-│   ├── test_model_providers.py  # （含 1 个 web research 集成测试）
+│   ├── test_model_providers.py
 │   ├── test_service_run_both.py
-│   ├── test_tasks.py
-│   ├── test_web_context.py
-│   ├── test_web_e2e.py          # 端到端集成测试（需真实 API key）
-│   ├── test_web_e2e_simple.py   # 端到端简单测试
-│   ├── test_web_fake_runtime.py
+│   ├── test_web_e2e.py          # 真实链路 e2e（需 API key，未配置自动 skip）
+│   ├── test_web_e2e_simple.py
 │   ├── test_web_prompt_builders.py
-│   ├── test_web_report.py
-│   ├── test_web_schemas.py
+│   ├── test_web_report_writer.py
 │   ├── test_web_state_graph.py
 │   └── test_web_tools.py
-├── web/                         # React + Vite 前端
+├── web/                         # React 19 + Vite 前端
 │   ├── src/
-│   │   ├── App.tsx              # 主组件
-│   │   ├── api.ts               # API 客户端 + 类型
-│   │   └── main.tsx             # 入口
-│   ├── tests/
-│   │   └── setup.ts
-│   ├── dist/                    # 构建产物（API 服务）
-│   ├── index.html
-│   ├── vite.config.ts
-│   ├── tsconfig.json
+│   │   ├── App.tsx              # 主组件 + 页面路由
+│   │   ├── api.ts               # API 客户端 + SSE 订阅
+│   │   ├── components/          # ProcessView / ResultView / Sidebar 等展示组件
+│   │   ├── hooks/useSSE.ts      # SSE 订阅 hook
+│   │   └── pages/               # Research / Tasks / KB / Settings 四页面
+│   ├── tests/                   # Vitest 单元测试 + Playwright e2e
 │   └── package.json
 ├── docs/
-│   └── adr/                     # 43 个架构决策记录
+│   ├── adr/                     # 46 个架构决策记录
+│   └── agents/                  # agent 协作约定（issue tracker、triage、domain）
+├── AGENTS.md                    # AI 编码 agent 项目指令
 ├── CLAUDE.md                    # Claude Code 项目指令
 ├── CONTEXT.md                   # 领域术语表
-├── REVIEW_TRACKER.md            # 审查与路线图
+├── REVIEW_TRACKER.md            # 审查与路线图（唯一跟踪文件）
 ├── TODO.md                      # 延期功能跟踪
+├── USAGE.md                     # 详细使用文档
 ├── pyproject.toml
 └── README.md
 ```
@@ -667,9 +671,10 @@ research_agent/
 |------|------|
 | **语言** | Python 3.11+ |
 | **包管理** | uv |
-| **API 框架** | FastAPI |
-| **前端** | React 18 + Vite + TypeScript |
-| **数据库** | SQLite（FTS5 全文搜索 + 向量存储） |
+| **API 框架** | FastAPI + sse-starlette（SSE 流式推送） |
+| **Agent 编排** | LangGraph + langgraph-checkpoint-sqlite（SqliteSaver checkpoint） |
+| **存储** | SQLite（任务表 + FTS5 全文索引）+ ChromaDB（语义向量索引） |
+| **前端** | React 19 + Vite + TypeScript + react-router-dom |
 | **HTTP 客户端** | httpx |
 | **HTML 提取** | trafilatura |
 | **PDF 提取** | pypdf |
@@ -679,7 +684,7 @@ research_agent/
 ### 测试
 
 ```bash
-uv run pytest                          # 运行全部测试（67 个，离线确定）
+uv run pytest                          # 运行全部测试（186 个：180 离线 + 6 e2e 需真实 key 自动 skip）
 uv run pytest -x                       # 首次失败即停止
 uv run pytest -k "state_graph"         # 按关键字筛选
 uv run pytest tests/test_web_state_graph.py  # 单个文件
@@ -731,7 +736,7 @@ type %APPDATA%\research_agent\config.toml  # Windows
 ### 前端相关
 
 **Q: 前端启动后页面空白？**
-1. 确认后端服务器已启动且端口正确（开发模式 8001，生产模式 8000）
+1. 确认后端 API 已启动（`dev:all` 模式为 8001）
 2. 检查浏览器控制台是否有报错（F12 → Console）
 3. 确认 `npm install` 已执行且无报错
 
@@ -741,9 +746,8 @@ type %APPDATA%\research_agent\config.toml  # Windows
 3. 重启 Vite 开发服务器
 
 **Q: API 请求报 404？**
-1. 确认后端服务器正在运行
+1. 确认后端 API 正在运行（`dev:all` 模式为 8001）
 2. 开发模式检查 `vite.config.ts` 中 proxy 配置是否指向正确的后端端口
-3. 生产模式确认 `web/dist/` 已构建（`npm run build`）
 
 ### 运行相关
 
@@ -751,21 +755,24 @@ type %APPDATA%\research_agent\config.toml  # Windows
 Web Research 涉及多轮 LLM 调用 + 网络搜索/抓取，通常需要 2-10 分钟。复杂话题可能需要更长时间。进度可通过 SSE 事件实时查看。
 
 **Q: Local RAG 检索不到内容？**
-1. 确认知识库已索引：`curl http://localhost:8000/api/kb/status` 检查 `file_count > 0`
-2. 如未索引，运行 `uv run research-agent init` 或调用 `POST /api/kb/rebuild`
+1. 确认知识库已索引：`curl http://localhost:8001/api/kb/status` 检查 `file_count > 0`
+2. 如未索引，运行 `uv run research-agent kb rebuild` 或调用 `POST /api/kb/rebuild`
 3. 尝试更具体的关键词或使用自然语言描述（支持 FTS5 关键词 + ChromaDB 语义混合检索）
 
 **Q: 如何清理旧任务数据？**
 ```bash
-# 删除工作区目录下的任务文件夹
-rm -rf <workspace>/tasks/task_<old_task_id>/
+# 通过 API 删除指定任务
+curl -X DELETE http://localhost:8001/api/tasks/<task_id>
+
+# 或直接删除工作区目录下的任务文件夹
+rm -rf <workspace>/tasks/<task_id>/
 ```
 
 ---
 
 ## ADR（架构决策记录）
 
-项目包含 **44 个 ADR**（`docs/adr/`），覆盖技术栈选择、架构模式、工程边界等关键决策。关键 ADR：
+项目包含 **46 个 ADR**（`docs/adr/`），覆盖技术栈选择、架构模式、工程边界等关键决策。关键 ADR：
 
 | ADR | 决策 | 实现状态 |
 |-----|------|----------|
@@ -780,39 +787,34 @@ rm -rf <workspace>/tasks/task_<old_task_id>/
 | 0026 | SQLite FTS5 + 向量索引 | ✅ |
 | 0031 | 函数调用工具 + Registry/Gateway/Runner | ✅ |
 | 0038 | 最小化 FastAPI + SSE 接口 | ✅ |
-| 0042 | 确定性离线测试 | ✅ 104 passed |
+| 0042 | 确定性离线测试 | ✅ |
 | 0043 | uv (Python) + npm (Web UI) | ✅ |
 | 0044 | Local RAG LLM 总结（Augmentation + Generation） | ✅ |
+| 0045 | Knowledge Deposit（Web 报告显式沉淀进 vault） | ✅ |
+| 0046 | Prior Knowledge 注入（Web 规划器注入本地知识） | ✅ |
 
-完整 ADR 合规率：**~97%**（1 个 P2 问题待解决：tool call 记录持久化）
+ADR 合规状态与待解决问题见 [`REVIEW_TRACKER.md`](REVIEW_TRACKER.md)。
 
 ---
 
 ## 项目路线图
 
-### 当前阶段：阶段 5 — 端到端验证 ✅ → 🔄
+### 当前阶段：阶段 1–7 已全部完成 ✅
 
-- ✅ 真实 LLM 集成测试（104 tests passed）
-- ✅ Executor 工具调用集成
-- ✅ 多步骤工具调用流程
-- 🔄 性能优化
-- 🔄 错误处理增强（网络超时、API 限流、工具调用失败回退）
+- ✅ 基础设施 + Local RAG + Web Research 骨架与真实运行时（阶段 1–4）
+- ✅ 端到端流程跑通（正确性、边界情况、锁恢复）（阶段 5）
+- ✅ 前端页面完善 + 统一 EventStream（SSE + 流式输出 + 路由 + 组件拆分）（阶段 6）
+- ✅ LangGraph 迁移（StateGraph → LangGraph + SqliteSaver checkpoint）（阶段 7）
+- ✅ Knowledge Deposit（ADR-0045）+ Prior Knowledge 注入（ADR-0046）
+- ✅ Web UI Inkwell 视觉重设计（Gemini 式深色 + 实时轨迹 + 结果卡片）
 
 ### 下一步
 
-| 优先级 | 目标 | 说明 |
-|--------|------|------|
-| P1 | 测试覆盖补充 | `_default_web_runtime` 单测、并发任务、SSE 超时 |
-| P1 | 错误处理增强 | 工具调用失败回退机制、优雅降级 |
-| P2 | 结构化产物持久化 | tool call 记录、model usage metadata |
-| P2 | 工具调用数量上限 | 添加 `max_tool_calls_per_plan` 限制 |
-| P3 | 文档修正 | Chroma 实现说明更新 |
-| P3 | 死代码清理 | `build_executor_prompt`（保留供备用入口） |
+| 阶段 | 目标 | 内容 |
+|------|------|------|
+| 阶段 8 | 功能全部实现 | CLI `task show <id>`、Source 快照查看器（Web UI）、`execution_trace.md` 生成与持久化、工厂重构 + 死代码清理 |
+| 阶段 9 | 健壮性优化 | LLM 调用重试、结构化日志 + 耗时记录、mypy/pyright 类型检查、ruff lint、API rate limit、SIGINT 优雅退出 |
+
+近期待观察项：`local_kb_search` 是否注册为 Web 工具（触发条件与中间档记录于 TODO.md）。
 
 详见 [`REVIEW_TRACKER.md`](REVIEW_TRACKER.md)。
-
----
-
-## License
-
-MIT License. 详见 [LICENSE](LICENSE) 文件。

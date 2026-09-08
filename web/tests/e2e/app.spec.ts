@@ -28,6 +28,29 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
       await route.fulfill({ json: { configured } });
       return;
     }
+    if (url.endsWith("/api/setup/config")) {
+      if (!configured) {
+        await route.fulfill({ status: 404, json: { error: { code: "config_missing", message: "User Config not found." } } });
+      } else {
+        await route.fulfill({
+          json: {
+            default_workspace: "D:/runtime",
+            knowledge_base_path: "D:/vault",
+            chat_base_url: "https://models.example/v1",
+            chat_model: "chat-model",
+            embedding_base_url: "https://embeddings.example/v1",
+            embedding_model: "embedding-model",
+            chat_api_key: "",
+            embedding_api_key: "",
+            search_api_key: "",
+            has_chat_api_key: true,
+            has_embedding_api_key: true,
+            has_search_api_key: true
+          }
+        });
+      }
+      return;
+    }
     if (url.endsWith("/api/setup/init")) {
       configured = true;
       await route.fulfill({ json: { configured: true, config_path: "C:/config.toml" } });
@@ -100,7 +123,12 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
   page.on("dialog", (dialog) => dialog.accept());
 
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Research Agent Setup" })).toBeVisible();
+  // The shell with all four pages is always visible; Research works even
+  // without config, and the resident Settings page is one click away.
+  await expect(page.getByRole("heading", { name: "Inkwell" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
+  await page.getByRole("link", { name: "Settings" }).click();
+  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
   for (const input of await page.locator("input").all()) {
     await input.fill("x");
   }

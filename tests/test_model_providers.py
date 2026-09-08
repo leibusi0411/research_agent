@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from typing import Any
 from pathlib import Path
 
 import pytest
 
-from research_agent.core.config import InitConfigRequest, load_user_config
+from research_agent.core.config import InitConfigRequest, ModelConfig, load_user_config
 from research_agent.core.errors import ResearchError
 from research_agent.core.kb import KnowledgeBaseIndex
 from research_agent.core.providers import (
@@ -260,3 +261,71 @@ class RecordingEmbeddingClient:
     def embed(self, texts: list[str]) -> list[list[float]]:
         self.inputs.append(texts)
         return [[0.3, 0.4, 0.5] for _text in texts]
+
+
+def test_complete_tool_reports_truncation_instead_of_json_error():
+    """Reasoning models share the max_tokens budget between reasoning and
+    content; a truncated answer must surface finish_reason=length instead of
+    a bare 'LLM returned invalid JSON' so users can tell why parsing failed."""
+    client = OpenAICompatibleChatModel.from_config(
+        ModelConfig(provider="openai_compatible", base_url="https://api.example/v1", api_key="k", model="m"),
+        post_json=lambda _url, _headers, _payload: {
+            "choices": [
+                {
+                    "message": {"content": '{"research_title": "trunc"}'},
+                    "finish_reason": "length",
+                }
+            ]
+        },
+    )
+    with pytest.raises(ValueError, match="finish_reason=length"):
+        client.complete_tool(prompt="plan", tool_name="plan_output", tool_schema={"type": "object"})
+
+
+class _FlakyThenOkChatClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def complete_tool(self, prompt: str, *, tool_name: str, tool_schema: dict[str, Any]) -> ToolCallResult:
+        self.calls += 1
+        if self.calls == 1:
+            raise ValueError("LLM returned invalid JSON: {broken")
+        return ToolCallResult(name=tool_name, arguments={"ok": True})
+
+
+def test_role_invocation_retries_once_after_parse_failure():
+    client = _FlakyThenOkChatClient()
+    result = invoke_role_json(
+        role_name="planner_revision",
+        prompt="revise",
+        tool_name="plan_output",
+        tool_schema={"type": "object"},
+        chat_model=client,
+        validator=lambda payload: payload,
+    )
+    assert result == {"ok": True}
+    assert client.calls == 2
+
+
+class _AlwaysFailingChatClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def complete_tool(self, prompt: str, *, tool_name: str, tool_schema: dict[str, Any]) -> ToolCallResult:
+        self.calls += 1
+        raise ValueError(f"LLM returned invalid JSON: attempt {self.calls}")
+
+
+def test_role_invocation_raises_after_retry_is_exhausted():
+    client = _AlwaysFailingChatClient()
+    with pytest.raises(ResearchError) as error:
+        invoke_role_json(
+            role_name="planner_revision",
+            prompt="revise",
+            tool_name="plan_output",
+            tool_schema={"type": "object"},
+            chat_model=client,
+            validator=lambda payload: payload,
+        )
+    assert error.value.code == "llm_call_failed"
+    assert client.calls == 2

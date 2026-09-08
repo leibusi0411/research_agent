@@ -168,7 +168,15 @@ class OpenAICompatibleChatModel:
             self.config.api_key,
             self.post_json,
         )
-        message = response["choices"][0]["message"]
+        choice = response["choices"][0]
+        message = choice["message"]
+        # Reasoning models share the max_tokens budget between reasoning and
+        # content; a length-truncated answer cuts the JSON mid-string and the
+        # failure must be reported as truncation, not as a parse quirk.
+        if str(choice.get("finish_reason", "")) == "length":
+            raise ValueError(
+                "LLM output was truncated (finish_reason=length) before a complete tool call was produced"
+            )
         tool_calls = message.get("tool_calls")
         if tool_calls:
             tc = tool_calls[0]

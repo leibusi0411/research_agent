@@ -103,6 +103,12 @@ export function LocalResultView({ result, events }: { result: ResearchResult; ev
       <p>{result.question}</p>
       <StatusLine result={result} />
       <ProcessView groupedEvents={groupedEvents} newestSeq={newestSeq} />
+      {result.summary ? (
+        <div className="result-item">
+          <h3>Summary</h3>
+          <p>{result.summary}</p>
+        </div>
+      ) : null}
       {result.local_results?.map((item, index) => (
         <div className="result-item" key={`${item.source_path}-${index}`}>
           <p>{item.text}</p>

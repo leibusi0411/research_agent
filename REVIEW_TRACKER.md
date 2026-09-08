@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-07 | 测试：186 passed（Python，180 离线 + 6 e2e 真实链路）+ 21 passed（前端 Vitest）+ 1 passed（Playwright e2e）| 最新一轮审查 9 项处理完毕 ✅（R-184~R-192）+ 热修 6 项（R-193~R-194、R-202~R-205）+ 第六轮 7 项（R-195~R-201）| 新功能：Knowledge Deposit（ADR-0045）+ Web UI 沉淀按钮 + Prior Knowledge 注入（ADR-0046）+ Inkwell 重设计（Gemini 式深色 + 实时轨迹 + 结果卡片）
+> 最后更新：2026-09-08 | 测试：197 passed（Python；配置真实 key 后 9 个真实 API 测试首次实跑通过）+ 22 passed（前端 Vitest）+ 1 passed（Playwright e2e）| 第七轮审查 15 项：13 修复 ✅ + 2 记录在案 ⚠️（R-206~R-220）| 新功能：常驻 Settings 页面（ADR-0047）+ Local RAG A+G API 对齐（R-218）+ 异常掩码/截断重试修复（R-219/R-220）
 
 ---
 
@@ -27,7 +27,46 @@
 
 ---
 
-## 二、本轮 Review（2026-09-06）
+## 二、本轮 Review（2026-09-08）
+
+### 第七轮审查（2026-09-08，常驻 Settings 页面 / ADR-0047）
+
+#### 审查范围
+
+落地 TODO.md "Settings page" 延期项：Setup 视图升级为常驻 Settings 页面（侧边栏第 4 个页面，路由 `/settings`），首次使用不再全屏接管，未配置时落在外壳内 Settings 页。新增 `GET /api/setup/config`（密钥不回传，只给 `has_*` 布尔值）；`POST /api/setup/init` 空白 api_key 字段 = 保留已存值。ADR-0047 显式演进 ADR-0030；CONTEXT.md 新增 Settings Page 词条；测试 TDD 四切片（后端 4 个 + 前端重写 1 个 / 新增 1 个 + e2e 重写首启流程）。
+
+#### 发现与处置
+
+| 编号 | 问题 | 处置 |
+|------|------|------|
+| R-206 | e2e 仍断言旧 "Research Agent Setup" 全屏标题且 mock 缺 `GET /api/setup/config`，功能后确定性失败（违反"e2e 必须通过"完成定义） | ✅ 重写为外壳内 Settings 流（4 导航 + Settings 标题 + 保存进 Research）+ 补 mock，实测 1 passed |
+| R-207 | 设置页改 `default_workspace` 后不生效：`get_service` 缓存的 CoreService 绑定旧工作区，`/api/setup/status` 却显示已保存 | ✅ `setup_init` 成功后 `reset_cached_service()`，下一请求按新配置重建 |
+| R-208 | Settings 保存走 `init_user_config` 固定模板全量重写，手工加入的 `[chat_model.<role>]` / `[research]` / `[web_tools]` 定制被静默重置（与 ADR-0009 "覆盖前提示"相关） | ⚠️ 记录在案：ADR-0047 显式列为已知取舍（本地单用户工具，UI 可改回全部必需字段）；改进方向为保存前确认或保留未知 section |
+| R-209 | AGENTS.md ADR 计数 46 未随 ADR-0047 更新（两处）、测试计数陈旧（182） | ✅ 修正为 47 / 190（181 离线 + 9 真实 API skip） |
+| R-210 | README / USAGE 的 Setup 页描述、三页面表未随四页面结构更新 | ✅ 全部改为 Settings 四页面表述 |
+| R-211 | web/dist 为功能前构建的陈旧产物（仅行尾差异噪声） | ✅ `npm run build` 重建（新 bundle index-6xCUaeTy.js） |
+| R-212 | 空白密钥判定不一致：纯空格字符串为 truthy 会走提交路径报 "must be non-empty" 而非"保留已存" | ✅ `_optional_key` 归一化：缺失 / 空串 / 纯空白一律视为"保留" |
+| R-213 | 保存成功后前端 form state 仍持有真实 key，再进 Settings 页密钥框为已填状态 | ✅ 保存成功即清空三个 key 字段（配合后端不回传，密钥只在提交瞬间存在） |
+| R-214 | savedNotice 陈旧（离开再回来仍显示 "Settings saved."）；全局 message 使 Settings 页双份错误渲染 | ✅ 进入 Settings 页（loadSettings）时重置两个状态 |
+| R-215 | loadSettings 预填响应与用户快速输入存在竞态，可能覆盖 6 个非密钥字段 | ⚠️ 记录在案：本地单用户、窗口极小，观察后再议 |
+| R-216 | `web/tsconfig.tsbuildinfo` 构建噪声入库、`name={key}` 属性仅服务测试选择器 | ⚠️ 记录在案：tsbuildinfo 建议后续加入 .gitignore；name 属性无害保留 |
+| R-217 | 未配置时 `/` 重定向到 Settings，调研页完全不可见（用户反馈不合理：页面应照常显示和输入，启动时才报错） | ✅ 移除重定向，Research 未配置照常可用；`/api/research/*` 增加前置配置检查，未配置启动同步报 `config_missing`（不再 202 后台失败）；单测/e2e 同步更新 |
+| R-218 | Local RAG A+G 只在 CLI 生效：API 路径直调 `run_local_research_unlocked`，跳过 embedding/chat 客户端自动装配 → Web UI 无向量召回、无 LLM 总结，违反 ADR-0037 能力面对等（用户实测发现总结缺失） | ✅ API 路由注入 embedding/chat 客户端（新增 `chat_model_factory` 参数，测试注入 fake 保持离线）；ResultView 本地结果补 Summary 区块 + ResearchResult.summary 类型；后端 192 passed（含真实链路 e2e 6 项首次实跑通过） |
+| R-219 | `ResearchError` 是 `@dataclass(frozen=True)`：异常穿过 LangGraph/contextlib 传播时，Python 3.12 `contextlib.__exit__` 的 Python 层 `exc.__traceback__` 赋值被冻结类拒绝 → 真实错误被 `FrozenInstanceError: cannot assign to field '__traceback__'` 掩盖成 `runtime_error`（用户 Web 任务 task_20260908_090231 在 plan_revision 实际死于被掩盖的 llm_call_failed） | ✅ 类后替换 `__setattr__`：放行双下划线属性（`__traceback__`/`__cause__` 等），`code`/`message` 字段保持冻结；补传播与冻结回归测试 |
+| R-220 | R-205 的直接触发面：DeepSeek v4-flash 是推理模型，reasoning 与 content 共享 max_tokens 预算，长计划 JSON 被截断（finish_reason=length）→ 报模糊的 "LLM returned invalid JSON" 且无重试 | ✅（提前落地 R-205 核心）`complete_tool` 检查 `finish_reason=length` 报明确截断错误；`invoke_role_json` 解析失败自动重试一次（共 2 次尝试），耗尽后仍报 `llm_call_failed`；R-205 其余（原始输出落盘诊断、工具执行链路重试）仍留阶段 9 |
+
+#### 顺带修复（预存问题）
+
+- `tests/test_local_research.py` 使用 `typing.Any` 但未导入 → 全套件收集失败（NameError）；补导入。
+- `tests/test_api_connections.py` 三个真实 API 测试直接 `load_user_config()`，无配置机器上必失败，违反 ADR-0042 离线原则 → 对齐 `test_web_e2e.py` 的 `_get_config_or_skip` 模式，无配置自动 skip。
+
+#### 已验证
+
+后端 `uv run pytest`：181 passed + 9 skipped；前端 `npm run test`：22 passed；`npx playwright test`：1 passed；`tsc -b` 通过。
+
+---
+
+## 二·历史轮次（2026-09-06 ~ 2026-09-07）
 
 ### 审查范围
 

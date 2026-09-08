@@ -21,21 +21,29 @@ def invoke_role_json(
 
     The *validator* runs for application-level type/presence checks.
     LLM-call failures and schema-validation failures are reported with
-    distinct error codes so callers can tell them apart.
+    distinct error codes so callers can tell them apart. A transient
+    malformed-model-output failure is retried once before surfacing as
+    ``llm_call_failed``.
     """
-    try:
-        result: ToolCallResult = chat_model.complete_tool(
-            prompt=prompt,
-            tool_name=tool_name,
-            tool_schema=tool_schema,
-        )
-    except ResearchError:
-        raise
-    except Exception as exc:
+    result: ToolCallResult | None = None
+    last_error: Exception | None = None
+    for _attempt in range(2):
+        try:
+            result = chat_model.complete_tool(
+                prompt=prompt,
+                tool_name=tool_name,
+                tool_schema=tool_schema,
+            )
+            break
+        except ResearchError:
+            raise
+        except Exception as exc:
+            last_error = exc
+    if result is None:
         raise ResearchError(
             code="llm_call_failed",
-            message=f"{role_name} LLM call failed: {exc}",
-        ) from exc
+            message=f"{role_name} LLM call failed after one retry: {last_error}",
+        ) from last_error
 
     try:
         return validator(result.arguments)

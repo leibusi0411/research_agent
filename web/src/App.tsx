@@ -11,7 +11,7 @@ import {
   type TaskSummary,
 } from "./api";
 import { Sidebar } from "./components/Sidebar";
-import { emptySetup, SetupPage } from "./pages/SetupPage";
+import { emptySetup, SettingsPage } from "./pages/SettingsPage";
 import { ResearchPage } from "./pages/ResearchPage";
 import { TasksPage } from "./pages/TasksPage";
 import { KbPage } from "./pages/KbPage";
@@ -19,6 +19,8 @@ import { KbPage } from "./pages/KbPage";
 export function App() {
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [setup, setSetup] = useState<SetupPayload>(emptySetup);
+  const [savedKeys, setSavedKeys] = useState({ chat: false, embedding: false, search: false });
+  const [savedNotice, setSavedNotice] = useState(false);
   const [question, setQuestion] = useState("");
   const [result, setResult] = useState<ResearchResult | null>(null);
   const [events, setEvents] = useState<ProgressEvent[]>([]);
@@ -120,16 +122,55 @@ export function App() {
 
   async function submitSetup(event: FormEvent) {
     event.preventDefault();
+    const wasConfigured = configured;
     setBusy("setup");
     try {
       await api.setupInit(setup);
       setConfigured(true);
+      setSavedKeys({ chat: true, embedding: true, search: true });
+      // Never keep real key values in form state after a successful save.
+      setSetup((current) => ({ ...current, chat_api_key: "", embedding_api_key: "", search_api_key: "" }));
       setMessage("");
+      if (wasConfigured) {
+        setSavedNotice(true);
+      } else {
+        navigate("/");
+      }
     } catch (error) {
       setMessage(String(error));
     } finally {
       setBusy(null);
     }
+  }
+
+  /** Prefill the settings form from the saved config (keys stay blank). */
+  async function loadSettings() {
+    setSavedNotice(false);
+    setMessage("");
+    try {
+      const config = await api.setupConfig();
+      setSetup((current) => ({
+        ...current,
+        default_workspace: config.default_workspace,
+        knowledge_base_path: config.knowledge_base_path,
+        chat_base_url: config.chat_base_url,
+        chat_model: config.chat_model,
+        embedding_base_url: config.embedding_base_url,
+        embedding_model: config.embedding_model
+      }));
+      setSavedKeys({
+        chat: config.has_chat_api_key,
+        embedding: config.has_embedding_api_key,
+        search: config.has_search_api_key
+      });
+    } catch {
+      // No saved config yet — keep the blank form.
+    }
+  }
+
+  function updateSetup(value: SetupPayload) {
+    setSavedNotice(false);
+    setSetup(value);
   }
 
   async function runResearch(event: FormEvent) {
@@ -232,18 +273,6 @@ export function App() {
     return <main className="boot">Loading</main>;
   }
 
-  if (!configured) {
-    return (
-      <SetupPage
-        setup={setup}
-        setSetup={setSetup}
-        busy={busy === "setup"}
-        message={message}
-        onSubmit={submitSetup}
-      />
-    );
-  }
-
   return (
     <div className="app-shell">
       <Sidebar />
@@ -285,6 +314,21 @@ export function App() {
                 busy={busy === "kb"}
                 onRefresh={refreshKb}
                 onRebuild={rebuildKb}
+              />
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <SettingsPage
+                setup={setup}
+                setSetup={updateSetup}
+                savedKeys={savedKeys}
+                savedNotice={savedNotice}
+                loadSettings={loadSettings}
+                busy={busy === "setup"}
+                message={message}
+                onSubmit={submitSetup}
               />
             }
           />

@@ -1,6 +1,21 @@
-"""Test real API connections: chat model, embedding model, and search API."""
+"""Test real API connections: chat model, embedding model, and search API.
+
+These tests hit real provider APIs and need a configured user config with
+valid API keys; they skip when the config is missing (ADR-0042: default
+suite stays offline and deterministic).
+"""
 
 import httpx
+import pytest
+
+
+def _get_config_or_skip():
+    from research_agent.core.config import load_user_config
+
+    try:
+        return load_user_config()
+    except Exception as exc:
+        pytest.skip(f"Config not available: {exc}")
 
 
 def test_chat_model():
@@ -8,7 +23,7 @@ def test_chat_model():
     from research_agent.core.config import load_user_config
     from research_agent.core.providers import OpenAICompatibleChatModel
 
-    config = load_user_config()
+    config = _get_config_or_skip()
     model = OpenAICompatibleChatModel.from_config(config.chat_model)
     result = model.complete("Say hello in one sentence.")
     print(f"[chat] {result}")
@@ -20,7 +35,7 @@ def test_embedding_model():
     from research_agent.core.config import load_user_config
     from research_agent.core.providers import OpenAICompatibleEmbeddingModel
 
-    config = load_user_config()
+    config = _get_config_or_skip()
     model = OpenAICompatibleEmbeddingModel.from_config(config.embedding_model)
     vectors = model.embed(["hello world", "test embedding"])
     print(f"[embedding] Got {len(vectors)} vectors, dimension={len(vectors[0])}")
@@ -32,7 +47,7 @@ def test_search_api():
     """Test Tavily search API."""
     from research_agent.core.config import load_user_config
 
-    config = load_user_config()
+    config = _get_config_or_skip()
     api_key = config.search.api_key
     response = httpx.post(
         "https://api.tavily.com/search",

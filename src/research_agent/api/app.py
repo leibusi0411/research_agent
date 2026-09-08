@@ -27,7 +27,12 @@ from research_agent.core.bus import Bus
 from research_agent.core.config import InitConfigRequest, UserConfig, default_config_path, load_user_config
 from research_agent.core.errors import ResearchError
 from research_agent.core.ids import generate_task_id, utc_now_iso, validate_task_id
-from research_agent.core.providers import EmbeddingClient
+from research_agent.core.providers import (
+    EmbeddingClient,
+    OpenAICompatibleChatModel,
+    OpenAICompatibleEmbeddingModel,
+    build_role_chat_model_config,
+)
 from research_agent.core.service import CoreService, create_provider_runtime
 from research_agent.core.workspace import read_lock_task_id
 from research_agent.web.provider_runtime import ProviderBackedWebResearchRuntime
@@ -35,6 +40,7 @@ from research_agent.web.provider_runtime import ProviderBackedWebResearchRuntime
 
 WebRuntimeFactory = Callable[[str], Any]
 EmbeddingClientFactory = Callable[[UserConfig], EmbeddingClient]
+ChatModelFactory = Callable[[UserConfig], Any]
 
 
 def create_app(
@@ -42,6 +48,7 @@ def create_app(
     config_path: str | Path | None = None,
     web_runtime_factory: WebRuntimeFactory | None = None,
     embedding_client_factory: EmbeddingClientFactory | None = None,
+    chat_model_factory: ChatModelFactory | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -77,12 +84,28 @@ def create_app(
             _cached_service = CoreService(default_workspace=Path.cwd() / ".research_agent", config_path=resolved_config_path)
         return _cached_service
 
+    def reset_cached_service() -> None:
+        """Drop the cached CoreService so the next request rebinds to the
+        freshly saved config — a changed default_workspace takes effect
+        immediately after Settings save instead of sticking to the old one."""
+        nonlocal _cached_service
+        _cached_service = None
+
     @app.exception_handler(ResearchError)
     async def research_error_handler(_request, exc: ResearchError):
         return _error_response(exc)
 
-    _register_setup_routes(app, resolved_config_path)
-    _register_research_routes(app, get_service, executor, web_runtime_factory, bus)
+    _register_setup_routes(app, resolved_config_path, reset_cached_service)
+    _register_research_routes(
+        app,
+        get_service,
+        executor,
+        web_runtime_factory,
+        bus,
+        resolved_config_path,
+        embedding_client_factory,
+        chat_model_factory,
+    )
     _register_task_routes(app, get_service)
     _register_kb_routes(app, get_service, resolved_config_path, embedding_client_factory)
 
@@ -92,8 +115,14 @@ def create_app(
 # ── route registration helpers ────────────────────────────────────────
 
 
-def _register_setup_routes(app: FastAPI, resolved_config_path: Path) -> None:
+def _register_setup_routes(app: FastAPI, resolved_config_path: Path, reset_cached_service: Callable[[], None]) -> None:
     """Register /api/setup/* routes."""
+
+    def _optional_key(value: object) -> str:
+        """Normalize a submitted API key: missing or whitespace-only means
+        "keep the saved key" and is treated as blank."""
+        text = str(value or "")
+        return "" if not text.strip() else text
 
     @app.get("/api/setup/status")
     def setup_status() -> dict[str, Any]:
@@ -109,15 +138,69 @@ def _register_setup_routes(app: FastAPI, resolved_config_path: Path) -> None:
             default_workspace=Path(payload["default_workspace"]),
             knowledge_base_path=Path(payload["knowledge_base_path"]),
             chat_base_url=str(payload["chat_base_url"]),
-            chat_api_key=str(payload["chat_api_key"]),
+            chat_api_key=_optional_key(payload.get("chat_api_key")),
             chat_model=str(payload["chat_model"]),
             embedding_base_url=str(payload["embedding_base_url"]),
-            embedding_api_key=str(payload["embedding_api_key"]),
+            embedding_api_key=_optional_key(payload.get("embedding_api_key")),
             embedding_model=str(payload["embedding_model"]),
-            search_api_key=str(payload["search_api_key"]),
+            search_api_key=_optional_key(payload.get("search_api_key")),
         )
+        # Blank key fields mean "keep the saved key": the settings page never
+        # receives key values back, so edits resubmit them blank.
+        if not request.chat_api_key or not request.embedding_api_key or not request.search_api_key:
+            try:
+                saved = load_user_config(resolved_config_path)
+            except ResearchError:
+                saved = None
+            if saved is None:
+                missing = ", ".join(
+                    label
+                    for label, value in (
+                        ("chat_api_key", request.chat_api_key),
+                        ("embedding_api_key", request.embedding_api_key),
+                        ("search_api_key", request.search_api_key),
+                    )
+                    if not value
+                )
+                raise ResearchError(code="config_invalid", message=f"Missing config field: {missing}")
+            request = InitConfigRequest(
+                default_workspace=request.default_workspace,
+                knowledge_base_path=request.knowledge_base_path,
+                chat_base_url=request.chat_base_url,
+                chat_api_key=request.chat_api_key or saved.chat_model.api_key,
+                chat_model=request.chat_model,
+                embedding_base_url=request.embedding_base_url,
+                embedding_api_key=request.embedding_api_key or saved.embedding_model.api_key,
+                embedding_model=request.embedding_model,
+                search_api_key=request.search_api_key or saved.search.api_key,
+            )
         written = CoreService(default_workspace=request.default_workspace, config_path=resolved_config_path).init_config(request)
+        reset_cached_service()
         return {"configured": True, "config_path": str(written)}
+
+    @app.get("/api/setup/config")
+    def setup_config() -> JSONResponse:
+        try:
+            config = load_user_config(resolved_config_path)
+        except ResearchError as error:
+            return _error_response(error, status_code=404 if error.code == "config_missing" else 400)
+        return JSONResponse(
+            {
+                "default_workspace": str(config.workspace.default_workspace),
+                "knowledge_base_path": str(config.workspace.knowledge_base_path),
+                "chat_base_url": config.chat_model.base_url,
+                "chat_model": config.chat_model.model,
+                "embedding_base_url": config.embedding_model.base_url,
+                "embedding_model": config.embedding_model.model,
+                # API key values never leave the backend — only their presence.
+                "chat_api_key": "",
+                "embedding_api_key": "",
+                "search_api_key": "",
+                "has_chat_api_key": bool(config.chat_model.api_key),
+                "has_embedding_api_key": bool(config.embedding_model.api_key),
+                "has_search_api_key": bool(config.search.api_key),
+            }
+        )
 
 
 def _register_research_routes(
@@ -126,24 +209,54 @@ def _register_research_routes(
     executor: ThreadPoolExecutor,
     web_runtime_factory: WebRuntimeFactory | None,
     bus: Bus,
+    resolved_config_path: Path,
+    embedding_client_factory: EmbeddingClientFactory | None,
+    chat_model_factory: ChatModelFactory | None,
 ) -> None:
     """Register /api/research/* routes."""
 
+    def _require_config() -> None:
+        # Research cannot start without User Config — fail synchronously so
+        # the UI reports the error instead of starting a doomed task.
+        load_user_config(resolved_config_path)
+
+    def _local_research_clients() -> tuple[EmbeddingClient | None, Any | None]:
+        """Build embedding + chat clients for Local RAG A+G so the API path
+        matches the CLI capability surface (vector retrieval + summary).
+        Factories (test fakes) win over config-built real clients."""
+        config = load_user_config(resolved_config_path)
+        embedding_client = (
+            embedding_client_factory(config)
+            if embedding_client_factory is not None
+            else OpenAICompatibleEmbeddingModel.from_config(config.embedding_model)
+        )
+        chat_model = (
+            chat_model_factory(config)
+            if chat_model_factory is not None
+            else OpenAICompatibleChatModel.from_config(build_role_chat_model_config(config, "local_summarizer"))
+        )
+        return embedding_client, chat_model
+
     @app.post("/api/research/local")
     def start_local(payload: dict[str, Any]) -> JSONResponse:
+        _require_config()
         task_id = generate_task_id()
         question = _question(payload)
         current_service = get_service()
+        embedding_client, chat_model = _local_research_clients()
         _create_running_task(current_service, task_id=task_id, mode="local", question=question)
         _submit_background_task(
             executor,
             current_service.acquire_family_lock("local", task_id),
-            lambda: current_service.run_local_research_unlocked(question, task_id=task_id),
+            lambda: current_service.run_local_research_unlocked(
+                question, task_id=task_id, embedding_client=embedding_client, chat_model=chat_model
+            ),
         )
         return JSONResponse({"task_id": task_id, "mode": "local", "status": "running", "question": question}, status_code=202)
 
     @app.post("/api/research/web")
     def start_web(payload: dict[str, Any]) -> JSONResponse:
+        _require_config()
         current_service = get_service()
         runtime = web_runtime_factory(str(current_service.workspace.root)) if web_runtime_factory is not None else None
         task_id = generate_task_id()

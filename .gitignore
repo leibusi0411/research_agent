@@ -2,9 +2,6 @@
 .pytest_cache/
 __pycache__/
 *.py[cod]
-.planning/
-_test_chroma/
-node_modules/
+.research_agent/
+web/tsconfig.tsbuildinfo
 web/node_modules/
-web/test-results/
-.claude/

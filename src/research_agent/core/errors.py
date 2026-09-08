@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, FrozenInstanceError
 
 
 VALID_ERROR_CODES = {
@@ -37,3 +37,19 @@ class ResearchError(Exception):
 
     def to_dict(self) -> dict[str, str]:
         return {"code": self.code, "message": self.message}
+
+
+def _research_error_setattr(self: ResearchError, name: str, value: object) -> None:
+    # Exception machinery sets dunders at the Python level (contextlib's
+    # __exit__ assigns __traceback__ on Python 3.12). The generated frozen
+    # __setattr__ rejects that and masks the real error with
+    # FrozenInstanceError, so allow dunder assignment while keeping the
+    # code/message fields frozen. (Defined post-class: @dataclass(frozen=True)
+    # refuses to overwrite a __setattr__ present in the class body.)
+    if name.startswith("__"):
+        object.__setattr__(self, name, value)
+        return
+    raise FrozenInstanceError(f"cannot assign to field '{name}'")
+
+
+ResearchError.__setattr__ = _research_error_setattr  # type: ignore[method-assign]

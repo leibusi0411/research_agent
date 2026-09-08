@@ -37,7 +37,7 @@ research_agent/
 │   ├── __init__.py               # __version__
 │   ├── cli.py                    # argparse CLI 入口（init/local/web/both/task list/task deposit/kb status/kb rebuild）
 │   ├── api/
-│   │   └── app.py                # FastAPI 工厂 create_app()，SSE 端点，服务 web/dist 静态文件
+│   │   └── app.py                # FastAPI 工厂 create_app()，SSE 端点（仅 API，不服务前端静态文件）
 │   ├── core/                     # 领域逻辑（所有界面共享）
 │   │   ├── config.py             # TOML 用户配置解析（全局 + per-role 模型覆盖）
 │   │   ├── providers.py          # OpenAI 兼容 chat/embedding 客户端
@@ -63,22 +63,22 @@ research_agent/
 │       ├── provider_runtime.py   # Provider-backed 真实运行时
 │       ├── fake_runtime.py       # 确定性 Fake Runtime（离线测试用）
 │       └── report.py             # Markdown 报告生成
-├── tests/                        # pytest，18 个测试文件，182 个测试（6 个 e2e 需真实 API key）
+├── tests/                        # pytest，18 个测试文件，184 个离线测试 + 9 个真实 API 测试（无配置自动 skip）
 ├── web/                          # React + Vite 前端
 │   ├── src/
-│   │   ├── App.tsx               # 主应用（Research / Tasks / KB / Setup 页面路由）
+│   │   ├── App.tsx               # 主应用（Research / Tasks / KB / Settings 页面路由；未配置时 Research 照常可用，启动调研同步报 config_missing）
 │   │   ├── api.ts                # API 客户端（类型 + 请求 + SSE 订阅）
 │   │   ├── main.tsx              # React 入口
 │   │   ├── components/           # ProcessView、ResultView、PhaseIndicator 等展示组件
 │   │   ├── hooks/useSSE.ts       # SSE 订阅 hook
-│   │   └── pages/                # ResearchPage / TasksPage / KbPage / SetupPage
+│   │   └── pages/                # ResearchPage / TasksPage / KbPage / SettingsPage（常驻设置页）
 │   ├── tests/                    # Vitest 单元测试（api/App/sse）+ e2e/（Playwright）
-│   ├── dist/                     # 构建产物（生产模式由 FastAPI 直接服务）
+│   ├── dist/                     # 构建产物（后端不直接服务；独立部署时自行托管并反代 /api）
 │   ├── vite.config.ts            # 插件、/api 代理（→ 127.0.0.1:8001）、Vitest 配置
 │   ├── playwright.config.ts      # E2E 配置（自动起 5174 端口的 dev server）
 │   └── package.json
 ├── docs/
-│   ├── adr/                      # 46 个架构决策记录（0001~0046，顺序编号）
+│   ├── adr/                      # 47 个架构决策记录（0001~0047，顺序编号）
 │   └── agents/                   # agent 协作约定（issue tracker、triage labels、domain docs）
 ├── CONTEXT.md                    # 领域术语表（命名前必读）
 ├── TODO.md                       # v1 有意延期的功能清单
@@ -104,9 +104,8 @@ uv run research-agent task deposit <id> # 沉淀 Web 报告到知识库 vault
 uv run research-agent kb status         # 知识库索引状态
 uv run research-agent kb rebuild        # 重建知识库索引
 
-# 生产模式：构建前端 + 启动后端（同一进程服务静态文件与 API，端口 8000）
-cd web && npm install && npm run build && cd ..
-uv run uvicorn research_agent.api.app:create_app --factory --host 127.0.0.1 --port 8000
+# 后端 API（仅 API，不服务前端静态文件；端口可自定，与 Vite 代理端口保持一致）
+uv run uvicorn research_agent.api.app:create_app --factory --host 127.0.0.1 --port 8001
 
 # 前端开发模式：一条命令同时启动后端 API(8001) + Vite(5173，/api 自动代理到 8001)
 cd web && npm run dev:all
@@ -117,7 +116,7 @@ cd web && npm run dev:all
 ## 测试
 
 ```bash
-# Python：全部 182 个测试，默认离线且确定性（ADR-0042；6 个 e2e 需真实 API key，否则自动 skip）
+# Python：全部 190 个测试，默认离线且确定性（ADR-0042；181 离线 + 9 个真实 API 测试无配置自动 skip）
 uv run pytest                          # 全部
 uv run pytest -x                       # 首次失败即停
 uv run pytest -k "state_graph"         # 按关键字筛选
@@ -145,7 +144,7 @@ cd web && npm run test:e2e             # Playwright E2E（自动起 5174 端口 
 
 - **中文优先**：Review 生成的文件（代码审查报告、ADR 审查等）一律用中文编写，中文翻译版作为主文件（不加 `-zh` 后缀），不保留英文原版。文档（README/USAGE）也是中文。
 - **命名遵守术语表**：`CONTEXT.md` 定义了领域语言（Local RAG、Web Research、Blackboard、Tool Gateway 等）。命名领域概念时使用其中的术语，避免使用被明确否决的同义词（每个词条下有 `_Avoid_` 列表）。
-- **ADR 冲突规则**：若改动与 `docs/adr/` 中已有决策冲突，必须显式提出冲突，而不是静默推翻决策。ADR 共 46 个，顺序编号。
+- **ADR 冲突规则**：若改动与 `docs/adr/` 中已有决策冲突，必须显式提出冲突，而不是静默推翻决策。ADR 共 47 个，顺序编号。
 - **类型注解**：方法签名使用显式类型参数，不用 `*args, **kwargs`；运行时抽象用 `WebResearchRuntime` Protocol 而非 `object`。
 - **简单优先**：用最少代码解决问题，不做未要求的抽象或功能；精准修改，不顺手重构相邻代码；自己改动产生的孤立 import/变量/函数必须清理。
 - **错误模型**：用户可见错误统一为 `ResearchError`（`code` + `message`），CLI 渲染为 `[code] message` 并以非零码退出。
@@ -182,7 +181,8 @@ cd web && npm run test:e2e             # Playwright E2E（自动起 5174 端口 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/setup/status` | 配置状态 |
-| POST | `/api/setup/init` | 初始化配置 |
+| GET | `/api/setup/config` | 读取当前配置（API key 值不回传，只给 has_* 布尔值） |
+| POST | `/api/setup/init` | 初始化/保存配置（空白 api_key 字段 = 保留已存值） |
 | POST | `/api/research/local` | 启动 Local RAG 任务 |
 | POST | `/api/research/web` | 启动 Web Research 任务 |
 | GET | `/api/tasks/active` | 活跃任务 |

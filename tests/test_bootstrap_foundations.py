@@ -194,3 +194,30 @@ def test_cli_entrypoint_has_command_skeleton():
     assert "local" in result.stdout
     assert "web" in result.stdout
     assert "kb" in result.stdout
+
+
+def test_research_error_propagates_through_context_manager():
+    """contextlib.__exit__ assigns exc.__traceback__ at the Python level on
+    Python 3.12; a frozen-dataclass exception must tolerate that or the real
+    error gets masked by FrozenInstanceError (seen as
+    "cannot assign to field '__traceback__'" in plan_revision)."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def passthrough():
+        yield
+
+    with pytest.raises(ResearchError) as exc_info:
+        with passthrough():
+            raise ResearchError(code="llm_call_failed", message="boom")
+    assert exc_info.value.code == "llm_call_failed"
+    assert exc_info.value.message == "boom"
+    assert exc_info.value.__traceback__ is not None
+
+
+def test_research_error_fields_stay_frozen():
+    error = ResearchError(code="busy", message="locked")
+    with pytest.raises(Exception):
+        error.code = "runtime_error"
+    with pytest.raises(Exception):
+        error.message = "changed"
