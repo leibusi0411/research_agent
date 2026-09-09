@@ -1,8 +1,10 @@
 # Use wide per-tool engineering boundaries for Web tools
 
+> 演进注记（2026-09-09，R-247）：原文 "V1 performs URL deduplication at the Curator output stage" 一段与 ADR-0031（"V1 does not perform URL normalization or URL deduplication"）互相矛盾，且代码与 prompt 中均不存在该机制（`graph.py` 原样拷贝 sources、`prompt_builders.py` 无去重指令、全 src 无 URL 去重）。经审查裁定以代码为准、站在 ADR-0031 一侧：v1 不做 URL 归一化或去重，同 URL 的源在最终报告中保持多条。正文该段已按此改写。本 ADR 的其余边界值（timeout 45/90、大小上限、`search_top_k` 10/20、`tool_retries` 2）均已兑现，不受影响。
+
 V1 Web Research tools use per-call engineering boundaries to prevent individual tool calls from hanging or exhausting local resources. These are not research-strategy limits and do not impose a maximum number of pages per round or per subtask.
 
-V1 performs URL deduplication at the Curator output stage: when multiple `WebSource` records share the same normalized URL, Curator merges them into a single source entry in the final report. Earlier in the pipeline (Tool Gateway, ResearchExecutor), repeated URLs may still create separate `WebSource` records and separate source snapshots to preserve per-subtask traceability; deduplication is deferred to the output boundary rather than enforced at every layer.
+V1 does not perform URL normalization or URL deduplication at any stage (consistent with ADR-0031): `WebSource` records that share the same URL remain separate entries throughout the pipeline and in the final report. Repeated URLs may create separate `WebSource` records and separate source snapshots to preserve per-subtask traceability.
 
 Default boundaries are intentionally wide:
 

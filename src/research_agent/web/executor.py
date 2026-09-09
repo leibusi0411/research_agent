@@ -108,6 +108,15 @@ def _normalize_tool_call_payload(payload: dict[str, Any]) -> dict[str, Any]:
             else:
                 if isinstance(item.get("arguments"), str):
                     item = {**item, "arguments": json.loads(item["arguments"])}
+                elif "arguments" not in item:
+                    # Some models flatten arguments into the tool-call object
+                    # (e.g. {"name": "web.search", "query": "..."} instead of
+                    # nesting them) — collect the remaining keys as arguments
+                    # so the gateway can validate them (R-205 family).
+                    item = {
+                        "name": item.get("name", ""),
+                        "arguments": {k: v for k, v in item.items() if k != "name"},
+                    }
                 normalized.append(item)
     else:
         normalized = tool_calls

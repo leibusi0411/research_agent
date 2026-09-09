@@ -25,7 +25,7 @@
 | 网页/PDF 提取 | trafilatura、pypdf |
 | 搜索 API | Tavily |
 | LLM 协议 | OpenAI-compatible（chat + embedding，推荐 DeepSeek） |
-| 事件通道 | janus.Queue（同步/异步双面队列，EventStream） |
+| 事件通道 | asyncio Bus（每订阅者 asyncio.Queue，容量 1024，core/bus.py） |
 | 前端 | React 19 + Vite 6 + TypeScript + react-router-dom + lucide-react |
 | 前端测试 | Vitest + Testing Library（单元）、Playwright（E2E，channel=chrome） |
 
@@ -48,20 +48,19 @@ research_agent/
 │   │   ├── service.py            # CoreService 应用层；one-active-task-per-family 任务锁
 │   │   ├── tasks.py              # 任务历史存储（SQLite）
 │   │   ├── workspace.py          # 工作区目录管理
-│   │   ├── bus.py                # EventStream（janus.Queue，SSE/CLI 共用事件通道）
+│   │   ├── bus.py                # EventStream（asyncio Bus 事件总线，SSE 传输层）
 │   │   ├── errors.py             # 统一 ResearchError 错误对象（code + message）
 │   │   └── ids.py                # ID 生成与校验（task_yyyymmdd_hhmmss_<random6> 等）
 │   └── web/                      # Web Research 运行时（仅限 Web 调研，不含 Local RAG）
 │       ├── schemas.py            # WebResearchState（blackboard）与各角色输出数据模型
 │       ├── context.py            # Per-role 上下文切片构建（Context Builder）
 │       ├── prompt_builders.py    # Per-role prompt 构建（提示词是代码常量）
-│       ├── role_invocation.py    # LLM 角色调用 + 输出解析/修复
+│       ├── role_invocation.py    # LLM 角色调用 + 输出校验（失败盲重试一次）
 │       ├── executor.py           # ResearchExecutor（工具规划 → 执行 → 综合的循环）
 │       ├── tools.py              # ToolGateway / ToolRunner / ToolRegistry / TavilySearchProvider
 │       ├── state_graph.py        # StateGraphRunner（图运行器）
 │       ├── graph.py              # LangGraph 节点函数与图构建
 │       ├── provider_runtime.py   # Provider-backed 真实运行时
-│       ├── fake_runtime.py       # 确定性 Fake Runtime（离线测试用）
 │       └── report.py             # Markdown 报告生成
 ├── tests/                        # pytest，18 个测试文件，184 个离线测试 + 9 个真实 API 测试（无配置自动 skip）
 ├── web/                          # React + Vite 前端

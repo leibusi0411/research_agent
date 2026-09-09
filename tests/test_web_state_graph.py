@@ -747,8 +747,14 @@ def test_runner_config_encapsulates_all_params(tmp_path):
     assert runner.executor is not None
 
 
+def _make_survey_response() -> str:
+    return json.dumps({"queries": []})
+
+
 def _full_flow_completions() -> list[str]:
+    # ADR-0048: the planner local knowledge survey consumes the first slot.
     return [
+        _make_survey_response(),
         _make_planner_response("LangGraph Research", ["What is LangGraph?", "How to use LangGraph?"]),
         _make_tool_plan_response("What is LangGraph"),
         _make_executor_response("st_1", "LangGraph is a state graph framework.", "https://example.com/1"),

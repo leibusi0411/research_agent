@@ -70,6 +70,40 @@ def build_local_retriever(
     return retrieve
 
 
+def build_index_auto_updater(
+    *,
+    config: UserConfig,
+    config_path: str | Path | None,
+    workspace: Workspace,
+) -> Callable[[], dict[str, Any]] | None:
+    """Build the stale-index auto-updater for the Planner local survey (ADR-0048).
+
+    The updater runs an incremental index update (only changed/new/deleted
+    files are re-processed, capped at 10 files per run) before the planner's
+    local knowledge survey, so a freshly deposited vault entry becomes
+    searchable without a manual rebuild.  Returns ``None`` when injection is
+    disabled or the index has never been built (``missing``/``failed``/
+    ``building``) — there is nothing to update incrementally.  Offline mode
+    (``RESEARCH_AGENT_OFFLINE=1``) degrades to deterministic embeddings so
+    tests stay offline.
+    """
+    if not config.research.inject_local_context:
+        return None
+    status = KnowledgeBaseIndex(workspace, config_path).status()["status"]
+    if status not in ("ready", "stale"):
+        return None
+    embedding_client: EmbeddingClient | None = None
+    if os.environ.get("RESEARCH_AGENT_OFFLINE") != "1":
+        embedding_client = OpenAICompatibleEmbeddingModel.from_config(config.embedding_model)
+
+    index = KnowledgeBaseIndex(workspace, config_path, embedding_client=embedding_client)
+
+    def update() -> dict[str, Any]:
+        return index.update(max_files=10)
+
+    return update
+
+
 def create_provider_runtime(
     config_path: str | Path | None,
     workspace_root: str,
@@ -107,6 +141,7 @@ def create_provider_runtime(
         task_store=task_store,
         bus=bus,
         local_retriever=build_local_retriever(config=config, config_path=config_path, workspace=resolved_workspace),
+        index_updater=build_index_auto_updater(config=config, config_path=config_path, workspace=resolved_workspace),
     )
     return ProviderBackedWebResearchRuntime(config=runner_config)
 
@@ -140,8 +175,9 @@ class CoreService:
             config = load_user_config(self.config_path)
             embedding_client = OpenAICompatibleEmbeddingModel.from_config(config.embedding_model)
         # Auto-create chat model from config for A+G summarization.
-        # Uses the "curator" role model if configured, otherwise the default
-        # chat_model — same resolution as web research roles.
+        # Uses the "local_summarizer" role slot; that slot is reserved but not
+        # parsed from config (see ADR-0009 evolution note), so this currently
+        # falls back to the default chat_model.
         if chat_model is None and self.config_path is not None and not offline:
             config = load_user_config(self.config_path)
             chat_model = OpenAICompatibleChatModel.from_config(
@@ -208,14 +244,45 @@ class CoreService:
         self.task_store.initialize()
         return self.task_store.list_finished_tasks()
 
-    def deposit_web_report(self, task_id: str) -> dict[str, str]:
+    def deposit_web_report(self, task_id: str) -> dict[str, Any]:
         """Knowledge Deposit: copy a completed Web Report File into the Markdown Vault."""
-        return deposit_web_report(
+        result = deposit_web_report(
             task_id=task_id,
             workspace=self.workspace,
             task_store=self.task_store,
             config_path=self.config_path,
         )
+        # ADR-0048: deposit is the deterministic trigger for refreshing the
+        # index — the deposited file is the only certain change, so the
+        # incremental update stays cheap.  It must never fail the deposit,
+        # and offline mode (tests / no embedding provider) skips it.
+        if os.environ.get("RESEARCH_AGENT_OFFLINE") == "1":
+            return result
+        try:
+            result["index_update"] = self.update_kb_index(max_files=5)
+        except Exception as exc:  # noqa: BLE001 - index refresh is best-effort
+            result["index_update"] = {"error": str(exc)}
+        return result
+
+    def update_kb_index(
+        self,
+        *,
+        max_files: int | None = None,
+        embedding_client: EmbeddingClient | None = None,
+    ) -> dict:
+        """Incrementally refresh the index for changed vault files (ADR-0048).
+
+        Unlike :meth:`rebuild_kb_index`, unchanged files keep their chunks and
+        are not re-embedded.  *max_files* caps how many changed/new/deleted
+        files the update will process — exceeding it skips the update and
+        leaves the index stale so callers can degrade gracefully.
+        """
+        if embedding_client is None:
+            config = load_user_config(self.config_path)
+            embedding_client = OpenAICompatibleEmbeddingModel.from_config(config.embedding_model)
+        return KnowledgeBaseIndex(
+            self.workspace, self.config_path, embedding_client=embedding_client
+        ).update(max_files=max_files)
 
     def delete_finished_task(self, task_id: str) -> dict[str, Any]:
         # Fail-closed: if lock is unreadable, treat family as busy.

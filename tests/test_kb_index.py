@@ -11,6 +11,15 @@ from research_agent.core.kb import KnowledgeBaseIndex
 from research_agent.core.service import CoreService
 
 
+class _RecordingEmbeddingClient:
+    def __init__(self) -> None:
+        self.texts: list[str] = []
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        self.texts.extend(texts)
+        return [[0.1, 0.2, 0.3] for _text in texts]
+
+
 class _FixedEmbeddingClient:
     def embed(self, texts: list[str]) -> list[list[float]]:
         return [[0.1, 0.2, 0.3] for _text in texts]
@@ -210,3 +219,97 @@ def test_kb_cli_status_and_rebuild(tmp_path):
 
     after = client.get("/api/kb/status")
     assert after.json()["status"] == "ready"
+
+
+def _read_chunk_texts(workspace) -> str:
+    connection = sqlite3.connect(workspace / "indexes" / "local" / "fts.sqlite")
+    try:
+        rows = connection.execute("SELECT text FROM chunks").fetchall()
+        return " | ".join(row[0] for row in rows)
+    finally:
+        connection.close()
+
+
+def test_update_applies_new_changed_and_deleted_files(tmp_path):
+    config_path, workspace, vault = write_config(tmp_path)
+    (vault / "keep.md").write_text("# Keep\n\nkeep content.", encoding="utf-8")
+    (vault / "old.md").write_text("# Old\n\nold content.", encoding="utf-8")
+    service = CoreService(default_workspace=workspace, config_path=config_path)
+    embedding = _RecordingEmbeddingClient()
+    service.rebuild_kb_index(embedding_client=embedding)
+    embedding.texts.clear()
+
+    (vault / "new.md").write_text("# New\n\nbrand new content.", encoding="utf-8")
+    (vault / "old.md").write_text("# Old\n\nchanged content.", encoding="utf-8")
+    (vault / "keep.md").unlink()
+
+    result = KnowledgeBaseIndex(
+        service.workspace, service.config_path, embedding_client=embedding
+    ).update()
+
+    assert result["status"] == "ready"
+    assert result["updated_files"] == 2
+    assert result["deleted_files"] == 1
+    # Only new/changed files were re-embedded — untouched chunks kept their vectors.
+    assert all("keep content." not in text for text in embedding.texts)
+
+    texts = _read_chunk_texts(workspace)
+    assert "brand new content." in texts
+    assert "changed content." in texts
+    assert "keep content." not in texts
+    assert "old content." not in texts
+
+    status = service.get_kb_status()
+    assert status["status"] == "ready"
+    assert status["file_count"] == 2
+
+
+def test_update_without_changes_is_noop(tmp_path):
+    config_path, workspace, vault = write_config(tmp_path)
+    (vault / "note.md").write_text("# Note\n\nstable content.", encoding="utf-8")
+    service = CoreService(default_workspace=workspace, config_path=config_path)
+    embedding = _RecordingEmbeddingClient()
+    service.rebuild_kb_index(embedding_client=embedding)
+    embedding.texts.clear()
+
+    result = KnowledgeBaseIndex(
+        service.workspace, service.config_path, embedding_client=embedding
+    ).update()
+
+    assert result["updated_files"] == 0
+    assert result["status"] == "ready"
+    assert embedding.texts == []
+
+
+def test_update_skips_when_changes_exceed_max_files(tmp_path):
+    config_path, workspace, vault = write_config(tmp_path)
+    (vault / "note.md").write_text("# Note\n\nstable content.", encoding="utf-8")
+    service = CoreService(default_workspace=workspace, config_path=config_path)
+    embedding = _RecordingEmbeddingClient()
+    service.rebuild_kb_index(embedding_client=embedding)
+    embedding.texts.clear()
+
+    for index in range(3):
+        (vault / f"new{index}.md").write_text(f"# New {index}\n\nfresh {index}.", encoding="utf-8")
+
+    result = KnowledgeBaseIndex(
+        service.workspace, service.config_path, embedding_client=embedding
+    ).update(max_files=2)
+
+    assert result["skipped"] is True
+    assert result["status"] == "stale"
+    assert result["updated_files"] == 0
+    assert embedding.texts == []
+    # Index untouched: new files are still not searchable.
+    assert "fresh 0." not in _read_chunk_texts(workspace)
+
+
+def test_update_without_index_reports_missing(tmp_path):
+    config_path, workspace, vault = write_config(tmp_path)
+    (vault / "note.md").write_text("content", encoding="utf-8")
+    service = CoreService(default_workspace=workspace, config_path=config_path)
+
+    result = KnowledgeBaseIndex(service.workspace, service.config_path).update()
+
+    assert result["status"] == "missing"
+    assert result["skipped"] is True

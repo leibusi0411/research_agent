@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-09 | 测试：197 passed（Python；配置真实 key 后 9 个真实 API 测试首次实跑通过）+ 25 passed（前端 Vitest）+ 1 passed（Playwright e2e）| 第七轮审查 18 项：16 修复 ✅ + 2 记录在案 ⚠️（R-206~R-223）| 新功能：常驻 Settings 页面（ADR-0047）+ Local RAG A+G API 对齐（R-218）+ 异常掩码/截断重试修复（R-219/R-220）+ SSE 看门狗/去重（R-221）+ 完成态 phase 修正（R-222）+ 完成态下划线消失（R-223）
+> 最后更新：2026-09-09 | 测试：Python 210 passed（含真实链路 e2e）+ 前端 26 passed + Playwright 1 passed | 第九轮实现：local_kb_search（Planner 本地调研）+ 索引自动增量更新（ADR-0048，R-257）| 第八轮审查（47 ADR 对照代码）32 项 ⚠️ 记录在案待裁决（R-225~R-256，编号与本轮实现的 R-257 已错开）
 
 ---
 
@@ -27,7 +27,77 @@
 
 ---
 
-## 二、本轮 Review（2026-09-08）
+## 二、本轮 Review（2026-09-09）
+
+### 第八轮审查（2026-09-09，历史 ADR 对照最新代码）
+
+#### 审查范围
+
+应用户要求，把 `docs/adr/` 全部 47 个 ADR 与当前代码逐条对照，找"已被代码违反或静默推翻、但没有后续 ADR 显式演进注记"的决策。方法：6 组并行子代理全量初查，全部 P0 发现由主审查逐条人工复核（Read 实证 file:line）。已有显式演进注记的不计入：ADR-0030（被 0047 演进）、ADR-0006（被 0045 部分演进）、ADR-0017/0036（0046 注记）、ADR-0013（LangGraph 迁移注记）、ADR-0045 新增端点与错误码、ADR-0047 新增 setup/config 端点。本轮只审查与记录，未改任何代码。
+
+#### P0 — 行为冲突（代码实际行为与 ADR 决策矛盾，需逐条裁决：显式演进 ADR 或改代码）
+
+| 编号 | 问题 | 处置 |
+|------|------|------|
+| R-225 | ADR-0028「V1 does not include task delete commands/actions」被推翻：`DELETE /api/tasks/{task_id}`（app.py:347）→ `delete_finished_task`（service.py:220 / tasks.py:162）→ `delete_task_folder`（workspace.py:77）全链路在运行，TasksPage 有 Delete 按钮；无演进 ADR。CONTEXT.md Task History/Tasks Page 词条仍写"无 delete actions"，与 Web API 词条自相矛盾 | ⚠️ 记录在案：删除功能已经 R-132~R-148 多轮修复、是既定事实，建议新增 ADR 显式演进 0028 并同步 CONTEXT |
+| R-226 | ADR-0009/0044：`[chat_model.local_summarizer]` per-role 覆盖**静默无效**——`config.py:240` 角色列表只有 planner/executor/supervisor/curator；service.py:148 与 app.py:236 的 `build_role_chat_model_config(config, "local_summarizer")` 永远回退全局，用户按文档配置不生效且无任何报错；tests 中零覆盖 | ⚠️ 记录在案：实际功能 bug 候选——一行修复（角色列表加 local_summarizer）+ 补测试；顺带清理 service.py:143-144 陈旧注释（写 "curator"） |
+| R-227 | ADR-0009「Existing config: prompt before overwrite」在 CLI 未实现：cli.py:97-119 → config.py:140-147 无条件覆写；ADR-0047 只把"全量重写不提示"豁免给 Web Settings 场景，CLI 仍受 0009 约束 | ⚠️ 记录在案：实现 CLI 覆盖前提示，或给 0009 补演进注记 |
+| R-228 | ADR-0026 核心决策（因 Chroma 1.x 崩溃 / 0.5.x 需 C++ 构建，改用应用自管 SQLite 向量表）被**静默推翻**：chroma_store.py:25 用真实 `chromadb.PersistentClient`，仅 docstring 提及"fulfilling ADR-0026's original intent"，无任何演进 ADR（0026 自初版未改） | ⚠️ 记录在案：现状测试全过、工作正常，建议补 ADR 记录这次反转及原因 |
+| R-229 | ADR-0022 状态机自相矛盾：`kb.py:92-93` vector 文件缺失即判 `failed` → FTS5 完全可用却拒绝 Local RAG 查询（local_research.py:35），与该 ADR update 注记「stale indicates FTS5 is usable」直接相反；行为已被 test_kb_index.py:121-135 固化 | ⚠️ 记录在案：需裁决——改代码判 stale，或改 ADR 承认新 failed 语义 |
+| R-230 | ADR-0005 的 blackboard_snapshot 机制整体消失：src 零命中；「启动时读快照展示部分结果/诊断失败点」无替代实现（checkpoints.sqlite 只写不读，state_graph.py:308-309）；ADR-0013 有迁移注记但 0005 自身无注记 | ⚠️ 记录在案：给 0005 补演进注记；诊断读能力是否恢复属阶段 8/9 决策 |
+| R-231 | ADR-0008「默认不存完整 prompt/模型输出，需显式 Debug Trace mode」被推翻：state_graph.py:401-413 `_save_llm_call_artifact` **无条件**把完整 prompt+output 落盘 `artifacts/llm_calls/`（graph.py:241/336/382/419 全部节点调用）；全代码不存在 Debug Trace 开关；CONTEXT.md Debug Trace 词条同步失实 | ⚠️ 记录在案：该落盘在 R-219/R-220 排查中起了关键作用，建议显式演进 0008（承认默认存 llm_calls）并修订 CONTEXT |
+| R-232 | ADR-0021/0033 核心决策失效：Web Source Snapshot 只剩元数据（state_graph.py:451-463 只写 `source.to_dict()`），提取正文从不持久化（executor.py:297-304 用完即弃）；「source text remains available locally」未实现；CONTEXT.md Web Source Snapshot 词条同步失实 | ⚠️ 记录在案：恢复正文持久化（磁盘开销）或显式演进 0021/0033；与阶段 8「Source 快照查看器」强相关——没有正文就没有可查看的内容 |
+| R-233 | ADR-0004/0032 的 schema repair（每次角色调用一次修复 LLM 调用）被**整体删除**：role_invocation.py:48-56 validator 失败立即 `schema_validation_failed`，src 内 grep repair 零命中；R-220 加的「解析失败盲重试一次（共 2 次）」是不同语义；CONTEXT.md Schema Repair / Runtime Failure 词条与 AGENTS.md 开发约定仍描述已删除的机制 | ⚠️ 记录在案：机制删除发生于 function-calling 迁移（REVIEW_TRACKER 已记），建议给 0004/0032 补演进注记 + 修订 CONTEXT/AGENTS |
+| R-234 | ADR-0034/0004「runtime assigns `f_1`/`f_2`、`src_1`/`src_2` 顺序 ID，不用模型生成标识符」被推翻：executor.py:57-75 把 `finding_id`/`source_id` 列为 LLM **必填**输出，:149/:158 直接采用模型值、兜底 `f"f_{subtask_id}"`；不同 subtask 间模型可能重复发 `f_1` 造成 ID 撞车 | ⚠️ 记录在案：建议改回 runtime 重编号（解析后覆盖为顺序号）或显式演进 ADR |
+| R-235 | ADR-0004：Supervisor 的 `plan_revision_request` 到不了 Planner——`_build_revision_planner_prompt`（prompt_builders.py:90-109）不渲染该字段（executor_outputs 同样未渲染），修订指导被静默丢弃，唯一消费方是 execution_trace 展示 | ⚠️ 记录在案：实际功能缺陷候选——修 prompt builder + 补测试 |
+| R-236 | ADR-0023 事件契约被突破：event_type 白名单外实际发射 `task_result`（state_graph.py:366/386、local_research.py:326）与 `stream_timeout`（app.py:439，连 schemas.py Literal 都未收录）；subtype 多出 `research_gap`（state_graph.py:38）；item kind 多出 `status`；local 与 API started 事件无 `seq`（local_research.py:42-53、app.py:457-468） | ⚠️ 记录在案：前端已依赖 task_result（R-221/R-222），建议演进 0023 + 修订 CONTEXT 事件词条 |
+| R-237 | ADR-0010「Research Page 含 Local RAG 与 Web Research 两个输入区」被推翻：Inkwell 重设计删除了 Local 输入（ResearchPage.tsx:35-48 单一搜索框；api.ts 无 runLocal；web/src 对 `/api/research/local` 零引用），仅 commit 7a559f1 与 R-197 记录；CONTEXT.md Research Page 词条过时；e2e 的 local mock 成死代码 | ⚠️ 记录在案：Web UI 无法启动 Local RAG 是能力面缩减（ADR-0037 对等原则），需裁决恢复输入区或显式演进 0010 |
+| R-238 | ADR-0011/0040「local 命令流式显示 local_rag 进度直到完成」未实现：cli.py:150 直接同步调用；service.py:134 `run_local_research` 无 `on_event` 参数；`both` 的 local 侧同样静默 | ⚠️ 记录在案：实现 local 进度流或演进 ADR |
+| R-239 | ADR-0037「CLI/FastAPI 是薄适配器，不做任务创建/并发控制/进度发射」被违反：app.py:450-468 `_create_running_task` 直接写 task.json/result.json/首事件，app.py:471-523 自编排骨线程锁生命周期并绕过用例直调 `run_*_unlocked`；CoreService 新增 `run_local_research_unlocked`/`run_web_research_unlocked`/`acquire_family_lock` 三个 public 方法无 ADR 注记 | ⚠️ 记录在案：R-110/R-114 等修复积累出的现状；建议阶段 8 工厂重构时回收进 CoreService，或演进 0037 |
+| R-240 | ADR-0039 错误码契约破坏：`kb_rebuild_error` 不在 `VALID_ERROR_CODES`，app.py:396-397 用裸 dict 绕过结构化校验直达 API 响应体；`llm_call_failed` 在码表（errors.py:15）且使用（role_invocation.py:44）但无 ADR 记录；`model_error`/`search_error`/`tool_error` 授权在册但无人抛出 | ⚠️ 记录在案：`kb_rebuild_error` 注册进码表（去掉裸 dict）+ 演进注记 |
+| R-241 | ADR-0042 要求真实 API 测试「behind an explicit environment flag」，实际机制是「无配置才 skip」（test_api_connections.py:12-18 等 9 个），pyproject 无 marker 排除——有真实 key 的机器上 `uv run pytest` 默认就打真实 API（本文件页头的 197 passed 正是这样跑出来的） | ⚠️ 记录在案：加显式开关（如 `RESEARCH_AGENT_E2E=1`）或演进 0042 承认 config-based skip |
+
+#### P1 — 机制/文档漂移（ADR 描述与实现脱节，需补注记或修文档）
+
+| 编号 | 问题 | 处置 |
+|------|------|------|
+| R-242 | ADR-0023/0013 的 janus.Queue EventStream 已被 asyncio Bus 替换（core/bus.py），无 ADR 注记；pyproject.toml:11 `janus` 成死依赖；bus.py docstring 残留外部绝对路径 `G:\VSCode_project\mycode\...` | ⚠️ 记录在案：补注记 + 删依赖 + 清 docstring |
+| R-243 | ADR-0024/0026 布局图中 chroma 在 `indexes/local/chroma/`，实际在 `indexes/chroma/`（kb.py:72-80，规避 Windows mmap 锁）；CONTEXT.md 已同步、ADR 未注记 | ⚠️ 记录在案：补注记 |
+| R-244 | ADR-0022「临时位置构建 + 原子整体替换 `indexes/local/`」对 Chroma 不再成立：`copytree(dirs_exist_ok=True)` 合并部署（kb.py:159），旧 segment 残留不清理 | ⚠️ 记录在案：补注记或改回原子部署 |
+| R-245 | ADR-0018 原文仍称「用户在应用外自行决定是否沉淀」，无指向 ADR-0045 的演进注记（0017 有、0018 没有） | ⚠️ 记录在案：补注记 |
+| R-246 | ADR-0029「点击任务行 navigate 到结果页」已变为 Tasks 页行内展开（R-224，本工作区进行中）；CONTEXT.md Tasks Page / Task History 词条仍写 navigate | ⚠️ 记录在案：随 R-224 提交同步 ADR/CONTEXT |
+| R-247 | 「Curator 输出阶段合并重复 URL」机制不存在（graph.py:86-108 原样拷贝、prompt 无去重指令、全 src 无 dedup）；ADR-0004 与 ADR-0035 声称有、ADR-0031 声称 v1 不做——三份文档互相矛盾，代码站在 0031 侧；CONTEXT.md Tool Gateway 词条同步失实 | ⚠️ 记录在案：修正 0004/0035/CONTEXT；TODO.md 原有 "Earlier URL deduplication" 条目已随清单清空丢失，如需保留应重录 |
+| R-248 | ADR-0038：`GET /api/tasks/{id}/events` 实为双模——历史/已完成任务直接返回 JSON 数组（app.py:315-326），仅活跃任务走 SSE；前端已依赖此行为 | ⚠️ 记录在案：补注记 |
+| R-249 | ADR-0047 自称「未配置时落在 Settings 页」从未实现：落地页恒为 Research（App.tsx 无 configured 重定向；App.test.tsx:132-134 断言相反；自实施 commit b91609c 起即如此） | ⚠️ 记录在案：修 ADR 措辞（R-217 的既定行为才是现状） |
+| R-250 | ADR-0015「call recording 集中于 Gateway」不存在：ToolGateway.call 只做校验+重试（tools.py:235-254），调用记录分散在 executor 事件流与 llm_calls 工件 | ⚠️ 记录在案：补注记 |
+| R-251 | ADR-0013 route guard 实际多 3 条未注记条件（graph.py:133-152：revise_plan 轮次拦截、last_sup 为 None、next_subtask_ids 为空）；`recursion_limit = max_retrieval_rounds * 3 + 5` 派生公式（state_graph.py:321）未注记 | ⚠️ 记录在案：补注记 |
+| R-252 | ADR-0036「kb rebuild 与 Local RAG 互斥（busy）」只实现一半：rebuild 不检查 local 族锁（kb.py:118-132）；local 撞 building 报 `kb_index_building` 失败任务而非 busy（local_research.py:35-39）；CONTEXT 已按新行为改写、ADR 未注记 | ⚠️ 记录在案：补注记或补反向互斥 |
+| R-253 | ADR-0007「配置可替换 Search Provider」：`config.search.provider` 被解析（config.py:199）但从不用于选择实现，service.py:95 无条件构造 TavilySearchProvider | ⚠️ 记录在案：接口级可替换性成立、可接受，补注记 |
+| R-254 | ADR-0009：`RESEARCH_AGENT_CONFIG_PATH` 覆盖与 POSIX `~/.config` 路径（config.py:96-103）无 ADR 记录；「max_retrieval_rounds/max_concurrent_subtasks 必须正整数」校验未实现（config.py:182-184 仅 `int()`） | ⚠️ 记录在案：补注记 + 正整数校验 |
+| R-255 | ADR-0040「kb rebuild 打印重建进度」未实现：cli.py:126-135 同步跑完只打与 kb status 相同的 5 个键 | ⚠️ 记录在案：实现进度输出或修 ADR |
+| R-256 | 非 ADR 文档漂移汇总：`fake_runtime.py` 已删除（commit 7a81a4e）但 AGENTS.md/README.md/CLAUDE.md 仍列为既有组件；README 三处声称 API 服务静态文件（:114/:385/:600，与自身 :312 矛盾）；测试计数三处不一致（README badge 186 / AGENTS.md 184+9 / 本文件 197） | ⚠️ 记录在案：下次文档扫尾统一修 |
+
+#### 观察项（非冲突，仅记录）
+
+- ADR-0044 未规定 LLM 总结失败兜底：`_generate_summary` 无 try/except（local_research.py:364-371），异常直接穿透且任务不会持久化为 failed 结果。
+- ADR-0025 provider 字段从不校验，任意字符串静默走 OpenAI 兼容客户端。
+- supervisor prompt 不渲染 `failure_reason`、不提 `skip_subtask_ids`/`research_gaps` 字段，但 schema 里全是 required（prompt_builders.py:205-219）。
+- ADR-0003 result.json 形状漂移：local 条目多出 `chunk_id`/`score` 字段（local_research.py:153-160，增量无害）。
+
+---
+
+### 第九轮实现（2026-09-09，local_kb_search + 索引增量更新 / ADR-0048）
+
+落地 TODO "Local KB as a Web Research tool" 的 Planner 侧方案（用户定稿：本地知识归规划、网络证据归执行），并落地 TODO "Automatic or one-click index refresh" 的确定性钩子部分：
+
+- **Planner 本地调研**：规划/修订节点内置有界调研阶段——查询优化（≤3 个定向查询）→ 并行混合检索 → 去重加权合并 → 注入正式规划提示词（"仅供参考"措辞）。`local_kb_search` 不注册进共享注册表（Executor 提示词由注册表生成，注册即泄漏），Executor 保持纯 Web。
+- **降级矩阵**：索引 missing/failed/building 或关闭注入 → 跳过调研；stale → 用旧索引并在提示词标注"可能不完整"；单查询失败/问卷 LLM 失败 → 吞掉继续（辅助阶段不杀死规划）。
+- **索引增量更新**：`KnowledgeBaseIndex.update(max_files=)`——只重处理新增/修改/删除文件，FTS5 事务提交、Chroma 增删失败不回滚 FTS5（对齐 rebuild 语义）、manifest 原子写、超限跳过保持 stale。
+- **两个确定性钩子**：deposit 成功后自动增量更新（max_files=5，离线跳过、异常不失败 deposit）；调研前 stale 且变更 ≤10 自动更新（变更过大保持降级）。
+- **测试**：+13（kb 增量 4、deposit 钩子 2、Planner 调研 8 含降级与自动更新）；全量 Python 210 passed（含真实链路 e2e）。
+- 审查（subagent）：无 P0/P1；P2 事件时序/降级闭合/close 泄漏/flaky 断言/CONTEXT 措辞已修复，P3 原子写 manifest、skipped 真实计数、返回注解已落实。
+
+## 二·历史轮次（2026-09-06 ~ 2026-09-08）
 
 ### 第七轮审查（2026-09-08，常驻 Settings 页面 / ADR-0047）
 
@@ -69,8 +139,6 @@
 后端 `uv run pytest`：181 passed + 9 skipped；前端 `npm run test`：22 passed；`npx playwright test`：1 passed；`tsc -b` 通过。
 
 ---
-
-## 二·历史轮次（2026-09-06 ~ 2026-09-07）
 
 ### 审查范围
 
@@ -394,6 +462,7 @@
 1. **提交本日改动** — Web UI 视觉重设计（第五轮审查 R-184~R-192 处理完毕）；提交时必须 `git add web/dist` 全量新构建资产（R-192），TODO.md 的 `local_kb_search` 条目建议拆成独立提交
 2. **下一步联动候选：`local_kb_search` 注册为 Web 工具（方案 3）** — 触发条件与中间档已记录于 TODO.md"Retrieval And Web Tools"节；先观察 deposit 增长后初始 Top-5 是否漏材料再决定
 3. **择机加固 R-173 家族** — 锁时序偶发测试，让 fake runtime 可阻塞
+4. **裁决第八轮 P0 冲突（R-225~R-241）** — 逐条决定：显式演进 ADR / 改代码 / 改 CONTEXT.md；其中 R-226（`local_summarizer` 覆盖失效）、R-235（`plan_revision_request` 被丢弃）、R-229（vector 缺失即 `failed`）、R-234（LLM 生成 ID 撞车风险）是实际功能 bug 候选，建议优先。另注意 TODO.md 清空后，`local_kb_search` 与 "Earlier URL deduplication" 两条延期决策的触发条件记录已丢失，如仍需保留应重录
 
 ### 阶段 8（功能全部实现）
 

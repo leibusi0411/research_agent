@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -11,6 +13,7 @@ from research_agent.web.executor import ResearchExecutor
 from research_agent.web.prompt_builders import (
     build_curator_prompt,
     build_planner_prompt,
+    build_planner_survey_prompt,
     build_supervisor_prompt,
 )
 from research_agent.web.role_invocation import invoke_role_json
@@ -19,6 +22,7 @@ from research_agent.web.schemas import (
     Finding,
     PlannerOutput,
     PlannerSubtaskDraft,
+    PriorKnowledgeChunk,
     ResearchSubtask,
     SupervisorOutput,
     WebResearchStateDict,
@@ -125,6 +129,12 @@ class GraphContext:
     _emit: Callable[..., None] = field(repr=False)
     _save_llm_call_artifact: Callable[..., None] = field(repr=False)
     _save_source_snapshots: Callable[..., None] = field(repr=False)
+    # ADR-0048: planner-side local_kb_search survey.  The retriever is the
+    # same read-only hybrid retrieval the standalone Local RAG uses; the
+    # updater refreshes a stale index before the survey.  Both are None when
+    # the local knowledge base is unavailable (degrades to a web-only plan).
+    local_retriever: Callable[[str], list[PriorKnowledgeChunk]] | None = None
+    index_updater: Callable[[], dict[str, Any]] | None = None
 
 
 # ── route guard ───────────────────────────────────────────────────────
@@ -229,7 +239,8 @@ _CURATOR_SCHEMA: dict[str, Any] = {
 def _plan_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[str, Any]:
     task_id = ctx.task_id
     ctx._emit(task_id, "web_planning", "started", "Planning web research.")
-    planner_prompt = build_planner_prompt(state)
+    local_survey = _run_local_survey(state, ctx, phase="web_planning")
+    planner_prompt = build_planner_prompt(state, local_survey=local_survey)
     planner_payload = invoke_role_json(
         role_name="planner",
         prompt=planner_prompt,
@@ -367,10 +378,128 @@ def _supervise_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[str,
     }
 
 
+# ── planner local survey (ADR-0048: local_kb_search) ──────────────────
+
+_LOCAL_SURVEY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "queries": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["queries"],
+}
+
+_SURVEY_QUERY_CAP = 3
+
+
+def _validate_survey_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    queries = payload.get("queries")
+    if not isinstance(queries, list) or not all(isinstance(q, str) for q in queries):
+        raise ValueError("queries must be a list of strings")
+    return payload
+
+
+def _run_local_survey(
+    state: WebResearchStateDict, ctx: GraphContext, phase: str
+) -> list[dict[str, Any]]:
+    """Run the planner's local_kb_search survey before final planning.
+
+    Bounded by design: one structured LLM call proposes up to
+    ``_SURVEY_QUERY_CAP`` targeted queries, the queries run in parallel
+    through the (read-only) local retriever, and merged results are deduped
+    by text+source with a hit-count boost.  Any failure degrades to an empty
+    survey — this auxiliary phase must never kill the planning phase.
+
+    Emits only ``progress`` events under the *calling node's* phase — no
+    started/completed boundary events, so the phase stream stays monotonic
+    (ADR-0023) even when the survey runs during plan revision.
+    """
+    task_id = ctx.task_id
+    if ctx.local_retriever is None:
+        return []
+    ctx._emit(task_id, phase, "progress", "Surveying local knowledge base.")
+
+    # Refresh a stale index before surveying when the pending change set is
+    # small (ADR-0048); a large change set keeps the stale index and degrades.
+    if ctx.index_updater is not None:
+        try:
+            update_result = ctx.index_updater()
+            updated_files = int(update_result.get("updated_files", 0))
+            if updated_files:
+                ctx._emit(
+                    task_id, phase, "progress",
+                    f"Local index incrementally updated ({updated_files} files).",
+                )
+        except Exception:
+            logger.warning("Local index auto-update failed; continuing with the current index", exc_info=True)
+
+    survey_prompt = build_planner_survey_prompt(state)
+    try:
+        payload = invoke_role_json(
+            role_name="planner_local_survey",
+            prompt=survey_prompt,
+            tool_name="local_kb_search",
+            tool_schema=_LOCAL_SURVEY_SCHEMA,
+            chat_model=ctx.chat_models["planner"],
+            validator=_validate_survey_payload,
+        )
+        ctx._save_llm_call_artifact(
+            task_id, "planner_local_survey", survey_prompt, payload,
+            round_num=state.get("retrieval_round", 0),
+        )
+    except Exception:
+        logger.warning("Local knowledge survey failed; planning without it", exc_info=True)
+        return []
+
+    queries = [
+        query.strip()
+        for query in payload.get("queries", [])
+        if isinstance(query, str) and query.strip()
+    ][:_SURVEY_QUERY_CAP]
+    if not queries:
+        return []
+
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    merge_lock = threading.Lock()
+
+    def run_query(query: str) -> None:
+        try:
+            chunks = ctx.local_retriever(query) or []  # type: ignore[misc]
+            for chunk in chunks:
+                with merge_lock:
+                    key = (chunk.source_path, chunk.text)
+                    entry = merged.get(key)
+                    if entry is None:
+                        merged[key] = {
+                            "query": query,
+                            "text": chunk.text,
+                            "source_path": chunk.source_path,
+                            "heading_path": list(chunk.heading_path),
+                            "hits": 1,
+                        }
+                    else:
+                        entry["hits"] += 1
+                        if query not in entry["query"]:
+                            entry["query"] = f"{entry['query']} | {query}"
+        except Exception:
+            # Malformed chunk objects must not bubble up and kill planning.
+            logger.warning("Local survey retrieval failed for query %r", query, exc_info=True)
+
+    with ThreadPoolExecutor(max_workers=min(_SURVEY_QUERY_CAP, len(queries))) as pool:
+        list(pool.map(run_query, queries))
+
+    results = sorted(merged.values(), key=lambda item: -item["hits"])
+    ctx._emit(
+        task_id, phase, "progress",
+        f"Local survey: {len(queries)} queries, {len(results)} unique chunks.",
+    )
+    return results
+
+
 def _plan_revision_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[str, Any]:
     task_id = ctx.task_id
     ctx._emit(task_id, "web_revision", "started", "Revising plan.")
-    revision_prompt = build_planner_prompt(state, revision=True)
+    local_survey = _run_local_survey(state, ctx, phase="web_revision")
+    revision_prompt = build_planner_prompt(state, revision=True, local_survey=local_survey)
     revision_payload = invoke_role_json(
         role_name="planner_revision",
         prompt=revision_prompt,

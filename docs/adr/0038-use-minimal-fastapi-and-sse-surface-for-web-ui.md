@@ -1,5 +1,7 @@
 # Use a minimal FastAPI and SSE surface for the Web UI
 
+> 演进注记（2026-09-09，R-248）：`GET /api/tasks/{task_id}/events` 实为双模端点——活跃任务走 SSE 流式推送；历史/已完成任务（runtime 已不在注册表且 result 已达终态）直接返回完整事件 JSON 数组（app.py:315-326，注释 "return full events list as JSON — no need for SSE streaming"），前端 `api.ts` 的 taskEvents 已依赖此行为。端点清单自本文后新增 3 个：`GET /api/setup/config`（ADR-0047 已记录）、`POST /api/tasks/{task_id}/deposit`（ADR-0045 已记录）、`DELETE /api/tasks/{task_id}`（R-225 补记于 ADR-0028），当前共 13 个端点。最小化 API 面、仅服务 API 的原则不变。
+
 V1 Web UI talks to the local Core Service through a small FastAPI API surface:
 
 ```text

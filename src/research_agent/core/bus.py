@@ -1,7 +1,6 @@
 """Per-instance event bus — asyncio-based pub/sub for SSE.
 
-Follows the pattern from ``G:\VSCode_project\mycode\mycode\bus\bus.py``:
-a shared ``Bus`` instance per FastAPI app, with ``publish`` / ``subscribe`` /
+A shared ``Bus`` instance per FastAPI app, with ``publish`` / ``subscribe`` /
 ``subscribe_all`` primitives so SSE endpoints stream events without
 file-polling fallback for live tasks.
 

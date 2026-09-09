@@ -401,3 +401,43 @@ def test_deposited_report_becomes_searchable_after_kb_rebuild(tmp_path, monkeypa
     assert result["status"] == "completed"
     source_paths = [item["source_path"] for item in result["local_results"]]
     assert any("web-research" in path for path in source_paths)
+
+
+def test_deposit_triggers_incremental_index_update(tmp_path, monkeypatch):
+    config_path, workspace, vault = write_config(tmp_path)
+    monkeypatch.delenv("RESEARCH_AGENT_OFFLINE", raising=False)
+    service = CoreService(default_workspace=workspace, config_path=config_path)
+    add_finished_web_task(service, workspace, "task_20260624_100000_bbbbbb")
+
+    calls: list[dict] = []
+
+    def fake_update(self, *, max_files=None, embedding_client=None):
+        calls.append({"max_files": max_files})
+        return {"status": "ready", "updated_files": 1, "skipped": False}
+
+    monkeypatch.setattr(CoreService, "update_kb_index", fake_update)
+
+    result = service.deposit_web_report("task_20260624_100000_bbbbbb")
+
+    # Deposit is the deterministic trigger for refreshing the index (ADR-0048):
+    # the deposited file is the only certain change, so the incremental update
+    # processes just a handful of files.
+    assert calls and calls[0]["max_files"] == 5
+    assert result["index_update"]["status"] == "ready"
+
+
+def test_deposit_skips_index_update_in_offline_mode(tmp_path, monkeypatch):
+    config_path, workspace, vault = write_config(tmp_path)
+    monkeypatch.setenv("RESEARCH_AGENT_OFFLINE", "1")
+    service = CoreService(default_workspace=workspace, config_path=config_path)
+    add_finished_web_task(service, workspace, "task_20260624_100000_bbbbbb")
+
+    def fail_update(self, **_kwargs):
+        raise AssertionError("offline mode must not update the index")
+
+    monkeypatch.setattr(CoreService, "update_kb_index", fail_update)
+
+    result = service.deposit_web_report("task_20260624_100000_bbbbbb")
+
+    assert "index_update" not in result
+    assert result["vault_path"]

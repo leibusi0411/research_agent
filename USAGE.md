@@ -59,7 +59,7 @@ uv run research-agent init \
 
 ### 方式 B：Web UI
 
-启动后浏览器访问，未配置时会自动进入 Settings 页面。
+启动后浏览器访问；未配置时落在 Research 页（照常可浏览与输入），启动调研时才同步报 `config_missing`，可随时从侧边栏进入 Settings 页面完成配置。
 
 ### 方式 C：手动创建配置文件
 
@@ -292,7 +292,7 @@ Web UI 中也有相同能力：在已完成的 Web Report 视图（Research 页�
 
 ```bash
 # 进入 web 目录
-cd G:\VSCode_project\research_agent_deepseek\web
+cd web
 
 # 一键启动前后端（推荐）
 npm run dev:all
@@ -300,12 +300,12 @@ npm run dev:all
 
 浏览器访问 **http://127.0.0.1:5173**
 
-首次使用会自动进入 Settings 配置页面（此后可随时从侧边栏进入修改）。配置完成后可访问四个页面：
+未配置时落在 Research 页（可正常浏览与输入，启动调研时才报 `config_missing`）；从侧边栏进入 Settings 配置页面填写提交后，即可使用全部四个页面：
 
 | 页面 | 路由 | 功能 |
 |------|------|------|
-| **Research** | `/` | 输入问题，启动 Local RAG 或 Web Research，实时查看进度和结果 |
-| **Tasks** | `/tasks` | 查看历史任务列表，点击查看详情 |
+| **Research** | `/` | 输入问题启动 Web Research，实时查看进度和结果（Local RAG 请用 CLI 或 API） |
+| **Tasks** | `/tasks` | 查看历史任务列表，点击行内展开详情，可删除已完成任务 |
 | **Knowledge Base** | `/kb` | 查看索引状态，一键重建索引 |
 | **Settings** | `/settings` | 随时查看和修改全部配置（已保存的 API key 留空即保持不变） |
 
@@ -315,11 +315,11 @@ npm run dev:all
 # 1. 构建前端
 cd web && npm run build && cd ..
 
-# 2. 启动后端（自动服务前端静态文件 + API）
+# 2. 启动后端（仅 API，不服务前端静态文件）
 uv run uvicorn research_agent.api.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-浏览器访问 **http://127.0.0.1:8000**
+后端只提供 API；`web/dist/` 需用任意静态服务器自行托管，并将 `/api` 反向代理到后端端口。日常开发推荐 `npm run dev:all`（见上）。
 
 ### API 端点
 

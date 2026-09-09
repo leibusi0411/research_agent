@@ -1,5 +1,7 @@
 # Keep default tests deterministic and offline
 
+> 演进注记（2026-09-09，R-241）：真实 API 测试的实际隔离机制是"无配置才 skip"，而非本文所述的显式环境旗标：9 个真实 API 测试（tests/test_api_connections.py 3 个、test_web_e2e.py 3 个、test_web_e2e_simple.py 3 个）的 skip 条件是 `load_user_config()` 失败或 key 为占位值（"test-key"）；pyproject.toml 未注册 marker、也未在 addopts 默认排除（测试文件虽标 `@pytest.mark.e2e`，但该 marker 不构成运行门槛）。后果：配置了真实 key 的机器上 `uv run pytest` 默认就会打真实 API——"默认离线"只在无配置机器上成立。离线确定性原则本身不变：无配置环境下全部测试仍确定、离线、不依赖网络与计费。
+
 V1 default tests should be deterministic, local, and runnable without API keys or network access.
 
 Python uses `pytest`:

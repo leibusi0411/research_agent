@@ -4,13 +4,15 @@
 **状态**: ✅ 已实施  
 **影响范围**: `api/app.py`, `web/src/App.tsx`, `web/src/pages/SettingsPage.tsx`（新增，替代 SetupPage）, `web/src/components/Sidebar.tsx`, `web/src/api.ts`
 
+> 演进注记（2026-09-09，R-249）：追认实施时偏差——本文原述"未配置时用户落在 Settings 页"自实施（commit b91609c）起即未实现：`web/src/App.tsx` 无按 configured 重定向的逻辑，落地页恒为 Research（`web/tests/App.test.tsx:132-134` 断言 "Research is the landing page even without config"），后经 R-217 明确为既定行为（Research 未配置照常可用、启动调研才同步报 `config_missing`）。下文决策中的失实句已据此修订为现实；本 ADR 其余决策（API key 不回传、空密钥保留、保存全量写回的取舍等）不受影响。
+
 ## 背景
 
 ADR-0030 规定 v1 Web UI 不设 Settings 页面，只在 User Config 缺失时显示 Setup 视图。TODO.md 将 "Settings page"（完整设置编辑器：模型、搜索 provider、工作区路径等）列为有意延期项。用户决定实现该延期项：配置不再是一次性的首次流程，而是随时可查看、可修改的常驻页面，左侧导航由此变为 4 个页面（Research / Tasks / Knowledge Base / Settings）。
 
 ## 决策
 
-将 Setup 视图升级为常驻 **Settings Page**（路由 `/settings`），首次使用不再全屏接管：应用外壳（侧边栏 + 路由）始终渲染，未配置时用户落在 Settings 页，保存后进入 Research 页。
+将 Setup 视图升级为常驻 **Settings Page**（路由 `/settings`），首次使用不再全屏接管：应用外壳（侧边栏 + 路由）始终渲染，未配置时用户落在 Research 页（外壳内照常展示与输入，启动调研才由 API 同步报 `config_missing`），Settings 随时可从侧边栏进入，保存后进入 Research 页。
 
 ### 关键设计选择
 

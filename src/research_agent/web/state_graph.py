@@ -176,6 +176,9 @@ class RunnerConfig:
     # ADR-0046: optional Prior Knowledge retriever over the Knowledge Base;
     # None disables injection.
     local_retriever: Callable[[str], list[PriorKnowledgeChunk]] | None = None
+    # ADR-0048: optional stale-index incremental updater run before the
+    # planner's local knowledge survey; None disables the auto-update.
+    index_updater: Callable[[], dict[str, Any]] | None = None
 
 
 class StateGraphRunner:
@@ -191,6 +194,7 @@ class StateGraphRunner:
         self.on_event = config.on_event
         self._bus = config.bus
         self.local_retriever = config.local_retriever
+        self.index_updater = config.index_updater
         self._task_id: str | None = None
         self._event_seq: int = 0
         self._saved_source_ids: set[str] = set()
@@ -315,6 +319,8 @@ class StateGraphRunner:
                 _emit=self._emit,
                 _save_llm_call_artifact=self._save_llm_call_artifact,
                 _save_source_snapshots=self._save_source_snapshots,
+                local_retriever=self.local_retriever,
+                index_updater=self.index_updater,
             )
             graph = build_web_research_graph(graph_ctx).compile(checkpointer=checkpointer)
 

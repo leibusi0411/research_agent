@@ -1,5 +1,7 @@
 # Separate LangGraph checkpoints from Research Task State
 
+> 演进注记（2026-09-09，R-230）：核心决策（checkpoint 与 Research Task State 分离、产品状态不依赖 LangGraph checkpoint 内部结构）仍然成立且被遵守。但第二段描述的 Blackboard 快照机制并未实现：`tasks/{task_id}/blackboard_snapshot.json` 在全代码库中不存在——LangGraph 迁移后恢复语义改由 SqliteSaver checkpoint 承担（见 ADR-0013 的演进注记）。且 `checkpoints.sqlite` 实际只写不读（`state_graph.py` 中 `SqliteSaver.from_conn_string` 创建后无任何恢复/诊断读取路径），"启动时发现 running 任务读取快照展示部分结果/诊断失败点"的能力没有替代实现。
+
 LangGraph checkpoints and Research Task State are separate concepts even if both are persisted in SQLite. Checkpoints restore runtime execution position, while Research Task State stores product-level Web Research semantics such as plans, sources, findings, evidence, tool history, and report output; Web UI and CLI must read the product state rather than depending on LangGraph checkpoint internals.
 
 To improve crash recovery, the Blackboard state is also persisted as a lightweight snapshot after each Supervisor decision. The snapshot is written to `tasks/{task_id}/blackboard_snapshot.json` and contains the current plan with subtask statuses, accumulated findings, source metadata, and research gaps. On startup, if a task is found in `running` status (see ADR-0003), the system can read the last Blackboard snapshot to display partial results or diagnose the failure point, even if the LangGraph checkpoint is corrupted or missing. The snapshot is for diagnostic and recovery display purposes; it does not replace the LangGraph checkpoint for resuming graph execution.

@@ -1,5 +1,7 @@
 # Use a LangGraph state graph with a Blackboard pattern for Web Research
 
+> 演进注记（2026-09-09，R-251）：route guard（`graph.py` 的 `_route_after_supervise`）实际规则超出正文描述——除 "`continue_execution` 超轮次 → curate/fail" 外还有三条未注记规则：(a) `revise_plan` 在轮次耗尽时同样被拦截转 curate/fail；(b) `last_sup` 为 `None`（无 Supervisor 输出）→ curate/fail；(c) `continue_execution` 但 `next_subtask_ids` 为空 → curate/fail（对应 REVIEW_TRACKER R-120）。另外 `recursion_limit` 并非简单等于 `max_retrieval_rounds`，而是派生公式 `max_retrieval_rounds * 3 + 5`（`state_graph.py`）。仍然成立：硬性轮次上限不进 Supervisor prompt、由运行时强制拦截，路由整体结构与 "saturation 仅作审计不作边选择" 的决策不变。
+
 The Web Research workflow is a state graph rather than a one-way pipeline: Planner creates or revises plans, Executor Nodes gather sources and findings, Supervisor routes between further execution, plan revision, curation, or stopping, and Curator drafts the Research Output from the Blackboard. These roles coordinate through Research Task State as a Blackboard instead of direct agent-to-agent chat, making Web Research recoverable, auditable, and easier to test; Local RAG remains a retrieval display flow rather than a state-graph research workflow in v1.
 
 The graph follows `SupervisorOutput.route` for routing. `SupervisorOutput.saturation` records the Supervisor's research-saturation judgment for explanation and auditing, but it is not itself a graph edge selector.

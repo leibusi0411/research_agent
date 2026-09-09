@@ -4,6 +4,8 @@
 **状态**: ✅ 已实施  
 **影响范围**: `core/local_research.py`, `core/service.py`, `cli.py`, `core/kb.py`, `core/chroma_store.py`
 
+> 演进注记（2026-09-09，R-226）：下文"配置"一节中的 `[chat_model.local_summarizer]` 在 v1 实际未接线——`_parse_role_chat_models`（core/config.py）的角色解析列表只有 `planner`/`executor`/`supervisor`/`curator` 四个 Web 角色，该节即使写入 TOML 也不会被解析；`CoreService.run_local_research` 与 Web API 通过 `build_role_chat_model_config(config, "local_summarizer")` 取配置时永远静默回退到全局 `[chat_model]`，无报错。因此"为 Local RAG 总结指定专用模型"目前不可用（槽位保留，恢复只需在解析列表中增加一项；与 ADR-0009 的 R-226 注记为同一已知取舍）。本 ADR 其余内容（A+G 各环节、向后兼容、批量 32、stale 放宽、FTS5 独立部署、CLI 自动挂载 embedding_client）均已兑现，不受影响。
+
 ## 背景
 
 Local RAG 最初设计为纯检索（Retrieval-only），不使用 LLM。CLAUDE.md 中明确写道 "No LLM summarization"。用户输入问题后，系统仅返回匹配的 raw chunk 列表。

@@ -18,8 +18,8 @@ There is no linter, formatter, or type-checker configured yet.
 
 **Research Agent** is a local-first research tool with **two independent workflows** that never share context:
 
-1. **Local RAG** — keyword retrieval over a user-approved Markdown vault using SQLite FTS5 + Chroma vector indexes. No LLM summarization.
-2. **Web Research** — a LangGraph-like multi-role pipeline (Planner → Executor → Supervisor → Curator) that searches via Tavily, fetches/extracts pages, and writes a Markdown report. Each role uses an OpenAI-compatible chat model.
+1. **Local RAG** — hybrid retrieval (SQLite FTS5 + ChromaDB vectors with RRF fusion) over a user-approved Markdown vault, with optional LLM summarization (`local_summarizer` role).
+2. **Web Research** — a LangGraph StateGraph multi-role pipeline (Planner → Executor → Supervisor → Curator) that searches via Tavily, fetches/extracts pages, and writes a Markdown report. Each role uses an OpenAI-compatible chat model.
 
 ### Layers
 
@@ -33,17 +33,17 @@ CLI (cli.py)              Web UI (React/Vite, web/)
          /        |        \        \
    config.py   kb.py     local_research.py  tasks.py  workspace.py  providers.py  errors.py  ids.py
          \
-    web/ (schemas, context, tools, fake_runtime, provider_runtime, report)   ← Web Research runtime only
+    web/ (schemas, context, prompt_builders, role_invocation, executor, tools, graph, state_graph, provider_runtime, report)   ← Web Research runtime only
 ```
 
 - **`core/`** — domain logic shared by all interfaces: config (TOML), KB indexing (FTS5+Chroma), local research retrieval, task storage (SQLite), workspace directories, chat/embedding model clients (OpenAI-compatible protocol).
-- **`web/`** — Web Research runtime. `schemas.py` owns `WebResearchState` (the blackboard) and all role output dataclasses. `context.py` builds per-role prompts. `tools.py` is the ToolGateway (search/fetch/extract). `report.py` renders the final Markdown report. `fake_runtime.py` provides a deterministic fake for CLI and tests; `provider_runtime.py` is the real LLM-backed path (incomplete).
-- **`api/`** — FastAPI app factory with SSE streaming for task progress events. Serves pre-built `web/dist/` static files.
-- **`cli.py`** — argparse CLI; uses `FakeWebResearchRuntime` for `web`/`both` commands.
+- **`web/`** — Web Research runtime. `schemas.py` owns the blackboard state and role output dataclasses. `context.py`/`prompt_builders.py` build per-role context slices and prompts (code constants). `tools.py` is the ToolGateway (search/fetch/extract/PDF). `executor.py` runs the per-subtask tool loop; `graph.py`/`state_graph.py` are the LangGraph nodes and runner (SqliteSaver checkpoints). `report.py` renders the final Markdown report. `provider_runtime.py` is the real LLM-backed path (the default).
+- **`api/`** — FastAPI app factory with SSE streaming for task progress events. API-only; does not serve `web/dist/`.
+- **`cli.py`** — argparse CLI; uses the provider-backed runtime for `web`/`both` commands.
 
 ### Key patterns
 
-- **Tests are offline and deterministic**: `FakeWebResearchRuntime` simulates the full Web Research pipeline; `FixedEmbeddingClient` replaces real embeddings. CLI tests run as subprocesses.
+- **Tests are offline and deterministic**: per-file `_FixedChatModelClient`/`_FixedEmbeddingClient` stubs, `RecordingEmbeddingClient`, and `FakeSearchProvider` replace real model/search calls; CLI tests run as subprocesses. Real-API tests (9) skip automatically when no user config is present.
 - **Config**: TOML at `%APPDATA%/research_agent/config.toml` (or `~/.config/research_agent/config.toml`), overridable via `RESEARCH_AGENT_CONFIG_PATH`. Init with `research-agent init`.
 - **Worktree-based dev**: main repo at `../research_agent`; this worktree is on branch `deepseek_dev`.
 - **Domain glossary** in `CONTEXT.md` — read it before naming anything.

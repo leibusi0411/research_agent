@@ -78,9 +78,26 @@ class ChromaStore:
             self._client.get_or_create_collection(name=self.COLLECTION_NAME)
             return
 
-        # Embed in batches to stay within API limits (e.g. token count per
-        # request).  Default batch size of 32 is conservative for most
-        # providers; larger values risk 400 errors on long chunks.
+        self.add_chunks(chunks, embedding_client)
+
+    def add_chunks(
+        self,
+        chunks: list[Any],
+        embedding_client: EmbeddingClient | None,
+    ) -> None:
+        """Append chunks to the collection (incremental update support).
+
+        Embeds in batches to stay within API limits (e.g. token count per
+        request).  Default batch size of 32 is conservative for most
+        providers; larger values risk 400 errors on long chunks.  Without an
+        embedding client, deterministic pseudo-embeddings are used (offline
+        tests).
+        """
+        if not chunks:
+            return
+        if self._client is None:
+            self._client = chromadb.PersistentClient(path=str(self._persist_path))
+
         _EMBED_BATCH_SIZE = 32
         if embedding_client is not None:
             embeddings: list[list[float]] = []
@@ -106,6 +123,18 @@ class ChromaStore:
                 for chunk in chunks
             ],
         )
+
+    def delete_ids(self, ids: list[str]) -> None:
+        """Remove chunks by id (incremental update support)."""
+        if not ids:
+            return
+        if self._client is None:
+            self._client = chromadb.PersistentClient(path=str(self._persist_path))
+        try:
+            collection = self._client.get_collection(name=self.COLLECTION_NAME)
+        except Exception:
+            return  # Collection does not exist — nothing to delete
+        collection.delete(ids=ids)
 
     # ------------------------------------------------------------------
     # Query

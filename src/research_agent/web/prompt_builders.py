@@ -15,11 +15,62 @@ from research_agent.web.context import (
 from research_agent.web.schemas import PriorKnowledgeChunk, WebResearchStateDict
 
 
-def build_planner_prompt(state: WebResearchStateDict, *, revision: bool = False) -> str:
+def build_planner_prompt(
+    state: WebResearchStateDict,
+    *,
+    revision: bool = False,
+    local_survey: list[dict[str, Any]] | None = None,
+) -> str:
     context = build_planner_context(state)
+    survey_text = _render_local_survey(local_survey or [])
     if revision:
-        return _build_revision_planner_prompt(context)
-    return _build_initial_planner_prompt(context)
+        return survey_text + _build_revision_planner_prompt(context)
+    return survey_text + _build_initial_planner_prompt(context)
+
+
+def build_planner_survey_prompt(state: WebResearchStateDict) -> str:
+    """Prompt for the planner's local-knowledge survey phase (ADR-0048).
+
+    The planner formulates targeted queries for ``local_kb_search`` before the
+    research plan is finalised, so the plan is shaped by what the local
+    knowledge base already covers.
+    """
+    context = build_planner_context(state)
+    prior_knowledge_text = _render_prior_knowledge(context.prior_knowledge)
+    return (
+        "You are the local-knowledge surveyor for a web research task's planner.\n"
+        "Before the research plan is finalised, decide which targeted queries\n"
+        "would check the local knowledge base for already-known material.\n\n"
+        f"Research question: {context.original_question}\n\n"
+        f"{prior_knowledge_text}"
+        "Generate up to 3 targeted search queries for the local knowledge base,\n"
+        "each probing a distinct angle of the research question that the prior\n"
+        "knowledge above may not fully cover.  Return an empty list when the\n"
+        "local knowledge base is unlikely to help.\n"
+        'Respond with JSON: {"queries": ["query 1", "query 2"]}\n'
+    )
+
+
+def _render_local_survey(survey_results: list[dict[str, Any]]) -> str:
+    """Render local_kb_search survey results for the planning prompt (ADR-0048).
+
+    Framed as reference hints: hybrid retrieval cannot guarantee complete
+    coverage, so the planner must treat these as non-authoritative.
+    """
+    if not survey_results:
+        return ""
+    lines = [
+        "Local knowledge survey results from local_kb_search (may be incomplete — 仅供参考, reference only; "
+        "do NOT plan web research for what these already cover):\n",
+    ]
+    for index, item in enumerate(survey_results, start=1):
+        heading = " > ".join(item.get("heading_path", [])) or "(untitled)"
+        text = str(item.get("text", ""))[:800]
+        lines.append(
+            f"[S{index}] matched {item.get('hits', 1)}x for query \"{item.get('query', '')}\" — "
+            f"Source: {item.get('source_path', '')} — {heading}\n{text}\n"
+        )
+    return "\n".join(lines) + "\n"
 
 
 def build_executor_tool_plan_prompt(

@@ -11,6 +11,7 @@ VALID_ERROR_CODES = {
     "kb_index_stale",
     "kb_index_building",
     "kb_index_failed",
+    "kb_rebuild_error",
     "model_error",
     "llm_call_failed",
     "search_error",

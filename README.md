@@ -111,7 +111,7 @@
 |------|------|------|
 | **CLI** | `cli.py` | argparse 命令行入口；默认使用 provider-backed runtime |
 | **Web UI** | `web/` | React + Vite 前端，通过 API 交互 |
-| **API** | `api/app.py` | FastAPI 工厂函数，SSE 流式推送任务进度，服务静态文件 |
+| **API** | `api/app.py` | FastAPI 工厂函数，SSE 流式推送任务进度（仅 API，不服务前端静态文件） |
 | **Core** | `core/` | 领域逻辑：配置、知识库索引（FTS5+ChromaDB）、本地检索、知识沉淀（deposit）、事件总线（bus）、任务存储、工作区 |
 | **Web Runtime** | `web/` | Web Research 运行时：状态图、工具网关、prompt 构建、报告生成 |
 
@@ -202,7 +202,7 @@ uv run research-agent init
 
 #### 方式 B：通过 Web UI 初始化
 
-启动服务后（`cd web && npm run dev:all`，见下方），浏览器打开 `http://localhost:5173`，如果未配置会自动进入 Settings 页面，填写表单提交即可。
+启动服务后（`cd web && npm run dev:all`，见下方），浏览器打开 `http://localhost:5173`，从侧边栏进入 Settings 页面填写表单提交即可（未配置时落在 Research 页，可正常浏览，启动调研时才同步报 `config_missing`）。
 
 #### 方式 C：手动创建配置文件
 
@@ -315,7 +315,7 @@ Web UI 有三个页面：
 
 | 页面 | 功能 |
 |------|------|
-| **Research** | 主界面 — 输入问题，启动 Local RAG 或 Web Research，实时查看进度和结果 |
+| **Research** | 主界面 — 输入问题启动 Web Research，实时查看进度和结果（Local RAG 请用 CLI 或 API） |
 | **Tasks** | 查看历史任务列表，点击可查看详情（结果 + 进度事件） |
 | **Knowledge Base** | 查看知识库索引状态，重建索引 |
 | **Settings** | 随时查看和修改全部配置（已保存的 API key 留空即保持不变） |
@@ -377,12 +377,12 @@ npm run dev:all    # 同时启动后端 API (8001) + 前端 Vite (5173)
 ```
 web/
 ├── src/
-│   ├── App.tsx          # 主应用组件（Research / Tasks / KB 三页面）
+│   ├── App.tsx          # 主应用组件（Research / Tasks / KB / Settings 四页面）
 │   ├── api.ts           # API 客户端（类型定义 + 请求函数 + SSE 订阅）
 │   └── main.tsx         # React 入口
 ├── tests/
 │   └── setup.ts         # Vitest 测试配置
-├── dist/                # 构建产物（npm run build 生成，API 自动服务）
+├── dist/                # 构建产物（npm run build 生成；后端不服务，独立部署需自行托管并反代 /api）
 ├── index.html           # HTML 入口
 ├── vite.config.ts       # Vite 配置（插件、代理、测试）
 ├── tsconfig.json        # TypeScript 配置

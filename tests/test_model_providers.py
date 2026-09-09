@@ -329,3 +329,18 @@ def test_role_invocation_raises_after_retry_is_exhausted():
         )
     assert error.value.code == "llm_call_failed"
     assert client.calls == 2
+
+
+def test_normalize_tool_call_payload_collects_flattened_arguments():
+    """Some models flatten arguments into the tool-call object instead of
+    nesting them (seen with DeepSeek v4 in a real run) — the normalizer must
+    collect the remaining keys as arguments so the gateway can validate."""
+    from research_agent.web.executor import _normalize_tool_call_payload
+
+    normalized = _normalize_tool_call_payload(
+        {"name": "web.search", "query": "What is Python's GIL?", "max_results": 5}
+    )
+    tool_call = normalized["tool_calls"][0]
+    assert tool_call["name"] == "web.search"
+    assert tool_call["arguments"]["query"] == "What is Python's GIL?"
+    assert tool_call["arguments"]["max_results"] == 5

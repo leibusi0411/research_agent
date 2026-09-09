@@ -115,6 +115,180 @@ class KnowledgeBaseIndex:
             "last_indexed_at": manifest.get("built_at"),
         }
 
+    def update(self, *, max_files: int | None = None) -> dict[str, Any]:
+        """Incrementally refresh the index for new/changed/deleted vault files.
+
+        In-place update of the existing FTS5 index and Chroma collection —
+        unlike :meth:`rebuild`, unchanged files keep their chunks and are not
+        re-embedded.  Vault files are never touched (read-only ingestion,
+        ADR-0006).
+
+        When the number of pending changes exceeds *max_files* the update is
+        skipped (``skipped: True``, status stays ``stale``) so callers can
+        degrade gracefully instead of paying a surprise bulk re-embedding.
+        """
+        config = load_user_config(self.config_path)
+        vault_path = config.workspace.knowledge_base_path
+        if not self.manifest_path.exists() or not self.sqlite_path.exists():
+            return {
+                **self.status(),
+                "updated_files": 0,
+                "skipped": True,
+                "reason": "index_missing",
+            }
+
+        manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        manifest_records = {
+            record["path"]: record for record in manifest.get("files", [])
+        }
+        current_files = _scan_files(vault_path)
+        current_paths = {str(path) for path in current_files}
+        changed_files = [
+            path
+            for path in current_files
+            if str(path) not in manifest_records
+            or _record_differs(manifest_records[str(path)], path)
+        ]
+        deleted_paths = sorted(set(manifest_records) - current_paths)
+        if not changed_files and not deleted_paths:
+            return {**self.status(), "updated_files": 0, "skipped": False}
+        if max_files is not None and len(changed_files) + len(deleted_paths) > max_files:
+            return {
+                **self.status(),
+                "updated_files": 0,
+                "skipped": True,
+                "reason": "too_many_changes",
+                "pending_files": len(changed_files) + len(deleted_paths),
+            }
+
+        marker = self.index_dir.parent / "local.building"
+        self.index_dir.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("building", encoding="utf-8")
+        chroma_error: str | None = None
+        try:
+            parsed_changed = [_parse_file(path) for path in changed_files]
+            new_chunks = [chunk for parsed in parsed_changed for chunk in parsed.chunks]
+            affected_paths = [str(path) for path in changed_files] + deleted_paths
+
+            removed_chunk_ids: list[str] = []
+            connection = sqlite3.connect(self.sqlite_path)
+            try:
+                placeholders = ",".join("?" for _ in affected_paths)
+                removed_chunk_ids = [
+                    row[0]
+                    for row in connection.execute(
+                        f"SELECT chunk_id FROM chunks WHERE source_path IN ({placeholders})",
+                        affected_paths,
+                    ).fetchall()
+                ]
+                if removed_chunk_ids:
+                    id_placeholders = ",".join("?" for _ in removed_chunk_ids)
+                    connection.execute(
+                        f"DELETE FROM chunks_fts WHERE chunk_id IN ({id_placeholders})",
+                        removed_chunk_ids,
+                    )
+                if affected_paths:
+                    connection.execute(
+                        f"DELETE FROM chunks WHERE source_path IN ({placeholders})",
+                        affected_paths,
+                    )
+                for chunk in new_chunks:
+                    heading_path = json.dumps(chunk.heading_path, ensure_ascii=False)
+                    connection.execute(
+                        """
+                        INSERT INTO chunks (
+                          chunk_id, source_path, heading_path, start_offset, end_offset, text
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            chunk.chunk_id,
+                            chunk.source_path,
+                            heading_path,
+                            chunk.start_offset,
+                            chunk.end_offset,
+                            chunk.text,
+                        ),
+                    )
+                    connection.execute(
+                        "INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)",
+                        (chunk.chunk_id, chunk.text),
+                    )
+                connection.commit()
+            finally:
+                connection.close()
+
+            try:
+                store = ChromaStore(self.chroma_dir)
+                try:
+                    store.delete_ids(removed_chunk_ids)
+                    store.add_chunks(new_chunks, self.embedding_client)
+                finally:
+                    # Windows: HNSW segment mmaps block later atomic swaps.
+                    store.close()
+            except Exception as exc:
+                chroma_error = str(exc)
+                logger.warning(
+                    "Chroma incremental update failed; FTS5 is up to date: %s", exc
+                )
+
+            self._refresh_manifest(
+                manifest,
+                parsed_changed,
+                deleted_paths,
+                removed_chunk_count=len(removed_chunk_ids),
+                added_chunk_count=len(new_chunks),
+                vault_path=vault_path,
+            )
+        finally:
+            marker.unlink(missing_ok=True)
+
+        result = {
+            **self.status(),
+            "updated_files": len(changed_files),
+            "deleted_files": len(deleted_paths),
+        }
+        if chroma_error is not None:
+            result["status"] = "stale"
+            result["error"] = chroma_error
+        return result
+
+    def _refresh_manifest(
+        self,
+        manifest: dict[str, Any],
+        parsed_changed: list[ParsedFile],
+        deleted_paths: list[str],
+        *,
+        removed_chunk_count: int,
+        added_chunk_count: int,
+        vault_path: Path,
+    ) -> None:
+        records = {record["path"]: record for record in manifest.get("files", [])}
+        for path_str in deleted_paths:
+            records.pop(path_str, None)
+        for parsed in parsed_changed:
+            stat = parsed.path.stat()
+            records[str(parsed.path)] = {
+                "path": str(parsed.path),
+                "mtime": int(stat.st_mtime_ns),
+                "size": stat.st_size,
+                **parsed.metadata,
+            }
+        updated_manifest = {
+            "status": "ready",
+            "vault_path": str(vault_path),
+            "built_at": utc_now_iso(datetime.now(timezone.utc)),
+            "file_count": len(records),
+            "chunk_count": int(manifest.get("chunk_count", 0)) - removed_chunk_count + added_chunk_count,
+            "files": sorted(records.values(), key=lambda record: record["path"]),
+        }
+        tmp_manifest = self.manifest_path.with_suffix(".json.tmp")
+        tmp_manifest.write_text(
+            json.dumps(updated_manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        os.replace(tmp_manifest, self.manifest_path)
+
     def rebuild(self) -> dict[str, Any]:
         config = load_user_config(self.config_path)
         vault_path = config.workspace.knowledge_base_path
@@ -235,6 +409,11 @@ def _file_signature(files: list[Path]) -> dict[str, dict[str, int]]:
         stat = path.stat()
         result[str(path)] = {"mtime": int(stat.st_mtime_ns), "size": stat.st_size}
     return result
+
+
+def _record_differs(record: dict[str, Any], path: Path) -> bool:
+    stat = path.stat()
+    return record.get("mtime") != int(stat.st_mtime_ns) or record.get("size") != stat.st_size
 
 
 def _build_manifest(vault_path: Path, parsed_files: list[ParsedFile], chunks: list[Chunk]) -> dict[str, Any]:

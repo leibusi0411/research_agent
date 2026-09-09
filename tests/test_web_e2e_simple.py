@@ -18,6 +18,7 @@ from research_agent.web.schemas import (
     ResearchSubtask,
     create_initial_state,
 )
+from research_agent.web.executor import _normalize_tool_call_payload
 from research_agent.web.tools import TavilySearchProvider
 
 
@@ -66,7 +67,7 @@ def test_planner_prompt_with_real_llm(tmp_path):
         },
     )
 
-    data = result.arguments
+    data = _normalize_tool_call_payload(result.arguments)
     assert "research_title" in data, "Response should have research_title"
     assert "subtasks" in data, "Response should have subtasks"
     assert len(data["subtasks"]) > 0, "Should have at least one subtask"
@@ -130,7 +131,7 @@ def test_executor_prompt_with_real_llm(tmp_path):
         },
     )
 
-    data = result.arguments
+    data = _normalize_tool_call_payload(result.arguments)
     assert "tool_calls" in data, "Response should have tool_calls"
     assert isinstance(data["tool_calls"], list), "tool_calls should be a list"
     if data["tool_calls"]:
