@@ -53,7 +53,17 @@ export function App() {
       try {
         // Backfill the full trace so a reattached session shows history too.
         // A still-running task serves SSE here (not JSON) — keep streamed events.
-        setEvents(await api.taskEvents(taskId));
+        const fullEvents = await api.taskEvents(taskId);
+        setEvents(fullEvents);
+        // The task_result frame is consumed before onEvent (it terminates the
+        // stream), so phase can lag behind the backfilled history — re-derive
+        // it from the last phased event.
+        for (let i = fullEvents.length - 1; i >= 0; i--) {
+          if (fullEvents[i].phase) {
+            setPhase(fullEvents[i].phase);
+            break;
+          }
+        }
       } catch {
         // keep the streamed events
       }

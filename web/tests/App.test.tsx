@@ -202,6 +202,26 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: "Web Report" })).toBeInTheDocument();
   });
 
+  it("shows the curation phase as active when the final task_result completes the run", async () => {
+    mockConfiguredFetch();
+    render(<MemoryRouter><App /></MemoryRouter>);
+
+    await screen.findByRole("textbox", { name: "Research question" });
+    // The live stream stalls after supervision: the last onEvent is a
+    // web_supervision frame, then the task_result (web_curation) arrives.
+    _sseEventMap[webResult.task_id] = [
+      { task_id: webResult.task_id, mode: "web", phase: "web_supervision", event_type: "completed", created_at: "now", message: "All subtasks completed.", details: { items: [] } },
+      { task_id: webResult.task_id, mode: "web", phase: "web_curation", event_type: "task_result", created_at: "now", message: "Task completed.", details: { items: [{ kind: "status", task_id: webResult.task_id, status: "completed", mode: "web" }] } },
+    ];
+
+    await userEvent.type(screen.getByRole("textbox", { name: "Research question" }), "web question");
+    await userEvent.click(screen.getByRole("button", { name: "Research" }));
+
+    await waitFor(() => expect(screen.getByText("Web summary")).toBeInTheDocument());
+    expect(screen.getByText("curation")).toHaveClass("active");
+    expect(screen.getByText("supervision")).not.toHaveClass("active");
+  });
+
   it("lists tasks and opens the mode-specific result view", async () => {
     mockConfiguredFetch();
     render(<MemoryRouter><App /></MemoryRouter>);

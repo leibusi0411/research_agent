@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-08 | 测试：197 passed（Python；配置真实 key 后 9 个真实 API 测试首次实跑通过）+ 23 passed（前端 Vitest）+ 1 passed（Playwright e2e）| 第七轮审查 16 项：14 修复 ✅ + 2 记录在案 ⚠️（R-206~R-221）| 新功能：常驻 Settings 页面（ADR-0047）+ Local RAG A+G API 对齐（R-218）+ 异常掩码/截断重试修复（R-219/R-220）+ SSE 停顿看门狗与重放去重（R-221）
+> 最后更新：2026-09-09 | 测试：197 passed（Python；配置真实 key 后 9 个真实 API 测试首次实跑通过）+ 24 passed（前端 Vitest）+ 1 passed（Playwright e2e）| 第七轮审查 17 项：15 修复 ✅ + 2 记录在案 ⚠️（R-206~R-222）| 新功能：常驻 Settings 页面（ADR-0047）+ Local RAG A+G API 对齐（R-218）+ 异常掩码/截断重试修复（R-219/R-220）+ SSE 看门狗/去重（R-221）+ 完成态 phase 修正（R-222）
 
 ---
 
@@ -55,6 +55,7 @@
 | R-219 | `ResearchError` 是 `@dataclass(frozen=True)`：异常穿过 LangGraph/contextlib 传播时，Python 3.12 `contextlib.__exit__` 的 Python 层 `exc.__traceback__` 赋值被冻结类拒绝 → 真实错误被 `FrozenInstanceError: cannot assign to field '__traceback__'` 掩盖成 `runtime_error`（用户 Web 任务 task_20260908_090231 在 plan_revision 实际死于被掩盖的 llm_call_failed） | ✅ 类后替换 `__setattr__`：放行双下划线属性（`__traceback__`/`__cause__` 等），`code`/`message` 字段保持冻结；补传播与冻结回归测试 |
 | R-220 | R-205 的直接触发面：DeepSeek v4-flash 是推理模型，reasoning 与 content 共享 max_tokens 预算，长计划 JSON 被截断（finish_reason=length）→ 报模糊的 "LLM returned invalid JSON" 且无重试 | ✅（提前落地 R-205 核心）`complete_tool` 检查 `finish_reason=length` 报明确截断错误；`invoke_role_json` 解析失败自动重试一次（共 2 次尝试），耗尽后仍报 `llm_call_failed`；R-205 其余（原始输出落盘诊断、工具执行链路重试）仍留阶段 9 |
 | R-221 | 用户实测：前端 Research Trace 卡在前 2 条事件不再更新（后端 events.jsonl 实写 168 条）。实证排查：curl/Python 直连 SSE 均收全量帧（88/88、93/93，含启动窗口竞态），后端两条 SSE 路径无恙 → 浏览器侧连接中断后无法自愈，且前端无重连恢复与去重机制 | ✅ `subscribeTaskEvents` 加 45s 停顿看门狗（无帧自动重连，服务端全量重放）+ seq 去重（无 seq 的 "Task started" 帧在已见 seq 后视为重放伪影丢弃）；保留构造器抛异常→onError 的既有保证（sse.test.ts） |
+| R-222 | 用户实测续：任务完成后 PhaseIndicator 停在 SUPERVISION 不进 CURATION。根因：`task_result` 帧在订阅层被拦截走 onResult（不经过 setPhase），`finishTask` 回填事件列表后也不重推 phase | ✅ `finishTask` 回填后倒序取最后一条带 phase 的事件重新 setPhase；补测试断言完成后 curation active / supervision 非 active（审查：可合入，无 P0/P1） |
 
 #### 顺带修复（预存问题）
 
