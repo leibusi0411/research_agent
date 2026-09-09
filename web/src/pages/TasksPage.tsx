@@ -44,12 +44,15 @@ export function TasksPage({
               </button>
             </div>
             {/* Detail box expands inline, directly under the clicked row. */}
-            {selectedResult?.task_id === task.task_id &&
-              (selectedResult.mode === "local" ? (
-                <LocalResultView result={selectedResult} events={events} />
-              ) : (
-                <WebResultView result={selectedResult} events={events} />
-              ))}
+            {selectedResult?.task_id === task.task_id && (
+              <div className="task-detail">
+                {selectedResult.mode === "local" ? (
+                  <LocalResultView result={selectedResult} events={events} />
+                ) : (
+                  <WebResultView result={selectedResult} events={events} />
+                )}
+              </div>
+            )}
           </Fragment>
         ))}
       </div>

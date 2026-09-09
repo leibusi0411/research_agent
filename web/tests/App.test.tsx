@@ -250,11 +250,16 @@ describe("App", () => {
     expect(await screen.findByText("Web Report")).toBeInTheDocument();
     // The detail box must sit BETWEEN the clicked row and the remaining rows,
     // not at the very bottom of the page.
-    const clickedRow = screen.getAllByText("web question")[0];
+    const clickedRow = screen.getAllByText("web question")[0].closest(".task-row")!;
     const detail = screen.getByText("Web Report");
     const nextRow = screen.getByText("local question");
     expect(Boolean(clickedRow.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     expect(Boolean(detail.compareDocumentPosition(nextRow) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    // The whole detail lives inside ONE cohesive wrapper panel.
+    const panel = document.querySelector(".table > .task-detail");
+    expect(panel).not.toBeNull();
+    expect(clickedRow.nextElementSibling).toBe(panel);
+    expect(panel!.querySelectorAll(".card").length).toBeGreaterThan(0);
   });
 
   it("lists tasks and opens the mode-specific result view", async () => {

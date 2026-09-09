@@ -57,7 +57,7 @@
 | R-221 | 用户实测：前端 Research Trace 卡在前 2 条事件不再更新（后端 events.jsonl 实写 168 条）。实证排查：curl/Python 直连 SSE 均收全量帧（88/88、93/93，含启动窗口竞态），后端两条 SSE 路径无恙 → 浏览器侧连接中断后无法自愈，且前端无重连恢复与去重机制 | ✅ `subscribeTaskEvents` 加 45s 停顿看门狗（无帧自动重连，服务端全量重放）+ seq 去重（无 seq 的 "Task started" 帧在已见 seq 后视为重放伪影丢弃）；保留构造器抛异常→onError 的既有保证（sse.test.ts） |
 | R-222 | 用户实测续：任务完成后 PhaseIndicator 停在 SUPERVISION 不进 CURATION。根因：`task_result` 帧在订阅层被拦截走 onResult（不经过 setPhase），`finishTask` 回填事件列表后也不重推 phase | ✅ `finishTask` 回填后倒序取最后一条带 phase 的事件重新 setPhase；补测试断言完成后 curation active / supervision 非 active（审查：可合入，无 P0/P1） |
 | R-223 | 用户实测续：任务完成后活动阶段下的动画下划线（`mark-sweep`）仍在动，完成态不应保留 | ✅ `PhaseIndicator` 增加 `running` 属性（active 项仅在 running 时追加 `running` class）；`TraceCard` 传入 running；CSS 下划线选择器改为 `.phase-dot.active.running::before`——运行中有动画下划线，完成后高亮保留、下划线消失；补组件契约测试 |
-| R-224 | 用户需求：Tasks 页点击任务行后，详情卡片固定渲染在页面最底部，列表长时离点击行太远 | ✅ `TasksPage` 行内展开：详情卡片（Local/Web ResultView）渲染在被点击行的正下方（Fragment 包裹行 + 条件卡片），点击其他行时方框随之移动；`.table .card` 补间距样式；TODO.md 延期清单按用户要求清空；补 DOM 顺序断言测试 |
+| R-224 | 用户需求：Tasks 页点击任务行后，详情卡片固定渲染在页面最底部，列表长时离点击行太远 | ✅ `TasksPage` 行内展开：详情渲染在被点击行的正下方（Fragment 包裹行 + 条件卡片），点击其他行时方框随之移动；外层包 `.task-detail` 单一容器（内层卡片扁平化：去边框/透明背景，Trace + Report 融为一体）；`.table > .task-detail` 补外框样式；TODO.md 延期清单按用户要求清空；测试含 DOM 顺序与外框容器断言 |
 
 #### 顺带修复（预存问题）
 

@@ -936,11 +936,20 @@ label span {
   border-top: 1px solid var(--line-soft);
 }
 
-/* Inline result box expanded under a clicked task row. Only the top-level
-   card/stack gets spacing; inner card layout stays untouched. */
-.table > .card,
-.table > .result-stack {
+/* Inline result box expanded under a clicked task row: ONE cohesive panel.
+   Inner cards flatten (no border/background) so the trace and report read as
+   a single box instead of separate cards. */
+.table > .task-detail {
   margin: 10px 0 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 14px;
+}
+
+.task-detail .card {
+  border: none;
+  background: transparent;
 }
 
 .task-row {
