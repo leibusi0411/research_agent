@@ -75,7 +75,7 @@ export function TraceCard({
           {plural(stats.searches, "search")} · {plural(stats.sources, "source")} · {plural(stats.findings, "finding")}
         </span>
       </div>
-      {phase && <PhaseIndicator currentPhase={phase} mode="web" />}
+      {phase && <PhaseIndicator currentPhase={phase} mode="web" running={running} />}
       <ProcessView groupedEvents={groupedEvents} newestSeq={newestSeq} />
     </article>
   );

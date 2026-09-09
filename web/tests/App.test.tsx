@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "../src/App";
+import { PhaseIndicator } from "../src/components/PhaseIndicator";
 import { ResearchResult } from "../src/api";
 
 const localResult: ResearchResult = {
@@ -89,6 +90,18 @@ function stubEventSource() {
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.stubGlobal("confirm", () => true);
+});
+
+describe("PhaseIndicator", () => {
+  it("carries the running underline marker only while the task is running", () => {
+    const { rerender } = render(<PhaseIndicator currentPhase="web_planning" mode="web" running={true} />);
+    expect(screen.getByText("planning")).toHaveClass("active", "running");
+
+    rerender(<PhaseIndicator currentPhase="web_curation" mode="web" running={false} />);
+    expect(screen.getByText("curation")).toHaveClass("active");
+    expect(screen.getByText("curation")).not.toHaveClass("running");
+    expect(screen.getByText("planning")).not.toHaveClass("running");
+  });
 });
 
 describe("App", () => {
@@ -197,8 +210,11 @@ describe("App", () => {
     await screen.findByRole("heading", { name: "Inkwell" });
     await userEvent.type(screen.getByRole("textbox", { name: "Research question" }), "web question");
     await userEvent.click(screen.getByRole("button", { name: "Research" }));
+    expect(await screen.findByText("web_planning")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("Web summary")).toBeInTheDocument());
     expect(screen.getByText("web_planning")).toBeInTheDocument();
+    // After completion the animated underline marker is gone.
+    expect(screen.getByText("curation")).not.toHaveClass("running");
     expect(screen.getByRole("heading", { name: "Web Report" })).toBeInTheDocument();
   });
 
@@ -219,6 +235,7 @@ describe("App", () => {
 
     await waitFor(() => expect(screen.getByText("Web summary")).toBeInTheDocument());
     expect(screen.getByText("curation")).toHaveClass("active");
+    expect(screen.getByText("curation")).not.toHaveClass("running");
     expect(screen.getByText("supervision")).not.toHaveClass("active");
   });
 

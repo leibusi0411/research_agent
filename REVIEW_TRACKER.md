@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-09 | 测试：197 passed（Python；配置真实 key 后 9 个真实 API 测试首次实跑通过）+ 24 passed（前端 Vitest）+ 1 passed（Playwright e2e）| 第七轮审查 17 项：15 修复 ✅ + 2 记录在案 ⚠️（R-206~R-222）| 新功能：常驻 Settings 页面（ADR-0047）+ Local RAG A+G API 对齐（R-218）+ 异常掩码/截断重试修复（R-219/R-220）+ SSE 看门狗/去重（R-221）+ 完成态 phase 修正（R-222）
+> 最后更新：2026-09-09 | 测试：197 passed（Python；配置真实 key 后 9 个真实 API 测试首次实跑通过）+ 25 passed（前端 Vitest）+ 1 passed（Playwright e2e）| 第七轮审查 18 项：16 修复 ✅ + 2 记录在案 ⚠️（R-206~R-223）| 新功能：常驻 Settings 页面（ADR-0047）+ Local RAG A+G API 对齐（R-218）+ 异常掩码/截断重试修复（R-219/R-220）+ SSE 看门狗/去重（R-221）+ 完成态 phase 修正（R-222）+ 完成态下划线消失（R-223）
 
 ---
 
@@ -56,6 +56,7 @@
 | R-220 | R-205 的直接触发面：DeepSeek v4-flash 是推理模型，reasoning 与 content 共享 max_tokens 预算，长计划 JSON 被截断（finish_reason=length）→ 报模糊的 "LLM returned invalid JSON" 且无重试 | ✅（提前落地 R-205 核心）`complete_tool` 检查 `finish_reason=length` 报明确截断错误；`invoke_role_json` 解析失败自动重试一次（共 2 次尝试），耗尽后仍报 `llm_call_failed`；R-205 其余（原始输出落盘诊断、工具执行链路重试）仍留阶段 9 |
 | R-221 | 用户实测：前端 Research Trace 卡在前 2 条事件不再更新（后端 events.jsonl 实写 168 条）。实证排查：curl/Python 直连 SSE 均收全量帧（88/88、93/93，含启动窗口竞态），后端两条 SSE 路径无恙 → 浏览器侧连接中断后无法自愈，且前端无重连恢复与去重机制 | ✅ `subscribeTaskEvents` 加 45s 停顿看门狗（无帧自动重连，服务端全量重放）+ seq 去重（无 seq 的 "Task started" 帧在已见 seq 后视为重放伪影丢弃）；保留构造器抛异常→onError 的既有保证（sse.test.ts） |
 | R-222 | 用户实测续：任务完成后 PhaseIndicator 停在 SUPERVISION 不进 CURATION。根因：`task_result` 帧在订阅层被拦截走 onResult（不经过 setPhase），`finishTask` 回填事件列表后也不重推 phase | ✅ `finishTask` 回填后倒序取最后一条带 phase 的事件重新 setPhase；补测试断言完成后 curation active / supervision 非 active（审查：可合入，无 P0/P1） |
+| R-223 | 用户实测续：任务完成后活动阶段下的动画下划线（`mark-sweep`）仍在动，完成态不应保留 | ✅ `PhaseIndicator` 增加 `running` 属性（active 项仅在 running 时追加 `running` class）；`TraceCard` 传入 running；CSS 下划线选择器改为 `.phase-dot.active.running::before`——运行中有动画下划线，完成后高亮保留、下划线消失；补组件契约测试 |
 
 #### 顺带修复（预存问题）
 

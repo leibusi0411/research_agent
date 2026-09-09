@@ -720,7 +720,9 @@ label span {
   color: var(--accent-strong);
 }
 
-.phase-dot.active::before {
+/* Animated underline only while the task is running; a finished run keeps
+   the highlighted phase label but drops the marker (R-222 follow-up). */
+.phase-dot.active.running::before {
   content: "";
   position: absolute;
   left: 0;
