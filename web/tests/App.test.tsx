@@ -239,6 +239,24 @@ describe("App", () => {
     expect(screen.getByText("supervision")).not.toHaveClass("active");
   });
 
+  it("expands the result box directly under the clicked task row", async () => {
+    mockConfiguredFetch();
+    render(<MemoryRouter><App /></MemoryRouter>);
+
+    await screen.findByRole("heading", { name: "Inkwell" });
+    await userEvent.click(screen.getByRole("link", { name: "Tasks" }));
+    await userEvent.click(await screen.findByText("web question"));
+
+    expect(await screen.findByText("Web Report")).toBeInTheDocument();
+    // The detail box must sit BETWEEN the clicked row and the remaining rows,
+    // not at the very bottom of the page.
+    const clickedRow = screen.getAllByText("web question")[0];
+    const detail = screen.getByText("Web Report");
+    const nextRow = screen.getByText("local question");
+    expect(Boolean(clickedRow.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(detail.compareDocumentPosition(nextRow) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+  });
+
   it("lists tasks and opens the mode-specific result view", async () => {
     mockConfiguredFetch();
     render(<MemoryRouter><App /></MemoryRouter>);

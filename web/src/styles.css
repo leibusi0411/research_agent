@@ -936,6 +936,13 @@ label span {
   border-top: 1px solid var(--line-soft);
 }
 
+/* Inline result box expanded under a clicked task row. Only the top-level
+   card/stack gets spacing; inner card layout stays untouched. */
+.table > .card,
+.table > .result-stack {
+  margin: 10px 0 14px;
+}
+
 .task-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
