@@ -5,3 +5,5 @@ Local RAG and Web Research are separate task modes in v1 rather than two flows i
 `research-agent both "question"` is a CLI convenience command that starts one Local RAG task and one Web Research task for the same question as two independent tasks. It does not create a combined workflow, does not merge intermediate context, does not feed Local Results into Web Research, and does not create a combined report.
 
 > 演进注记（2026-09-06）：ADR-0045 增加了 Knowledge Deposit（事后显式沉淀报告进 vault），ADR-0046 增加了 Prior Knowledge（图启动前一次性只读检索注入 Planner）。两者都不改变本 ADR 的核心：两种任务模式的执行路径仍然独立、不共享中间上下文、不合并报告。
+
+> 演进注记（2026-09-10）：ADR-0048 把"Web Research 不接触本地知识"细化为按角色划分——Planner 在规划与计划修订前可做有界本地调研（local_kb_search，只读、结果只进规划 prompt），Executor/Supervisor/Curator 保持纯 Web。两种任务模式的执行路径仍然独立、不共享中间上下文、不合并报告。

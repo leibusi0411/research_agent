@@ -6,7 +6,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-green.svg)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19+-61DAFB.svg)](https://react.dev/)
 [![LangGraph](https://img.shields.io/badge/agent%20编排-LangGraph-orange.svg)](https://langchain-ai.github.io/langgraph/)
-[![Tests](https://img.shields.io/badge/tests-197%20passed-brightgreen.svg)](https://github.com/leibusi0411/research_agent)
+[![Tests](https://img.shields.io/badge/tests-216%20passed-brightgreen.svg)](https://github.com/leibusi0411/research_agent)
 
 ---
 
@@ -59,7 +59,7 @@
 
 ### 通用特性
 
-- **离线测试**：Python 197 个测试中 188 个离线确定性运行（其余 9 个为真实 API 链路，无配置自动 skip），另有前端 26 个 Vitest 单元测试，均无需网络或 API key
+- **离线测试**：Python 216 个测试中 207 个离线确定性运行（其余 9 个为真实 API 链路，无配置自动 skip），另有前端 27 个 Vitest 单元测试，均无需网络或 API key
 - **双界面**：CLI（argparse）+ Web UI（React + Vite），通过统一 FastAPI 接入
 - **任务锁**：同一 family（local/web）同时只允许一个活跃任务，防止资源冲突
 - **SSE 流式推送**：实时推送任务进度事件，支持 30 分钟超时
@@ -315,14 +315,14 @@ Web UI 有三个页面：
 
 | 页面 | 功能 |
 |------|------|
-| **Research** | 主界面 — 输入问题启动 Web Research，实时查看进度和结果（Local RAG 请用 CLI 或 API） |
+| **Research** | 主界面 — 输入问题启动 Web Research，实时查看进度和结果（Local RAG 在 Knowledge Base 页提问，或用 CLI / API） |
 | **Tasks** | 查看历史任务列表，点击可查看详情（结果 + 进度事件） |
-| **Knowledge Base** | 查看知识库索引状态，重建索引 |
+| **Knowledge Base** | 查看/重建知识库索引，直接提问 Local RAG |
 | **Settings** | 随时查看和修改全部配置（已保存的 API key 留空即保持不变） |
 
 #### 首次使用 Web UI
 
-如果尚未配置，打开浏览器后会自动进入 Settings 页面。填写以下信息：
+如果尚未配置，打开浏览器后会落在 Research 页（可正常浏览与输入，启动调研时才同步报 `config_missing`）；从侧边栏进入 Settings 页面，填写以下信息：
 
 | 字段 | 说明 | 示例 |
 |------|------|------|
@@ -600,7 +600,7 @@ research_agent/
 │   │   └── app.py              # FastAPI 应用工厂 + SSE 端点（仅 API，不服务前端静态文件）
 │   ├── cli.py                  # argparse CLI
 │   ├── core/
-│   │   ├── bus.py              # EventStream 事件总线（janus.Queue，SSE/CLI 共用）
+│   │   ├── bus.py              # EventStream 事件总线（asyncio Bus，SSE/CLI 共用）
 │   │   ├── chroma_store.py     # ChromaDB 向量存储封装
 │   │   ├── config.py           # TOML 配置解析（全局 + per-role 覆盖）
 │   │   ├── deposit.py          # Knowledge Deposit（Web 报告沉淀进 vault）
@@ -623,7 +623,7 @@ research_agent/
 │       ├── schemas.py           # 数据模型与 Blackboard 状态
 │       ├── state_graph.py       # StateGraphRunner（LangGraph + checkpoint）
 │       └── tools.py             # ToolGateway（搜索/抓取/提取）
-├── tests/                       # 19 个测试模块（188 离线 + 9 真实 API，无配置自动 skip）
+├── tests/                       # 20 个测试模块（207 离线 + 9 真实 API，无配置自动 skip）
 │   ├── test_api_connections.py
 │   ├── test_api_surface.py
 │   ├── test_bootstrap_foundations.py
@@ -652,7 +652,7 @@ research_agent/
 │   ├── tests/                   # Vitest 单元测试 + Playwright e2e
 │   └── package.json
 ├── docs/
-│   ├── adr/                     # 47 个架构决策记录
+│   ├── adr/                     # 49 个架构决策记录
 │   └── agents/                  # agent 协作约定（issue tracker、triage、domain）
 ├── AGENTS.md                    # AI 编码 agent 项目指令
 ├── CLAUDE.md                    # Claude Code 项目指令
@@ -683,7 +683,7 @@ research_agent/
 ### 测试
 
 ```bash
-uv run pytest                          # 运行全部测试（197 个：188 离线 + 9 真实 API，无配置自动 skip）
+uv run pytest                          # 运行全部测试（216 个：207 离线 + 9 真实 API，无配置自动 skip）
 uv run pytest -x                       # 首次失败即停止
 uv run pytest -k "state_graph"         # 按关键字筛选
 uv run pytest tests/test_web_state_graph.py  # 单个文件
@@ -770,7 +770,7 @@ rm -rf <workspace>/tasks/<task_id>/
 
 ## ADR（架构决策记录）
 
-项目包含 **47 个 ADR**（`docs/adr/`），覆盖技术栈选择、架构模式、工程边界等关键决策。关键 ADR：
+项目包含 **49 个 ADR**（`docs/adr/`），覆盖技术栈选择、架构模式、工程边界等关键决策。关键 ADR：
 
 | ADR | 决策 | 实现状态 |
 |-----|------|----------|

@@ -37,7 +37,7 @@ The independent flow that finds and presents relevant existing content from the 
 _Avoid_: local-first research, local search mode
 
 **Web Research Workflow**:
-The independent workflow that researches a question using network search, fetch, and extraction. It does not call Local RAG during execution; its only Knowledge Base touchpoint is the one-time Prior Knowledge retrieval before the graph starts (ADR-0046).
+The independent workflow that researches a question using network search, fetch, and extraction. Its only Knowledge Base touchpoints are Planner-side and read-only: the one-time Prior Knowledge retrieval before the graph starts (ADR-0046) and the Planner's bounded local knowledge survey (`local_kb_search`: up to three targeted queries before planning and before each plan revision, ADR-0048). The Executor's tool loop never touches the Knowledge Base.
 _Avoid_: online mode, web search mode
 
 **Research Workflow Boundary**:
@@ -388,7 +388,7 @@ The always-available Web UI page (sidebar entry `Settings`, route `/settings`) f
 _Avoid_: setup wizard, one-time setup, admin settings
 
 **Research Page**:
-The Web UI landing page with a single input area that starts only Web Research tasks; the Web UI provides no Local RAG start entry (Local RAG is started via CLI or API). It does not provide a combined Run Both action. Local RAG and Web Research can run concurrently as separate tasks, but each task family allows only one active task at a time. The page no longer redirects when User Config is missing: Research is always the landing page, and starting research without configuration reports `config_missing` (ADR-0047 evolution). Web mode leads to a Web Report Page.
+The Web UI landing page with a single input area that starts only Web Research tasks; Local RAG is started from the Knowledge Base Index Page's question box (or via CLI / API). It does not provide a combined Run Both action. Local RAG and Web Research can run concurrently as separate tasks, but each task family allows only one active task at a time. The page no longer redirects when User Config is missing: Research is always the landing page, and starting research without configuration reports `config_missing` (ADR-0047 evolution). Web mode leads to a Web Report Page.
 _Avoid_: chat page, dashboard
 
 **Local Result Page**:
@@ -404,7 +404,7 @@ The Web UI page for listing all finished Research Tasks in one mixed `local` and
 _Avoid_: history archive, run log
 
 **Knowledge Base Index Page**:
-The Web UI page for Local RAG index maintenance. It shows `vault_path`, index status, file count, chunk count, last indexed time, and build or rebuild actions.
+The Web UI page for Local RAG index maintenance and local querying. It shows `vault_path`, index status, file count, chunk count, last indexed time, and build or rebuild actions, and offers a standalone Local RAG question box (starts a `local` task via `POST /api/research/local`, with live trace and result cards).
 _Avoid_: note manager, vault editor
 
 **CLI**:

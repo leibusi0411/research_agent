@@ -304,9 +304,9 @@ npm run dev:all
 
 | 页面 | 路由 | 功能 |
 |------|------|------|
-| **Research** | `/` | 输入问题启动 Web Research，实时查看进度和结果（Local RAG 请用 CLI 或 API） |
+| **Research** | `/` | 输入问题启动 Web Research，实时查看进度和结果（Local RAG 请到 Knowledge Base 页，或用 CLI / API） |
 | **Tasks** | `/tasks` | 查看历史任务列表，点击行内展开详情，可删除已完成任务 |
-| **Knowledge Base** | `/kb` | 查看索引状态，一键重建索引 |
+| **Knowledge Base** | `/kb` | 查看/重建索引，直接提问 Local RAG |
 | **Settings** | `/settings` | 随时查看和修改全部配置（已保存的 API key 留空即保持不变） |
 
 ### 生产模式部署

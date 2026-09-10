@@ -2,6 +2,8 @@
 
 > 演进注记（2026-09-09，R-251）：route guard（`graph.py` 的 `_route_after_supervise`）实际规则超出正文描述——除 "`continue_execution` 超轮次 → curate/fail" 外还有三条未注记规则：(a) `revise_plan` 在轮次耗尽时同样被拦截转 curate/fail；(b) `last_sup` 为 `None`（无 Supervisor 输出）→ curate/fail；(c) `continue_execution` 但 `next_subtask_ids` 为空 → curate/fail（对应 REVIEW_TRACKER R-120）。另外 `recursion_limit` 并非简单等于 `max_retrieval_rounds`，而是派生公式 `max_retrieval_rounds * 3 + 5`（`state_graph.py`）。仍然成立：硬性轮次上限不进 Supervisor prompt、由运行时强制拦截，路由整体结构与 "saturation 仅作审计不作边选择" 的决策不变。
 
+> 演进注记（2026-09-09，R-242）：正文（含 V1.1 Amendment）中提到的 `_emit` → `janus.Queue` → `EventStream` 传输层此后已被替换为 asyncio 实现的 `Bus`（`core/bus.py`：每订阅者 `asyncio.Queue`、默认容量 1024、满则丢弃并 warning、支持从工作线程跨事件循环投递），pyproject 的 janus 依赖已移除；replay-then-live 与 seq 去重语义保留（详见 ADR-0023 的同日注记）。事件层与图层正交这一点不变。
+
 The Web Research workflow is a state graph rather than a one-way pipeline: Planner creates or revises plans, Executor Nodes gather sources and findings, Supervisor routes between further execution, plan revision, curation, or stopping, and Curator drafts the Research Output from the Blackboard. These roles coordinate through Research Task State as a Blackboard instead of direct agent-to-agent chat, making Web Research recoverable, auditable, and easier to test; Local RAG remains a retrieval display flow rather than a state-graph research workflow in v1.
 
 The graph follows `SupervisorOutput.route` for routing. `SupervisorOutput.saturation` records the Supervisor's research-saturation judgment for explanation and auditing, but it is not itself a graph edge selector.

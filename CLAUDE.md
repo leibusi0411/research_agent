@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 uv sync                          # install dependencies
-uv run pytest                    # run all tests (188 offline/deterministic; 9 real-API tests auto-skip without user config)
+uv run pytest                    # run all tests (207 offline/deterministic; 9 real-API tests auto-skip without user config)
 uv run pytest tests/test_foo.py  # single test file
 uv run pytest -k keyword         # filter tests by keyword
 uv run research-agent <command>  # run CLI
@@ -47,7 +47,7 @@ CLI (cli.py)              Web UI (React/Vite, web/)
 - **Config**: TOML at `%APPDATA%/research_agent/config.toml` (or `~/.config/research_agent/config.toml`), overridable via `RESEARCH_AGENT_CONFIG_PATH`. Init with `research-agent init`.
 - **Worktree-based dev**: main repo at `../research_agent`; this worktree is on branch `deepseek_dev`.
 - **Domain glossary** in `CONTEXT.md` — read it before naming anything.
-- **47 ADRs** in `docs/adr/` — decisions on stack, patterns, and boundaries. Numbered sequentially.
+- **49 ADRs** in `docs/adr/` — decisions on stack, patterns, and boundaries. Numbered sequentially.
 - **Deferred features** tracked in `TODO.md`.
 - **中文优先**: 所有 review 生成的文件（代码审查报告、ADRs 审查等）一律用中文编写。中文翻译版作为主文件（不加 `-zh` 后缀），不保留英文原版。
 - **Review 跟踪**: `REVIEW_TRACKER.md` 是项目唯一的审查与路线图文件（不含子目录中的独立 review 文档）。分三个部分：

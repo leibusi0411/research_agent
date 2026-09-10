@@ -4,6 +4,8 @@
 **状态**: ✅ 已实施  
 **影响范围**: `web/schemas.py`, `web/context.py`, `web/prompt_builders.py`, `web/state_graph.py`, `core/service.py`, `core/config.py`, `core/local_research.py`
 
+> 演进注记（2026-09-10）：ADR-0048 在 Prior Knowledge 种子之上为 Planner 增加了有界的本地知识调研（local_kb_search：规划/修订前由 LLM 生成 ≤3 个定向查询词、并行只读混合检索、合并进规划 prompt，结果不写入 findings/sources）。知识库接触面由此从"一次性种子"扩为"Planner 侧两个只读通道"；Executor/Supervisor/Curator 仍不接触本地知识。
+
 ## 背景
 
 ADR-0017 与 ADR-0036 规定 Local RAG 与 Web Research 完全独立："Web Research does not read Local RAG indexes or Local Results"。ADR-0045 的 Knowledge Deposit 打通了 Web → Local 的沉淀方向后，反向联动成为自然下一步：Planner 做计划时看不到本地已有知识，会对知识库早已覆盖的内容重复发起网络调研，浪费搜索配额且报告增量价值低。

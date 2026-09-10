@@ -392,6 +392,7 @@ export function App() {
                 savedKeys={savedKeys}
                 savedNotice={savedNotice}
                 loadSettings={loadSettings}
+                configured={configured}
                 busy={busy === "setup"}
                 message={message}
                 onSubmit={submitSetup}

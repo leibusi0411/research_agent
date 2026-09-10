@@ -1232,6 +1232,152 @@ label span {
   cursor: default;
 }
 
+/* ---------- Settings page (view / edit, ADR-0048 UX) ---------- */
+
+.settings-page {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+}
+
+.settings-hero {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-hero h1 {
+  margin: 0;
+}
+
+.settings-subtitle {
+  margin: 6px 0 0;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.settings-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--t-micro), color var(--t-micro), border-color var(--t-micro);
+}
+
+.settings-edit:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--text-2);
+}
+
+.settings-panel {
+  width: 100%;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 18px 24px 20px;
+  text-align: left;
+}
+
+.settings-view {
+  text-align: left;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 14px;
+  align-items: baseline;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.settings-row:last-child {
+  border-bottom: 0;
+}
+
+.settings-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.settings-value {
+  font-size: 13.5px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.settings-masked {
+  font-family: var(--font-mono);
+  letter-spacing: 2px;
+  color: var(--text-2);
+}
+
+.settings-empty {
+  color: var(--text-2);
+  font-style: italic;
+}
+
+.settings-actions {
+  display: flex;
+  gap: 10px;
+  padding-top: 16px;
+}
+
+.settings-actions button[type="submit"] {
+  padding: 9px 20px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent-strong);
+  color: var(--accent-ink);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter var(--t-micro), opacity var(--t-micro);
+}
+
+.settings-actions button[type="submit"]:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.settings-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.settings-actions .ghost {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  font-weight: 400;
+}
+
+.settings-actions .ghost:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.saved {
+  color: var(--ok);
+  font-size: 13px;
+  margin: 12px 0 0;
+}
+
 /* ---------- Deposit ---------- */
 
 .deposit-panel {

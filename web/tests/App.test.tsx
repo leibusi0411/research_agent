@@ -144,7 +144,7 @@ describe("App", () => {
     expect(await screen.findByText(/config_missing/)).toBeInTheDocument();
   });
 
-  it("prefills the Settings page from saved config and keeps saved keys blank", async () => {
+  it("shows settings read-only, then edits after clicking Edit", async () => {
     stubEventSource();
     _sseEventMap = {};
     function jsonResponse(body: unknown, ok = true, status = 200) {
@@ -169,7 +169,7 @@ describe("App", () => {
             search_api_key: "",
             has_chat_api_key: true,
             has_embedding_api_key: true,
-            has_search_api_key: true
+            has_search_api_key: true,
           });
         }
         if (url.endsWith("/api/setup/init") && init?.method === "POST") {
@@ -182,25 +182,26 @@ describe("App", () => {
 
     render(<MemoryRouter initialEntries={["/settings"]}><App /></MemoryRouter>);
 
-    // Non-secret fields are prefilled from the saved config.
+    // View mode: values are read-only text — no editable inputs.
+    expect(await screen.findByText("chat_base_url")).toBeInTheDocument();
+    expect(await screen.findByText("https://models.example/v1")).toBeInTheDocument();
+    expect(screen.getAllByText("••••••••")).toHaveLength(3);
+    expect(screen.queryByRole("textbox", { name: "chat_base_url" })).toBeNull();
+
+    // Edit mode: prefilled inputs; saved keys stay blank with a placeholder.
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
     const chatUrl = await screen.findByRole("textbox", { name: "chat_base_url" });
     await waitFor(() => expect(chatUrl).toHaveValue("https://models.example/v1"));
-    expect(screen.getByRole("textbox", { name: "chat_model" })).toHaveValue("chat-model");
-
-    // Saved keys stay blank, are optional, and say so in the placeholder.
     const chatKey = document.querySelector("input[name='chat_api_key']") as HTMLInputElement;
     expect(chatKey).toHaveValue("");
     expect(chatKey).not.toBeRequired();
     expect(chatKey).toHaveAttribute("placeholder", "Saved — leave blank to keep");
 
-    // Editing and saving stays on the Settings page with a confirmation,
-    // submitting blank key fields so the backend keeps the saved keys.
-    await userEvent.clear(chatUrl);
-    await userEvent.type(chatUrl, "u");
+    // Save returns to the read-only view with a confirmation.
     await userEvent.click(screen.getByRole("button", { name: "Save Config" }));
-
     expect(await screen.findByText("Settings saved.")).toBeInTheDocument();
-    expect(initBodies[0]).toMatchObject({ chat_base_url: "u", chat_api_key: "" });
+    expect(screen.queryByRole("textbox", { name: "chat_base_url" })).toBeNull();
+    expect(initBodies[0]).toMatchObject({ chat_api_key: "" });
   });
 
   it("runs web research and renders the trace and result cards", async () => {

@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-09 | 测试：Python 216 passed（含真实链路 e2e）+ 前端 27 passed + Playwright 1 passed | 第九轮实现：local_kb_search（Planner 本地调研）+ 索引自动增量更新（ADR-0048，R-257）+ Chunking v2（ADR-0049，R-258）+ KB 页独立 Local RAG 入口（R-259）| 第八轮审查（47 ADR 对照代码）32 项 ⚠️ 记录在案待裁决（R-225~R-256，编号与本轮实现的 R-257 已错开）
+> 最后更新：2026-09-10 | 测试：Python 216 passed（含真实链路 e2e）+ 前端 27 passed + Playwright 1 passed | 第九轮实现：local_kb_search（Planner 本地调研）+ 索引自动增量更新（ADR-0048，R-257）+ Chunking v2（ADR-0049，R-258）+ KB 页独立 Local RAG 入口（R-259）| 第八轮审查（47 ADR 对照代码）32 项全部按"以代码为准"处置 ✅ 2026-09-10（R-225~R-256：29 份 ADR 演进注记 + CONTEXT/AGENTS/README/USAGE/CLAUDE 同步 + 代码清理 4 项；R-237 已由 R-259 以代码解决）
 
 ---
 
@@ -84,6 +84,18 @@
 - supervisor prompt 不渲染 `failure_reason`、不提 `skip_subtask_ids`/`research_gaps` 字段，但 schema 里全是 required（prompt_builders.py:205-219）。
 - ADR-0003 result.json 形状漂移：local 条目多出 `chunk_id`/`score` 字段（local_research.py:153-160，增量无害）。
 
+#### 处置结果（2026-09-10）
+
+用户裁决：**以代码为准，修订决策文档**。R-225~R-256 共 32 项全部处置完毕 ✅：
+
+- 29 份 ADR 补「演进注记（2026-09-09，R-2xx）」（格式沿用 0017/0036 既有约定）；核心句失实的 ADR（0028/0029/0040/0047 等）正文就地改正。
+- CONTEXT.md 20 个词条同步修订（EventStream/Schema Repair/Task History/Research Page/Role Model Slot 等）。
+- AGENTS.md / README.md / USAGE.md / CLAUDE.md 漂移清除：fake_runtime 残留引用、janus、静态文件服务、"自动进入 Settings"、测试与 ADR 计数、Web UI 双输入区等。
+- 代码级清理 4 项（不改行为）：errors.py 注册 `kb_rebuild_error`（R-240 白名单外野码合法化）、pyproject 删除 janus 死依赖（uv.lock 按原镜像重新生成）、service.py "curator" 陈旧注释改为 local_summarizer、bus.py docstring 删除外部绝对路径。
+- R-226/R-229/R-234/R-235 四个原"代码 bug 候选"按用户指示同样以文档追认现状（各 ADR 注记中已写明恢复代码的路径）；如未来改代码实现原决策，需同步回撤对应注记。
+- 本轮未跑测试（用户指示）；文档计数来自静态核实与上轮记录。
+- 与第九轮的关系：R-237 随后被 R-259 以**代码方式**解决（KB 页恢复 Local RAG 入口，ADR-0010 已补注记）；R-247 提及的 `local_kb_search` 延期项由 ADR-0048 落地；分块参数相关核对被 ADR-0049 显式演进。
+
 ---
 
 ### 第九轮实现（2026-09-09，Chunking v2 / ADR-0049，R-258）
@@ -91,6 +103,7 @@
 | R-257 | 用户需求：把本地 RAG 开放给调研流程——Planner 规划前主动查本地知识库（不限于一次 top-5 种子），同时 deposit 后索引 stale 需手动重建的体验粗糙 | ✅ ADR-0048：`Planner` 新增 local_kb_search 调研阶段（查询优化 ≤3 个 → 并行混合检索 → 去重加权合并 → 注入规划提示词；plan_revision 复用）；Executor 保持纯 Web（不注册进共享注册表避免泄漏）；`KnowledgeBaseIndex.update(max_files=)` 增量更新 + deposit 后自动触发（max_files=5）+ 调研前 stale 且变更 ≤10 时自动更新；TODO/local_kb_search 延期项落地 |
 | R-258 | 用户需求：分块策略四项优化——① heading_path 参与检索（现在只进 manifest）；② tags/wikilinks 参与检索；③ 3000 字符对 embedding 偏大；④ 硬切无重叠 | ✅ Chunk 新增 `search_text`（标题路径 + tags + wikilinks 前缀 + 正文）：FTS5 索引 search_text、Chroma 嵌入 search_text、document 存展示文本；分块目标 3000→1000、超长段落滑窗 1000/步进 900（10% 重叠）；存量索引需手动 `kb rebuild` 一次 |
 | R-259 | 用户需求：KB 页新增独立 Local RAG 入口，渲染效果对齐 Web Research | ✅ KbPage 增加提问框 + Search 按钮（调 `POST /api/research/local`），运行中渲染 TraceCard（local_rag 事件流），完成后渲染 LocalResultView；独立于 Web 调研状态（两任务族可并行）；e2e 补 KB 页本地流程步骤 |
+| R-261 | 用户需求：Settings 页默认只读展示配置，点击 Edit 才进入编辑；视觉对齐居中高级风格 | ✅ SettingsPage 双态重构：视图态（只读行式展示、密钥打码 ••••••••、Edit 按钮进编辑）/ 编辑态（表单 + Save Config + Cancel，密钥留空保留语义不变）；保存后回只读态 + Settings saved 提示；首跑（未配置）直接进编辑态；居中卡片视觉与 KB 页统一 |
 
 ### 第九轮实现（2026-09-09，local_kb_search + 索引增量更新 / ADR-0048）
 
@@ -468,7 +481,7 @@
 1. **提交本日改动** — Web UI 视觉重设计（第五轮审查 R-184~R-192 处理完毕）；提交时必须 `git add web/dist` 全量新构建资产（R-192），TODO.md 的 `local_kb_search` 条目建议拆成独立提交
 2. **下一步联动候选：`local_kb_search` 注册为 Web 工具（方案 3）** — 触发条件与中间档已记录于 TODO.md"Retrieval And Web Tools"节；先观察 deposit 增长后初始 Top-5 是否漏材料再决定
 3. **择机加固 R-173 家族** — 锁时序偶发测试，让 fake runtime 可阻塞
-4. **裁决第八轮 P0 冲突（R-225~R-241）** — 逐条决定：显式演进 ADR / 改代码 / 改 CONTEXT.md；其中 R-226（`local_summarizer` 覆盖失效）、R-235（`plan_revision_request` 被丢弃）、R-229（vector 缺失即 `failed`）、R-234（LLM 生成 ID 撞车风险）是实际功能 bug 候选，建议优先。另注意 TODO.md 清空后，`local_kb_search` 与 "Earlier URL deduplication" 两条延期决策的触发条件记录已丢失，如仍需保留应重录
+4. **第八轮冲突已全部处置（R-225~R-256 ✅ 2026-09-10，以代码为准修文档）** — 遗留观察：R-226/R-229/R-234/R-235 四项被文档追认为现状（恢复代码的路径写进了各 ADR 注记），若未来改代码需回撤对应注记；`local_kb_search` 延期项已由 ADR-0048 落地，仅剩 "Earlier URL deduplication" 的触发条件记录随 TODO.md 清空丢失，如需保留应重录；第八轮处置应用户要求未跑测试，下次提交前建议跑 `uv run pytest` + `cd web && npm run test` 验证
 
 ### 阶段 8（功能全部实现）
 

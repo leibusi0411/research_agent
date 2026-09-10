@@ -4,6 +4,8 @@
 
 > 演进注记（2026-09-09，R-244）：部署机制已部分改变。FTS5 部分仍是临时目录构建 + 原子替换（`_atomic_swap_fts5`，core/kb.py:146-147、197-211）；但 Chroma 向量索引已移出 `indexes/local/`，独立放在 `indexes/chroma/`（core/kb.py:72-80，见 R-243：Windows 上 HNSW segment 文件持有内存映射锁，阻止父目录原子重命名），其部署是 `shutil.copytree(chroma_tmp, self.chroma_dir, dirs_exist_ok=True)` 合并拷贝（core/kb.py:159）——非原子，且旧 segment 文件残留不清理。因此文末 "Only after all build steps succeed does runtime atomically replace `indexes/local/`" 一句只对 FTS5 成立，不再描述整体部署。
 
+> 演进注记（2026-09-10）：ADR-0048 引入索引自动增量更新 `update(max_files=)`——deposit 写入后自动触发（max_files=5）；Planner 本地调研前若索引 stale 且变更 ≤10 则先增量更新再检索。全量 `kb rebuild` 仍是唯一全量重建入口（增量超限则跳过并保持 stale）；五态状态机与"ready 或 stale 才允许查询"的门槛不变。
+
 Local RAG retrieval depends on prebuilt Knowledge Base indexes. Index rebuilding is an explicit maintenance action through CLI or Web UI, not automatic large-scale work inside a local task; if indexes are missing or stale, the Local RAG task fails and tells the user to rebuild the index before retrying. V1 stale detection compares indexed file path, mtime, and size before running Local RAG.
 
 V1 CLI exposes only `research-agent kb status` and `research-agent kb rebuild`. It does not include `kb update`, `kb clean`, `kb delete`, or `kb inspect`.
