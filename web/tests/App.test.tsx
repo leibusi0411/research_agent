@@ -362,6 +362,21 @@ describe("App", () => {
     expect(screen.queryByText("Deposited to Knowledge Base.")).not.toBeInTheDocument();
   });
 
+  it("runs local RAG from the Knowledge Base page with trace and result", async () => {
+    mockConfiguredFetch();
+    render(<MemoryRouter><App /></MemoryRouter>);
+
+    await screen.findByRole("heading", { name: "Inkwell" });
+    await userEvent.click(screen.getByRole("link", { name: "Knowledge Base" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Local RAG question" }), "gil question");
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    // Live trace renders the local_rag phase, then the result card lands.
+    expect((await screen.findAllByText("local_rag")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("Local content")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Search" })).toBeEnabled();
+  });
+
   it("shows knowledge base status and rebuild action", async () => {
     mockConfiguredFetch();
     render(<MemoryRouter><App /></MemoryRouter>);

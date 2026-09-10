@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-09 | 测试：Python 216 passed（含真实链路 e2e）+ 前端 26 passed + Playwright 1 passed | 第九轮实现：local_kb_search（Planner 本地调研）+ 索引自动增量更新（ADR-0048，R-257）+ Chunking v2（ADR-0049，R-258）| 第八轮审查（47 ADR 对照代码）32 项 ⚠️ 记录在案待裁决（R-225~R-256，编号与本轮实现的 R-257 已错开）
+> 最后更新：2026-09-09 | 测试：Python 216 passed（含真实链路 e2e）+ 前端 27 passed + Playwright 1 passed | 第九轮实现：local_kb_search（Planner 本地调研）+ 索引自动增量更新（ADR-0048，R-257）+ Chunking v2（ADR-0049，R-258）+ KB 页独立 Local RAG 入口（R-259）| 第八轮审查（47 ADR 对照代码）32 项 ⚠️ 记录在案待裁决（R-225~R-256，编号与本轮实现的 R-257 已错开）
 
 ---
 
@@ -89,6 +89,7 @@
 ### 第九轮实现（2026-09-09，Chunking v2 / ADR-0049，R-258）
 
 | R-258 | 用户需求：分块策略四项优化——① heading_path 参与检索（现在只进 manifest）；② tags/wikilinks 参与检索；③ 3000 字符对 embedding 偏大；④ 硬切无重叠 | ✅ Chunk 新增 `search_text`（标题路径 + tags + wikilinks 前缀 + 正文）：FTS5 索引 search_text、Chroma 嵌入 search_text、document 存展示文本；分块目标 3000→1000、超长段落滑窗 1000/步进 900（10% 重叠）；存量索引需手动 `kb rebuild` 一次 |
+| R-259 | 用户需求：KB 页新增独立 Local RAG 入口，渲染效果对齐 Web Research | ✅ KbPage 增加提问框 + Search 按钮（调 `POST /api/research/local`），运行中渲染 TraceCard（local_rag 事件流），完成后渲染 LocalResultView；独立于 Web 调研状态（两任务族可并行）；e2e 补 KB 页本地流程步骤 |
 
 ### 第九轮实现（2026-09-09，local_kb_search + 索引增量更新 / ADR-0048）
 

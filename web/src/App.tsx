@@ -32,6 +32,13 @@ export function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [deletingTaskIds, setDeletingTaskIds] = useState<string[]>([]);
   const [phase, setPhase] = useState<string | null>(null);
+  // Knowledge Base page: standalone Local RAG query (separate state from the
+  // web research flow so both task families can run without crosstalk).
+  const [kbQuestion, setKbQuestion] = useState("");
+  const [kbResult, setKbResult] = useState<ResearchResult | null>(null);
+  const [kbEvents, setKbEvents] = useState<ProgressEvent[]>([]);
+  const [kbRunning, setKbRunning] = useState(false);
+  const kbCleanup = useRef<(() => void) | null>(null);
 
   const navigate = useNavigate();
 
@@ -41,6 +48,7 @@ export function App() {
   useEffect(() => {
     return () => {
       esCleanup.current?.();
+      kbCleanup.current?.();
     };
   }, []);
 
@@ -211,6 +219,48 @@ export function App() {
     }
   }
 
+  /** Standalone Local RAG query from the Knowledge Base page. */
+  async function runLocalSearch(event: FormEvent) {
+    event.preventDefault();
+    setKbEvents([]);
+    setKbResult(null);
+    setKbRunning(true);
+    try {
+      const started = await api.runLocal(kbQuestion);
+      if (started.status !== "running") {
+        setKbResult(started);
+        return;
+      }
+      const collected: ProgressEvent[] = [];
+      kbCleanup.current?.();
+      kbCleanup.current = subscribeTaskEvents(
+        started.task_id,
+        (evt) => {
+          collected.push(evt);
+          setKbEvents([...collected]);
+        },
+        () => finishKbLocal(started.task_id),
+        () => finishKbLocal(started.task_id),
+      );
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setKbRunning(false);
+    }
+  }
+
+  async function finishKbLocal(taskId: string) {
+    try {
+      setKbResult(await api.taskResult(taskId));
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setKbRunning(false);
+      kbCleanup.current?.();
+      kbCleanup.current = null;
+    }
+  }
+
   async function refreshTasks() {
     const response = await api.finishedTasks();
     setTasks(response.tasks);
@@ -324,6 +374,12 @@ export function App() {
                 busy={busy === "kb"}
                 onRefresh={refreshKb}
                 onRebuild={rebuildKb}
+                localQuestion={kbQuestion}
+                setLocalQuestion={setKbQuestion}
+                localResult={kbResult}
+                localEvents={kbEvents}
+                localRunning={kbRunning}
+                onLocalSearch={runLocalSearch}
               />
             }
           />

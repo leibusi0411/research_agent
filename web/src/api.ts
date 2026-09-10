@@ -131,6 +131,8 @@ export const api = {
     request<SetupStatus>("/api/setup/init", { method: "POST", body: JSON.stringify(payload) }),
   runWeb: (question: string) =>
     request<ResearchResult>("/api/research/web", { method: "POST", body: JSON.stringify({ question }) }),
+  runLocal: (question: string) =>
+    request<ResearchResult>("/api/research/local", { method: "POST", body: JSON.stringify({ question }) }),
   finishedTasks: () => request<{ tasks: TaskSummary[] }>("/api/tasks/finished"),
   deleteTask: (taskId: string) => request<{ task_id: string; deleted: boolean }>(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" }),
   depositTask: (taskId: string) => request<DepositResult>(`/api/tasks/${encodeURIComponent(taskId)}/deposit`, { method: "POST" }),

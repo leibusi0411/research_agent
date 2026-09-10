@@ -1,16 +1,30 @@
-import { RefreshCw } from "lucide-react";
-import { type KbStatus } from "../api";
+import { FormEvent } from "react";
+import { RefreshCw, Search } from "lucide-react";
+import { type KbStatus, type ProgressEvent, type ResearchResult } from "../api";
+import { LocalResultView, TraceCard } from "../components/ResultView";
 
 export function KbPage({
   status,
   busy,
   onRefresh,
   onRebuild,
+  localQuestion,
+  setLocalQuestion,
+  localResult,
+  localEvents,
+  localRunning,
+  onLocalSearch,
 }: {
   status: KbStatus | null;
   busy: boolean;
   onRefresh: () => void;
   onRebuild: () => void;
+  localQuestion: string;
+  setLocalQuestion: (value: string) => void;
+  localResult: ResearchResult | null;
+  localEvents: ProgressEvent[];
+  localRunning: boolean;
+  onLocalSearch: (event: FormEvent) => void;
 }) {
   return (
     <section>
@@ -24,6 +38,21 @@ export function KbPage({
           Rebuild
         </button>
       </div>
+      <form className="kb-local" onSubmit={onLocalSearch}>
+        <h2>Local RAG</h2>
+        <div className="kb-local-row">
+          <input
+            aria-label="Local RAG question"
+            placeholder="Ask your local knowledge base…"
+            value={localQuestion}
+            onChange={(event) => setLocalQuestion(event.target.value)}
+          />
+          <button type="submit" disabled={localRunning || busy}>
+            <Search size={16} />
+            Search
+          </button>
+        </div>
+      </form>
       {status && (
         <dl className="kv">
           <dt>vault_path</dt>
@@ -38,6 +67,10 @@ export function KbPage({
           <dd>{status.last_indexed_at ?? "none"}</dd>
         </dl>
       )}
+      {localEvents.length > 0 && (
+        <TraceCard events={localEvents} phase={null} running={localRunning} />
+      )}
+      {localResult && <LocalResultView result={localResult} events={localEvents} />}
     </section>
   );
 }

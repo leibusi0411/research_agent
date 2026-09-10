@@ -163,6 +163,11 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
   await expect(page.getByText("D:/vault")).toBeVisible();
   await page.getByRole("button", { name: "Rebuild" }).click();
   await expect(page.getByText("ready")).toBeVisible();
+
+  // Standalone Local RAG from the Knowledge Base page.
+  await page.getByRole("textbox", { name: "Local RAG question" }).fill("local question");
+  await page.getByRole("button", { name: "Search" }).click();
+  await expect(page.getByText("Local content")).toBeVisible();
 });
 
 function localResult(status: "running" | "completed") {
