@@ -6,7 +6,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-green.svg)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19+-61DAFB.svg)](https://react.dev/)
 [![LangGraph](https://img.shields.io/badge/agent%20编排-LangGraph-orange.svg)](https://langchain-ai.github.io/langgraph/)
-[![Tests](https://img.shields.io/badge/tests-186%20passed-brightgreen.svg)](https://github.com/leibusi0411/research_agent)
+[![Tests](https://img.shields.io/badge/tests-197%20passed-brightgreen.svg)](https://github.com/leibusi0411/research_agent)
 
 ---
 
@@ -59,7 +59,7 @@
 
 ### 通用特性
 
-- **离线测试**：Python 186 个测试中 180 个离线确定性运行（其余 6 个为可选真实链路 e2e），另有前端 21 个 Vitest 单元测试，均无需网络或 API key
+- **离线测试**：Python 197 个测试中 188 个离线确定性运行（其余 9 个为真实 API 链路，无配置自动 skip），另有前端 26 个 Vitest 单元测试，均无需网络或 API key
 - **双界面**：CLI（argparse）+ Web UI（React + Vite），通过统一 FastAPI 接入
 - **任务锁**：同一 family（local/web）同时只允许一个活跃任务，防止资源冲突
 - **SSE 流式推送**：实时推送任务进度事件，支持 30 分钟超时
@@ -97,7 +97,7 @@
 │.py   │ │ace.py│ │        │ │  state_graph.py      │
 │SQLite│ │dirs  │ │        │ │  role_invocation.py  │
 ├──────┤ ├──────┤ │        │ │  provider_runtime.py │
-│provi-│ │errors│ │        │ │  fake_runtime.py     │
+│provi-│ │errors│ │        │ │                      │
 │ders  │ │.py   │ │        │ │  report.py           │
 │.py   │ │ids.py│ │        │ └──────────────────────┘
 │OpenAI│ │      │ │        │
@@ -597,7 +597,7 @@ tool_retries = 2
 research_agent/
 ├── src/research_agent/
 │   ├── api/
-│   │   └── app.py              # FastAPI 应用工厂 + SSE 端点 + 静态文件服务
+│   │   └── app.py              # FastAPI 应用工厂 + SSE 端点（仅 API，不服务前端静态文件）
 │   ├── cli.py                  # argparse CLI
 │   ├── core/
 │   │   ├── bus.py              # EventStream 事件总线（janus.Queue，SSE/CLI 共用）
@@ -615,16 +615,15 @@ research_agent/
 │   └── web/
 │       ├── context.py           # Per-role 上下文构建
 │       ├── executor.py          # ResearchExecutor（工具规划/执行/综合）
-│       ├── fake_runtime.py      # 确定性 Fake Runtime（离线测试）
 │       ├── graph.py             # LangGraph 节点函数 + 图构建
 │       ├── prompt_builders.py   # Per-role Prompt 构建
 │       ├── provider_runtime.py  # Provider-backed Runtime（CLI/API 默认）
 │       ├── report.py            # Markdown 报告生成
-│       ├── role_invocation.py   # LLM 角色调用 + schema 修复
+│       ├── role_invocation.py   # LLM 角色调用 + 输出校验与重试
 │       ├── schemas.py           # 数据模型与 Blackboard 状态
 │       ├── state_graph.py       # StateGraphRunner（LangGraph + checkpoint）
 │       └── tools.py             # ToolGateway（搜索/抓取/提取）
-├── tests/                       # 18 个测试模块（180 离线 + 6 e2e）
+├── tests/                       # 19 个测试模块（188 离线 + 9 真实 API，无配置自动 skip）
 │   ├── test_api_connections.py
 │   ├── test_api_surface.py
 │   ├── test_bootstrap_foundations.py
@@ -653,7 +652,7 @@ research_agent/
 │   ├── tests/                   # Vitest 单元测试 + Playwright e2e
 │   └── package.json
 ├── docs/
-│   ├── adr/                     # 46 个架构决策记录
+│   ├── adr/                     # 47 个架构决策记录
 │   └── agents/                  # agent 协作约定（issue tracker、triage、domain）
 ├── AGENTS.md                    # AI 编码 agent 项目指令
 ├── CLAUDE.md                    # Claude Code 项目指令
@@ -684,7 +683,7 @@ research_agent/
 ### 测试
 
 ```bash
-uv run pytest                          # 运行全部测试（186 个：180 离线 + 6 e2e 需真实 key 自动 skip）
+uv run pytest                          # 运行全部测试（197 个：188 离线 + 9 真实 API，无配置自动 skip）
 uv run pytest -x                       # 首次失败即停止
 uv run pytest -k "state_graph"         # 按关键字筛选
 uv run pytest tests/test_web_state_graph.py  # 单个文件
@@ -696,17 +695,16 @@ cd web && npm run test:e2e             # Playwright E2E 测试
 
 **测试设计原则**：
 - **离线与确定性**：所有测试不依赖网络或真实 API key
-- `FakeChatModelClient`：模拟 LLM 响应（按序出队），记录所有 prompts
-- `FakeWebResearchRuntime`：模拟完整 Web Research 流水线
-- `RecordingEmbeddingClient`：记录 embedding 请求，返回固定向量
-- `FixedEmbeddingClient`：返回确定性 embedding（用于 CLI 测试）
+- 各测试文件内定义的 `_FixedChatModelClient` / `_FixedChatModel`：返回固定 LLM 响应
+- `_FixedEmbeddingClient`：返回确定性 embedding；`RecordingEmbeddingClient`：额外记录 embedding 请求
+- `FakeSearchProvider`：模拟 Tavily 搜索；`_TestWebRuntime`：API 测试中模拟 Web Research 流水线
 
 ### 开发约定
 
 - **中文优先**：Review 文件、ADR 审查等用中文编写
 - **类型注解**：使用 `WebResearchRuntime` Protocol 而非 `object`
 - **显式参数**：方法签名使用显式类型参数，不使用 `*args, **kwargs`
-- **Schema 修复**：`invoke_role_json` 在 LLM 输出不合规时自动进行一次修复重试
+- **Schema 校验**：`invoke_role_json` 对 LLM 调用/解析失败盲重试一次（共 2 次），耗尽报 `llm_call_failed`；schema 校验失败立即以 `schema_validation_failed` 终止（无修复调用）
 - **REVIEW_TRACKER.md**：唯一的审查与路线图文件，问题修复后及时更新
 
 ---
@@ -772,7 +770,7 @@ rm -rf <workspace>/tasks/<task_id>/
 
 ## ADR（架构决策记录）
 
-项目包含 **46 个 ADR**（`docs/adr/`），覆盖技术栈选择、架构模式、工程边界等关键决策。关键 ADR：
+项目包含 **47 个 ADR**（`docs/adr/`），覆盖技术栈选择、架构模式、工程边界等关键决策。关键 ADR：
 
 | ADR | 决策 | 实现状态 |
 |-----|------|----------|

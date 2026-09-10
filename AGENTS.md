@@ -62,7 +62,7 @@ research_agent/
 │       ├── graph.py              # LangGraph 节点函数与图构建
 │       ├── provider_runtime.py   # Provider-backed 真实运行时
 │       └── report.py             # Markdown 报告生成
-├── tests/                        # pytest，18 个测试文件，184 个离线测试 + 9 个真实 API 测试（无配置自动 skip）
+├── tests/                        # pytest，19 个测试文件，188 个离线测试 + 9 个真实 API 测试（无配置自动 skip）
 ├── web/                          # React + Vite 前端
 │   ├── src/
 │   │   ├── App.tsx               # 主应用（Research / Tasks / KB / Settings 页面路由；未配置时 Research 照常可用，启动调研同步报 config_missing）
@@ -115,7 +115,7 @@ cd web && npm run dev:all
 ## 测试
 
 ```bash
-# Python：全部 190 个测试，默认离线且确定性（ADR-0042；181 离线 + 9 个真实 API 测试无配置自动 skip）
+# Python：全部 197 个测试，默认离线且确定性（ADR-0042；188 离线 + 9 个真实 API 测试无配置自动 skip）
 uv run pytest                          # 全部
 uv run pytest -x                       # 首次失败即停
 uv run pytest -k "state_graph"         # 按关键字筛选
@@ -133,7 +133,7 @@ cd web && npm run test:e2e             # Playwright E2E（自动起 5174 端口 
 **测试设计原则**（新增测试必须遵守）：
 
 - **离线且确定性**：默认测试不依赖网络或真实 API key。
-- 使用确定性 fake 实现：`FakeChatModelClient`（按序出队模拟 LLM 响应并记录 prompts）、`FakeWebResearchRuntime`（模拟完整 Web Research 流水线）、`RecordingEmbeddingClient` / `FixedEmbeddingClient`（固定向量）。
+- 使用确定性 fake 实现：各测试文件内定义的 `_FixedChatModelClient` / `_FixedChatModel`（固定 LLM 响应）与 `_FixedEmbeddingClient`（固定向量）、`RecordingEmbeddingClient`（记录 embedding 请求）、`FakeSearchProvider`（模拟搜索）、`_TestWebRuntime`（API 测试的确定性 Web 运行时）。
 - CLI 测试以子进程方式运行。
 - pytest 配置在 `pyproject.toml`：`testpaths = ["tests"]`，`pythonpath = [".", "src"]`。
 
@@ -147,7 +147,7 @@ cd web && npm run test:e2e             # Playwright E2E（自动起 5174 端口 
 - **类型注解**：方法签名使用显式类型参数，不用 `*args, **kwargs`；运行时抽象用 `WebResearchRuntime` Protocol 而非 `object`。
 - **简单优先**：用最少代码解决问题，不做未要求的抽象或功能；精准修改，不顺手重构相邻代码；自己改动产生的孤立 import/变量/函数必须清理。
 - **错误模型**：用户可见错误统一为 `ResearchError`（`code` + `message`），CLI 渲染为 `[code] message` 并以非零码退出。
-- **Schema 修复**：角色 LLM 输出不合规时允许一次修复重试；修复失败则以 `schema_validation_failed` 终止工作流。
+- **Schema 校验**：角色经原生 function calling 调用；LLM 调用/解析失败盲重试一次（共 2 次），耗尽报 `llm_call_failed`；schema 校验失败立即以 `schema_validation_failed` 终止工作流（无修复调用，原 schema repair 机制已随 function-calling 迁移移除）。
 - **时间戳**：持久化时间一律 UTC ISO 8601 带 `Z` 后缀。
 - **任务并发边界**：同一 family（local / web）同时只允许一个活跃任务，由 CoreService 强制。
 
@@ -171,7 +171,7 @@ cd web && npm run test:e2e             # Playwright E2E（自动起 5174 端口 
 
 - 用户配置为 TOML 文件：Windows `%APPDATA%/research_agent/config.toml`，Linux/macOS `~/.config/research_agent/config.toml`，可用环境变量 `RESEARCH_AGENT_CONFIG_PATH` 覆盖。
 - 配置包含 **API keys**（chat model、embedding model、Tavily search）：**绝不提交到仓库**，不在日志、报告或测试中打印真实 key。测试用 fake key（如 `"test-key"`）。
-- 支持 per-role 模型覆盖：`[chat_model.planner|executor|supervisor|curator|local_summarizer]`，未配置时回退到全局 `[chat_model]`。
+- 支持 per-role 模型覆盖：`[chat_model.planner|executor|supervisor|curator]`，未配置时回退到全局 `[chat_model]`；`[chat_model.local_summarizer]` 槽位保留但当前未接线（写了不生效、静默回退全局，见 ADR-0009 演进注记）。
 - 本项目是单用户本地优先应用：Web UI 只绑定 localhost；Web Research 不包含认证浏览、浏览器自动化或反爬绕过；知识库索引对用户 vault 是只读的。
 - 工作区目录（`default_workspace`）存放运行态：`tasks/<task_id>/`（result.json、events.jsonl、checkpoints.sqlite、artifacts/web_sources/）、`indexes/`、`reports/web/`、`logs/`。这些是用户数据，不属于仓库。
 
@@ -193,4 +193,4 @@ cd web && npm run test:e2e             # Playwright E2E（自动起 5174 端口 
 | GET | `/api/kb/status` | 知识库索引状态 |
 | POST | `/api/kb/rebuild` | 重建索引 |
 
-SSE 事件为 phase-based（`web_planning` / `web_execution` / `web_supervision` / `web_revision` / `web_curation` / `local_rag`），`event_type` 限 `started | progress | completed | failed`，带单调递增 `seq` 用于去重；持久化层是 `events.jsonl`，传输层是 EventStream（janus.Queue，容量 1024）。
+SSE 事件为 phase-based（`web_planning` / `web_execution` / `web_supervision` / `web_revision` / `web_curation` / `local_rag`），`event_type` 为 `started | progress | completed | failed | task_result`；经 `_emit` 的事件带单调递增 `seq` 用于去重（local 与 API 层 originated 事件无 seq）；持久化层是 `events.jsonl`，传输层是 EventStream（asyncio Bus，core/bus.py，每订阅者队列容量 1024）。已完成/历史任务的 events 端点直接返回 JSON 数组（非 SSE 流）。

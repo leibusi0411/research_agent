@@ -1019,54 +1019,217 @@ label span {
   font-size: 13px;
 }
 
-/* ---------- KB page ---------- */
+/* ---------- KB page (centered, ADR-0048 UX) ---------- */
 
-.kb-actions {
+.kb-page {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 18px;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  text-align: center;
 }
 
-.kv {
-  display: grid;
-  grid-template-columns: 170px minmax(0, 1fr);
-  gap: 0 18px;
-  padding: 6px 20px;
+.kb-hero h1 {
+  margin: 4px 0 0;
+}
+
+.kb-subtitle {
+  margin: 8px 0 0;
+  color: var(--text-2);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+.kb-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 8px 8px 18px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: var(--surface);
+  transition: border-color var(--t-micro), background var(--t-micro);
+}
+
+.kb-search:focus-within {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.kb-search-icon {
+  flex: none;
+  color: var(--text-2);
+}
+
+.kb-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+}
+
+.kb-search input::placeholder {
+  color: var(--text-2);
+}
+
+.kb-search button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 9px 20px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent-strong);
+  color: var(--accent-ink);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter var(--t-micro), opacity var(--t-micro);
+}
+
+.kb-search button:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.kb-search button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.kb-panel {
+  width: 100%;
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-lg);
   background: var(--surface);
+  padding: 18px 24px 20px;
 }
 
-.kv dt {
-  padding: 12px 0;
+.kb-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 14px;
   border-bottom: 1px solid var(--line-soft);
-  color: var(--text-2);
+}
+
+.kb-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
+  font-size: 12px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-}
-
-.kv dd {
-  margin: 0;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--line-soft);
-  overflow-wrap: anywhere;
-  font-family: var(--font-mono);
-  font-size: 13px;
-}
-
-.kv dt:last-of-type,
-.kv dd:last-of-type {
-  border-bottom: 0;
-}
-
-.kv dd.num {
   color: var(--text);
-  font-size: 20px;
-  font-weight: 500;
+}
+
+.kb-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-2);
+}
+
+.kb-status-ready .kb-status-dot {
+  background: var(--ok);
+}
+
+.kb-status-stale .kb-status-dot {
+  background: var(--warn);
+}
+
+.kb-status-building .kb-status-dot {
+  background: var(--accent);
+}
+
+.kb-status-missing .kb-status-dot,
+.kb-status-failed .kb-status-dot {
+  background: var(--error);
+}
+
+.kb-vault {
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.kb-stats {
+  display: flex;
+  justify-content: center;
+  gap: 48px;
+  padding: 20px 0 8px;
+}
+
+.kb-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 96px;
+}
+
+.kb-stat-value {
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.kb-stat-time {
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.kb-stat-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-2);
+}
+
+.kb-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  padding-top: 16px;
+}
+
+.kb-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--t-micro), color var(--t-micro), border-color var(--t-micro);
+}
+
+.kb-actions button:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--text-2);
+}
+
+.kb-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* ---------- Deposit ---------- */
@@ -1378,16 +1541,11 @@ label span {
     min-height: 38px;
   }
 
-  .kv {
-    grid-template-columns: 1fr;
+  .kb-stats {
+    gap: 24px;
   }
 
-  .kv dt {
-    padding-bottom: 2px;
-    border-bottom: 0;
-  }
-
-  .kv dd {
-    padding-top: 0;
+  .kb-vault {
+    max-width: 100%;
   }
 }

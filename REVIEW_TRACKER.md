@@ -88,6 +88,7 @@
 
 ### 第九轮实现（2026-09-09，Chunking v2 / ADR-0049，R-258）
 
+| R-257 | 用户需求：把本地 RAG 开放给调研流程——Planner 规划前主动查本地知识库（不限于一次 top-5 种子），同时 deposit 后索引 stale 需手动重建的体验粗糙 | ✅ ADR-0048：`Planner` 新增 local_kb_search 调研阶段（查询优化 ≤3 个 → 并行混合检索 → 去重加权合并 → 注入规划提示词；plan_revision 复用）；Executor 保持纯 Web（不注册进共享注册表避免泄漏）；`KnowledgeBaseIndex.update(max_files=)` 增量更新 + deposit 后自动触发（max_files=5）+ 调研前 stale 且变更 ≤10 时自动更新；TODO/local_kb_search 延期项落地 |
 | R-258 | 用户需求：分块策略四项优化——① heading_path 参与检索（现在只进 manifest）；② tags/wikilinks 参与检索；③ 3000 字符对 embedding 偏大；④ 硬切无重叠 | ✅ Chunk 新增 `search_text`（标题路径 + tags + wikilinks 前缀 + 正文）：FTS5 索引 search_text、Chroma 嵌入 search_text、document 存展示文本；分块目标 3000→1000、超长段落滑窗 1000/步进 900（10% 重叠）；存量索引需手动 `kb rebuild` 一次 |
 | R-259 | 用户需求：KB 页新增独立 Local RAG 入口，渲染效果对齐 Web Research | ✅ KbPage 增加提问框 + Search 按钮（调 `POST /api/research/local`），运行中渲染 TraceCard（local_rag 事件流），完成后渲染 LocalResultView；独立于 Web 调研状态（两任务族可并行）；e2e 补 KB 页本地流程步骤 |
 
