@@ -98,14 +98,19 @@ class ChromaStore:
         if self._client is None:
             self._client = chromadb.PersistentClient(path=str(self._persist_path))
 
+        # ADR-0049: the embedding input is the enriched search_text (heading
+        # path / tags / wikilinks prefix + body); the stored document stays the
+        # clean display text.
         _EMBED_BATCH_SIZE = 32
         if embedding_client is not None:
             embeddings: list[list[float]] = []
             for i in range(0, len(chunks), _EMBED_BATCH_SIZE):
                 batch = chunks[i : i + _EMBED_BATCH_SIZE]
-                embeddings.extend(embedding_client.embed([c.text for c in batch]))
+                embeddings.extend(
+                    embedding_client.embed([_embed_input(c) for c in batch])
+                )
         else:
-            embeddings = [_deterministic_embedding(c.text) for c in chunks]
+            embeddings = [_deterministic_embedding(_embed_input(c)) for c in chunks]
 
         self._client.get_or_create_collection(name=self.COLLECTION_NAME).add(
             ids=[chunk.chunk_id for chunk in chunks],
@@ -197,6 +202,11 @@ class ChromaStore:
             return self._client.get_collection(name=self.COLLECTION_NAME).count()
         except Exception:
             return 0
+
+
+def _embed_input(chunk: Any) -> str:
+    """Vector-embedding input: the enriched search text when available."""
+    return getattr(chunk, "search_text", "") or chunk.text
 
 
 def _safe_nth(batch: list[list[Any]] | None, idx: int, default: Any) -> Any:

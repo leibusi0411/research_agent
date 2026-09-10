@@ -235,7 +235,8 @@ def test_core_service_rebuild_uses_configured_embedding_adapter_by_default(tmp_p
     result = CoreService(default_workspace=config.workspace.default_workspace, config_path=config_path).rebuild_kb_index()
 
     assert result["status"] == "ready"
-    assert embedding_client.inputs == [["Alpha beta gamma."]]
+    # ADR-0049: the embedding input is the search text enriched with the heading path.
+    assert embedding_client.inputs == [["[Topic]\nAlpha beta gamma."]]
 
 
 def test_kb_rebuild_uses_injected_embedding_client(tmp_path):
@@ -247,7 +248,8 @@ def test_kb_rebuild_uses_injected_embedding_client(tmp_path):
     result = KnowledgeBaseIndex(Workspace(config.workspace.default_workspace), config_path, embedding_client=embedding_client).rebuild()
 
     assert result["status"] == "ready"
-    assert embedding_client.inputs == [["Alpha beta gamma."]]
+    # ADR-0049: the embedding input is the search text enriched with the heading path.
+    assert embedding_client.inputs == [["[Topic]\nAlpha beta gamma."]]
     # Verify embeddings were stored via ChromaStore API (not raw SQLite)
     from research_agent.core.chroma_store import ChromaStore
     store = ChromaStore(config.workspace.default_workspace / "indexes" / "chroma")

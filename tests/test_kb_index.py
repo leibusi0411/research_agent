@@ -8,6 +8,7 @@ from pathlib import Path
 from research_agent.core.chroma_store import ChromaStore
 from research_agent.core.config import InitConfigRequest
 from research_agent.core.kb import KnowledgeBaseIndex
+from research_agent.core.local_research import retrieve_local_chunks
 from research_agent.core.service import CoreService
 
 
@@ -195,7 +196,7 @@ def test_chunking_aggregates_paragraphs_and_hard_splits_large_blocks(tmp_path):
         lengths = [row[0] for row in connection.execute("SELECT length(text) FROM chunks").fetchall()]
 
     assert any(length > 100 for length in lengths)
-    assert max(lengths) <= 5000
+    assert max(lengths) <= 1100
 
 
 def test_kb_cli_status_and_rebuild(tmp_path):
@@ -313,3 +314,70 @@ def test_update_without_index_reports_missing(tmp_path):
 
     assert result["status"] == "missing"
     assert result["skipped"] is True
+
+
+def test_heading_path_is_searchable(tmp_path):
+    """章节标题是密度最高的语义概括：正文不含标题词也必须能命中（ADR-0049）。"""
+    config_path, workspace, vault = write_config(tmp_path)
+    (vault / "deploy.md").write_text("# 部署\n\n正文内容与标题词汇无关。", encoding="utf-8")
+    service = CoreService(default_workspace=workspace, config_path=config_path)
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
+
+    results = retrieve_local_chunks(
+        sqlite_path=workspace / "indexes" / "local" / "fts.sqlite",
+        chroma_path=workspace / "indexes" / "chroma",
+        question="部署",
+        embedding_client=None,
+        top_k=5,
+    )
+    assert any(r["source_path"].endswith("deploy.md") for r in results)
+
+
+def test_tags_are_searchable(tmp_path):
+    config_path, workspace, vault = write_config(tmp_path)
+    (vault / "ml.md").write_text(
+        "---\ntags: [rag, python]\n---\n\n正文内容不含标签词。\n",
+        encoding="utf-8",
+    )
+    service = CoreService(default_workspace=workspace, config_path=config_path)
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
+
+    for question in ("rag", "python"):
+        results = retrieve_local_chunks(
+            sqlite_path=workspace / "indexes" / "local" / "fts.sqlite",
+            chroma_path=workspace / "indexes" / "chroma",
+            question=question,
+            embedding_client=None,
+            top_k=5,
+        )
+        assert any(r["source_path"].endswith("ml.md") for r in results), question
+
+
+def test_search_text_composition_includes_headings_tags_wikilinks(tmp_path):
+    from research_agent.core.kb import _compose_search_text
+
+    text = _compose_search_text("正文", ["部署", "Docker"], ["rag"], ["笔记A"])
+    assert text.startswith("[部署 > Docker] #rag [[笔记A]]")
+    assert "正文" in text
+
+
+def test_chunk_size_1000_with_10_percent_overlap(tmp_path):
+    config_path, workspace, vault = write_config(tmp_path)
+    (vault / "long.md").write_text("x" * 3500, encoding="utf-8")
+    service = CoreService(default_workspace=workspace, config_path=config_path)
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
+
+    connection = sqlite3.connect(workspace / "indexes" / "local" / "fts.sqlite")
+    chunks = [
+        row[0]
+        for row in connection.execute(
+            "SELECT text FROM chunks WHERE source_path LIKE '%long.md' ORDER BY start_offset"
+        ).fetchall()
+    ]
+    connection.close()
+
+    assert len(chunks) >= 3
+    assert max(len(c) for c in chunks) <= 1000
+    # 10% overlap: each window starts where the previous one's tail began.
+    assert chunks[1][:100] == chunks[0][-100:]
+    assert chunks[-1][-1] == "x"  # the tail must not be dropped

@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_SUFFIXES = {".md", ".txt", ".pdf", ".html", ".htm"}
 
+# ADR-0049 chunking v2: target chunk size and overlap are decoupled from the
+# old 3000/5000 pair — embedding models degrade on long mixed-topic chunks.
+_CHUNK_SIZE = 1000
+_CHUNK_OVERLAP = 100  # 10% of the window, so consecutive chunks share context.
+
 
 @dataclass(frozen=True)
 class Chunk:
@@ -33,6 +38,10 @@ class Chunk:
     start_offset: int
     end_offset: int
     text: str
+    # ADR-0049: text enriched with the heading path / tags / wikilinks prefix.
+    # FTS5 and the vector embedding index THIS field; ``text`` stays the clean
+    # display form.  Empty for chunks created before enrichment.
+    search_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -212,7 +221,7 @@ class KnowledgeBaseIndex:
                     )
                     connection.execute(
                         "INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)",
-                        (chunk.chunk_id, chunk.text),
+                        (chunk.chunk_id, chunk.search_text or chunk.text),
                     )
                 connection.commit()
             finally:
@@ -456,6 +465,10 @@ def _chunk_markdown(path: Path) -> tuple[list[Chunk], dict[str, Any]]:
             frontmatter = _parse_frontmatter(raw[3:end])
             content_start = raw.find("\n", end + 4) + 1
     content = raw[content_start:]
+    # ADR-0049: tags 和 wikilinks 是用户刻意打上的检索信号，与标题路径一起
+    # 前置进 search_text，供 FTS5 / 向量两路匹配（manifest 仍保留原始记录）。
+    tags = _normalize_tags(frontmatter.get("tags"))
+    wikilinks = re.findall(r"\[\[([^\]]+)\]\]", content)
     chunks: list[Chunk] = []
     current_headings: list[str] = []
     headings: list[str] = []
@@ -467,7 +480,7 @@ def _chunk_markdown(path: Path) -> tuple[list[Chunk], dict[str, Any]]:
         stripped = line.strip()
         if stripped.startswith("#"):
             if section_lines:
-                chunks.extend(_paragraph_chunks(path, "".join(section_lines), current_headings, section_start))
+                chunks.extend(_paragraph_chunks(path, "".join(section_lines), current_headings, section_start, tags, wikilinks))
             level = len(stripped) - len(stripped.lstrip("#"))
             heading = stripped[level:].strip()
             headings.append(heading)
@@ -479,15 +492,66 @@ def _chunk_markdown(path: Path) -> tuple[list[Chunk], dict[str, Any]]:
         offset += len(line)
 
     if section_lines:
-        chunks.extend(_paragraph_chunks(path, "".join(section_lines), current_headings, section_start))
+        chunks.extend(_paragraph_chunks(path, "".join(section_lines), current_headings, section_start, tags, wikilinks))
     metadata = {
         "frontmatter": frontmatter,
         "title": frontmatter.get("title") or (headings[0] if headings else path.stem),
         "headings": headings,
         "links": re.findall(r"(?<!!)\[[^\]]+\]\(([^)]+)\)", content),
-        "wikilinks": re.findall(r"\[\[([^\]]+)\]\]", content),
+        "wikilinks": wikilinks,
     }
     return chunks, metadata
+
+
+def _normalize_tags(value: Any) -> list[str]:
+    """Normalize frontmatter tags (YAML list or inline string) into tokens."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [part.strip() for part in re.split(r"[,，\s]+", str(value)) if part.strip()]
+
+
+def _compose_search_text(
+    text: str,
+    heading_path: list[str],
+    tags: list[str],
+    wikilinks: list[str],
+) -> str:
+    """Prefix display text with heading path / tags / wikilinks for indexing.
+
+    FTS5 matches the tokens in the prefix and the vector embedding absorbs the
+    heading signal, while ``text`` stays the clean display form (ADR-0049).
+    """
+    parts: list[str] = []
+    if heading_path:
+        parts.append("[" + " > ".join(heading_path) + "]")
+    if tags:
+        parts.append(" ".join(f"#{tag}" for tag in tags))
+    if wikilinks:
+        parts.append(" ".join(f"[[{w}]]" for w in wikilinks))
+    prefix = " ".join(parts)
+    return f"{prefix}\n{text}" if prefix else text
+
+
+def _make_chunk(
+    path: Path,
+    text: str,
+    heading_path: list[str],
+    start_offset: int,
+    end_offset: int,
+    tags: list[str],
+    wikilinks: list[str],
+) -> Chunk:
+    return Chunk(
+        chunk_id=_chunk_id(path, start_offset, end_offset),
+        source_path=str(path),
+        heading_path=heading_path,
+        start_offset=start_offset,
+        end_offset=end_offset,
+        text=text,
+        search_text=_compose_search_text(text, heading_path, tags, wikilinks),
+    )
 
 
 def _parse_frontmatter(text: str) -> dict[str, Any]:
@@ -532,25 +596,24 @@ def _extract_text(path: Path) -> str:
 
 def _flush_pending(
     pending: list[tuple[str, int, int]],
+    carry: str,
     chunks: list[Chunk],
     path: Path,
     heading_path: list[str],
-) -> None:
-    """Flush accumulated pending paragraphs into a single chunk."""
+    tags: list[str],
+    wikilinks: list[str],
+) -> str:
+    """Flush accumulated paragraphs into one chunk; return its text as the
+    overlap carry for the next chunk (ADR-0049)."""
     if not pending:
-        return
-    chunk_text = "\n\n".join(item[0] for item in pending)
+        return carry
+    body = "\n\n".join(item[0] for item in pending)
+    chunk_text = (carry + "\n\n" if carry else "") + body
     chunks.append(
-        Chunk(
-            chunk_id=_chunk_id(path, pending[0][1], pending[-1][2]),
-            source_path=str(path),
-            heading_path=heading_path,
-            start_offset=pending[0][1],
-            end_offset=pending[-1][2],
-            text=chunk_text,
-        )
+        _make_chunk(path, chunk_text, heading_path, pending[0][1], pending[-1][2], tags, wikilinks)
     )
     pending.clear()
+    return chunk_text
 
 
 def _split_long_paragraph(
@@ -559,22 +622,25 @@ def _split_long_paragraph(
     path: Path,
     heading_path: list[str],
     chunks: list[Chunk],
-    chunk_size: int = 5000,
+    tags: list[str],
+    wikilinks: list[str],
 ) -> None:
-    """Split a long paragraph into fixed-size chunks."""
-    for index in range(0, len(paragraph), chunk_size):
-        part = paragraph[index : index + chunk_size]
+    """Split an oversized paragraph into sliding windows with 10% overlap.
+
+    Consecutive windows share ``_CHUNK_OVERLAP`` characters so concepts that
+    straddle a window boundary keep context on both sides (ADR-0049).
+    """
+    stride = _CHUNK_SIZE - _CHUNK_OVERLAP
+    index = 0
+    while index < len(paragraph):
+        part = paragraph[index : index + _CHUNK_SIZE]
         part_start = start_offset + index
         chunks.append(
-            Chunk(
-                chunk_id=_chunk_id(path, part_start, part_start + len(part)),
-                source_path=str(path),
-                heading_path=heading_path,
-                start_offset=part_start,
-                end_offset=part_start + len(part),
-                text=part,
-            )
+            _make_chunk(path, part, heading_path, part_start, part_start + len(part), tags, wikilinks)
         )
+        if index + _CHUNK_SIZE >= len(paragraph):
+            break
+        index += stride
 
 
 def _paragraph_chunks(
@@ -582,28 +648,37 @@ def _paragraph_chunks(
     text: str,
     heading_path: list[str],
     base_offset: int = 0,
+    tags: list[str] | None = None,
+    wikilinks: list[str] | None = None,
 ) -> list[Chunk]:
+    tags = tags or []
+    wikilinks = wikilinks or []
     paragraphs = [paragraph.strip() for paragraph in text.split("\n\n") if paragraph.strip()]
     chunks: list[Chunk] = []
     cursor = 0
     pending: list[tuple[str, int, int]] = []
+    carry = ""
 
     for paragraph in paragraphs:
         relative_start = text.find(paragraph, cursor)
         start_offset = base_offset + max(relative_start, 0)
         end_offset = start_offset + len(paragraph)
         cursor = relative_start + len(paragraph)
-        if len(paragraph) > 5000:
-            _flush_pending(pending, chunks, path, heading_path)
-            _split_long_paragraph(paragraph, start_offset, path, heading_path, chunks)
+
+        if len(paragraph) > _CHUNK_SIZE:
+            carry = _flush_pending(pending, carry, chunks, path, heading_path, tags, wikilinks)
+            _split_long_paragraph(paragraph, start_offset, path, heading_path, chunks, tags, wikilinks)
+            # Sliding windows already overlap each other; no carry across.
+            carry = ""
             continue
-        pending_text_len = sum(len(item[0]) for item in pending) + max(0, len(pending) - 1) * 2
-        if pending and pending_text_len + len(paragraph) + 2 > 3000:
-            _flush_pending(pending, chunks, path, heading_path)
+
+        pending_len = sum(len(item[0]) for item in pending) + max(0, len(pending) - 1) * 2
+        if carry:
+            pending_len += len(carry) + 2
+        if pending and pending_len + len(paragraph) + 2 > _CHUNK_SIZE:
+            carry = _flush_pending(pending, carry, chunks, path, heading_path, tags, wikilinks)[-_CHUNK_OVERLAP:]
         pending.append((paragraph, start_offset, end_offset))
-        if sum(len(item[0]) for item in pending) >= 3000:
-            _flush_pending(pending, chunks, path, heading_path)
-    _flush_pending(pending, chunks, path, heading_path)
+    _flush_pending(pending, carry, chunks, path, heading_path, tags, wikilinks)
     return chunks
 
 
@@ -658,7 +733,7 @@ def _write_sqlite_index(path: Path, chunks: list[Chunk]) -> None:
             )
             cursor.execute(
                 "INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)",
-                (chunk.chunk_id, chunk.text),
+                (chunk.chunk_id, chunk.search_text or chunk.text),
             )
         connection.commit()
     finally:

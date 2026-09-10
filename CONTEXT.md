@@ -65,8 +65,7 @@ The read-only process that scans a configured Markdown Vault, parses note metada
 _Avoid_: import, migration
 
 **Chunk**:
-A traceable retrieval unit derived from a Markdown note or Local Source. V1 chunks Markdown by heading first and then by paragraphs within each section; plain text, PDF, and HTML use paragraph-based chunking after text extraction. Chunking prefers not to split paragraphs, targets about 3000 characters, hard-splits only when a single accumulated chunk would exceed about 5000 characters, and uses no fixed overlap. Each chunk records `chunk_id`, `source_path`, `heading_path`, `start_offset`, `end_offset`, and `text` so Local RAG can produce source-linked Local Results.
-_Avoid_: text fragment, embedding row
+A traceable retrieval unit derived from a Markdown note or Local Source. V1 chunks Markdown by heading first and then by paragraphs within each section; plain text, PDF, and HTML use paragraph-based chunking after text extraction. Since ADR-0049 the target chunk size is 1000 characters with a 10% overlap between consecutive chunks (oversized paragraphs are split into sliding windows), trading fewer-chunks for semantic precision. Each chunk records `chunk_id`, `source_path`, `heading_path`, `start_offset`, `end_offset`, `text`, and a `search_text` enrichment (heading path + tags + wikilinks prefixed to the body) that is indexed by both FTS5 and the vector store while the display `text` stays clean.
 
 **Local Result**:
 A Local RAG display item containing relevant content and its source file path. It is a simple view into existing local knowledge rather than a generated local report, with v1 defaulting to the top 10 results.
