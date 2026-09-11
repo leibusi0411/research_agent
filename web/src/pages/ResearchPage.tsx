@@ -2,6 +2,7 @@ import { FormEvent } from "react";
 import { Search } from "lucide-react";
 import { type ProgressEvent, type ResearchResult } from "../api";
 import { ResultCards, TraceCard } from "../components/ResultView";
+import { ChatPanel } from "../components/ChatPanel";
 
 export function ResearchPage({
   question,
@@ -23,9 +24,11 @@ export function ResearchPage({
   // Running = request in flight, or events streaming in with no result yet.
   const running = busy === "web" || (events.length > 0 && !result);
   const hasContent = events.length > 0 || result !== null;
+  // Chat entry appears only after a completed web research run (ADR-0050).
+  const chatReady = result?.status === "completed" && result.mode === "web" && result.curator_output !== undefined;
 
   return (
-    <section className={hasContent ? "research-page has-content" : "research-page"}>
+    <section className={`research-page${hasContent ? " has-content" : ""}${chatReady ? " has-chat" : ""}`}>
       <header className="hero">
         <h1 className="hero-title">Inkwell</h1>
         <p className="hero-sub">
@@ -48,6 +51,7 @@ export function ResearchPage({
       </form>
       {events.length > 0 && <TraceCard events={events} phase={phase} running={running} />}
       {result && <ResultCards result={result} events={events} />}
+      {chatReady && <ChatPanel key={result.task_id} result={result} />}
     </section>
   );
 }

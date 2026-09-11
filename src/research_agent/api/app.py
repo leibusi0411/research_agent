@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 _active_runtimes: dict[str, Any] = {}
 
 from research_agent.core.bus import Bus
+from research_agent.core.chat import TaskChatService
 from research_agent.core.config import InitConfigRequest, UserConfig, default_config_path, load_user_config
 from research_agent.core.errors import ResearchError
 from research_agent.core.ids import generate_task_id, utc_now_iso, validate_task_id
@@ -107,6 +108,7 @@ def create_app(
         chat_model_factory,
     )
     _register_task_routes(app, get_service)
+    _register_chat_routes(app, get_service, resolved_config_path, chat_model_factory)
     _register_kb_routes(app, get_service, resolved_config_path, embedding_client_factory)
 
     return app
@@ -367,6 +369,60 @@ def _register_task_routes(app: FastAPI, get_service: Callable[[], CoreService]) 
                 else 400
             )
             return _error_response(error, status_code=status_code)
+
+
+def _register_chat_routes(
+    app: FastAPI,
+    get_service: Callable[[], CoreService],
+    resolved_config_path: Path,
+    chat_model_factory: ChatModelFactory | None,
+) -> None:
+    """Register /api/tasks/{task_id}/chat — grounded Q&A over a finished task (ADR-0050)."""
+
+    def _history_service(task_id: str) -> TaskChatService | None:
+        task_dir = get_service().workspace.task_dir(task_id)
+        if not task_dir.exists():
+            return None
+        return TaskChatService(task_dir=task_dir, chat_model=None)
+
+    def _send_service(task_id: str) -> TaskChatService | None:
+        # Chat, like research, needs a configured chat model — fail with
+        # config_missing before anything else when unconfigured.
+        config = load_user_config(resolved_config_path)
+        task_dir = get_service().workspace.task_dir(task_id)
+        if not task_dir.exists():
+            return None
+        chat_model = (
+            chat_model_factory(config)
+            if chat_model_factory is not None
+            else OpenAICompatibleChatModel.from_config(build_role_chat_model_config(config, "chat"))
+        )
+        return TaskChatService(task_dir=task_dir, chat_model=chat_model)
+
+    @app.get("/api/tasks/{task_id}/chat")
+    def chat_history(task_id: str) -> JSONResponse:
+        _validate_task_id_as_research_error(task_id)
+        service = _history_service(task_id)
+        if service is None:
+            return _error_response(
+                ResearchError(code="task_not_found", message=f"Task not found: {task_id}"), status_code=404
+            )
+        return JSONResponse({"task_id": task_id, "messages": service.history()})
+
+    @app.post("/api/tasks/{task_id}/chat")
+    def chat_send(task_id: str, payload: dict[str, Any]) -> JSONResponse:
+        _validate_task_id_as_research_error(task_id)
+        message = str(payload.get("message", "")).strip()
+        if not message:
+            return _error_response(ResearchError(code="config_invalid", message="message is required."))
+        service = _send_service(task_id)
+        if service is None:
+            return _error_response(
+                ResearchError(code="task_not_found", message=f"Task not found: {task_id}"), status_code=404
+            )
+        selected = payload.get("selected_sources")
+        selected_ids = [str(s) for s in selected] if isinstance(selected, list) else None
+        return JSONResponse({"task_id": task_id, "reply": service.send(message, selected_source_ids=selected_ids)})
 
 
 def _register_kb_routes(

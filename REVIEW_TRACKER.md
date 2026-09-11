@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-10 | 测试：Python 216 passed（含真实链路 e2e）+ 前端 27 passed + Playwright 1 passed | 第九轮实现：local_kb_search（Planner 本地调研）+ 索引自动增量更新（ADR-0048，R-257）+ Chunking v2（ADR-0049，R-258）+ KB 页独立 Local RAG 入口（R-259）| 第八轮审查（47 ADR 对照代码）32 项全部按"以代码为准"处置 ✅ 2026-09-10（R-225~R-256：29 份 ADR 演进注记 + CONTEXT/AGENTS/README/USAGE/CLAUDE 同步 + 代码清理 4 项；R-237 已由 R-259 以代码解决）
+> 最后更新：2026-09-10 | 测试：Python 220 passed（含真实链路 e2e）+ 前端 32 passed + Playwright 1 passed | 第十轮实现：调研后接地对话 TaskChatService（ADR-0050，R-262：POST/GET /api/tasks/{task_id}/chat + Research 页 ChatPanel）| 第九轮实现：local_kb_search（Planner 本地调研）+ 索引自动增量更新（ADR-0048，R-257）+ Chunking v2（ADR-0049，R-258）+ KB 页独立 Local RAG 入口（R-259）| 第八轮审查（47 ADR 对照代码）32 项全部按"以代码为准"处置 ✅ 2026-09-10（R-225~R-256：29 份 ADR 演进注记 + CONTEXT/AGENTS/README/USAGE/CLAUDE 同步 + 代码清理 4 项；R-237 已由 R-259 以代码解决）
 
 ---
 
@@ -97,6 +97,12 @@
 - 与第九轮的关系：R-237 随后被 R-259 以**代码方式**解决（KB 页恢复 Local RAG 入口，ADR-0010 已补注记）；R-247 提及的 `local_kb_search` 延期项由 ADR-0048 落地；分块参数相关核对被 ADR-0049 显式演进。
 
 ---
+
+### 第十轮实现（2026-09-11，调研后接地对话 / ADR-0050，R-262）
+
+| 编号 | 背景 | 处置 |
+|------|------|------|
+| R-262 | 用户需求：调研后 NotebookLM 式对话——Research 页调研完成出现入口，右侧参考资料卡片（可勾选加入对话）、中间对话区、底部输入栏 | ✅ ADR-0050：`TaskChatService`（core/chat.py，单角色零工具，两层上下文=result.json 接地块 + chat.jsonl 滚动历史，selected_sources 勾选过滤接地面，24k findings 预算双分支统一封顶）+ `POST/GET /api/tasks/{task_id}/chat`（config_missing/task_not_found(404)/config_invalid/runtime_error(未完成任务拒绝)/llm_call_failed/file_write_error 统一错误形状）+ `ChatPanel` 组件（web+completed+curator_output 才渲染，key=task_id，页面聊天态扩宽 1060px）；v1 非流式；subagent 复审 11 项发现（1 P1 + 10 P2）全部处置——P1 为 ADR 角色覆盖失实已改注记，P2 含 running 任务门禁、findings 无 sources 分支预算、chat.jsonl 写入 OSError 包装、ChatModelClient Protocol 类型等；实测 DeepSeek 真实回复带 [S#] 引用、历史持久化与勾选过滤均验证 |
 
 ### 第九轮实现（2026-09-09，Chunking v2 / ADR-0049，R-258）
 

@@ -95,6 +95,13 @@ export type DepositResult = {
   vault_path: string;
 };
 
+// One persisted turn in the grounded chat over a finished task (ADR-0050).
+export type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+  created_at?: string;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
@@ -138,6 +145,13 @@ export const api = {
   depositTask: (taskId: string) => request<DepositResult>(`/api/tasks/${encodeURIComponent(taskId)}/deposit`, { method: "POST" }),
   taskResult: (taskId: string) => request<ResearchResult>(`/api/tasks/${encodeURIComponent(taskId)}/result`),
   taskEvents: (taskId: string) => request<ProgressEvent[]>(`/api/tasks/${encodeURIComponent(taskId)}/events`),
+  chatHistory: (taskId: string) =>
+    request<{ task_id: string; messages: ChatMessage[] }>(`/api/tasks/${encodeURIComponent(taskId)}/chat`),
+  sendChat: (taskId: string, message: string, selectedSources: string[]) =>
+    request<{ task_id: string; reply: string }>(`/api/tasks/${encodeURIComponent(taskId)}/chat`, {
+      method: "POST",
+      body: JSON.stringify({ message, selected_sources: selectedSources })
+    }),
   activeTasks: () => request<{ active: Array<{ mode: string; task_id: string }> }>("/api/tasks/active"),
   kbStatus: () => request<KbStatus>("/api/kb/status"),
   kbRebuild: () => request<KbStatus>("/api/kb/rebuild", { method: "POST" })

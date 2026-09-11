@@ -102,6 +102,14 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
       ]);
       return;
     }
+    if (url.endsWith(`/api/tasks/${webTaskId}/chat`) && method === "GET") {
+      await route.fulfill({ json: { task_id: webTaskId, messages: [] } });
+      return;
+    }
+    if (url.endsWith(`/api/tasks/${webTaskId}/chat`) && method === "POST") {
+      await route.fulfill({ json: { task_id: webTaskId, reply: "Chat answer about the research." } });
+      return;
+    }
     if (url.endsWith(`/api/tasks/${webTaskId}/deposit`) && method === "POST") {
       await route.fulfill({ json: { task_id: webTaskId, vault_path: "D:/vault/web-research/report.md" } });
       return;
@@ -139,6 +147,14 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
   await page.getByRole("button", { name: "Research" }).click();
   await expect(page.getByText("Web summary")).toBeVisible();
   await expect(page.getByText("web_planning")).toBeVisible();
+
+  // Grounded chat over the finished research (ADR-0050): references card on
+  // the right, conversation in the middle, input bar at the bottom.
+  await expect(page.getByRole("heading", { name: "Chat with this research" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "References" })).toBeVisible();
+  await page.getByRole("textbox", { name: "Chat message" }).fill("What did you find?");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Chat answer about the research.")).toBeVisible();
 
   await page.getByRole("link", { name: "Tasks" }).click();
   await page.getByRole("button", { name: new RegExp(webTaskId) }).click();

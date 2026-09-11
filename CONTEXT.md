@@ -388,8 +388,16 @@ The always-available Web UI page (sidebar entry `Settings`, route `/settings`) f
 _Avoid_: setup wizard, one-time setup, admin settings
 
 **Research Page**:
-The Web UI landing page with a single input area that starts only Web Research tasks; Local RAG is started from the Knowledge Base Index Page's question box (or via CLI / API). It does not provide a combined Run Both action. Local RAG and Web Research can run concurrently as separate tasks, but each task family allows only one active task at a time. The page no longer redirects when User Config is missing: Research is always the landing page, and starting research without configuration reports `config_missing` (ADR-0047 evolution). Web mode leads to a Web Report Page.
+The Web UI landing page with a single input area that starts only Web Research tasks; Local RAG is started from the Knowledge Base Index Page's question box (or via CLI / API). It does not provide a combined Run Both action. Local RAG and Web Research can run concurrently as separate tasks, but each task family allows only one active task at a time. The page no longer redirects when User Config is missing: Research is always the landing page, and starting research without configuration reports `config_missing` (ADR-0047 evolution). Web mode leads to a Web Report Page, and a completed web task additionally reveals the Research Chat panel.
 _Avoid_: chat page, dashboard
+
+**Research Chat**:
+The NotebookLM-style Q&A panel revealed on the Research Page after a completed Web Research task (needs `curator_output`): a conversation card in the middle with the input bar at the bottom, and a References card on the right listing the task's sources as checkboxes (all checked by default). Each message is sent with the currently checked source ids, which narrow the grounding context server-side; replies cite sources as `[S#]`. Conversation history persists per task in `chat.jsonl` inside the task folder and reloads on mount. Not a separate page and not a LangGraph workflow — see TaskChatService (ADR-0050).
+_Avoid_: chat agent, notebook, assistant thread
+
+**TaskChatService**:
+The single-role, tool-less chat service (`research_agent.core.chat`) that backs Research Chat. It composes a prompt from two context layers — the static grounding block rendered from the task's `result.json` (question, curator summary, findings, sources, narrowed by the selected source ids, findings budget 24k chars) and the rolling history replayed from `chat.jsonl` — then calls the standard `ChatModelClient.complete()` (role `"chat"`, falls back to the global chat model) and appends the turn to `chat.jsonl`. Exposed over HTTP as `POST/GET /api/tasks/{task_id}/chat`. It does not use LangGraph, tools, embeddings, or a vector store (ADR-0050).
+_Avoid_: conversation graph, chat pipeline, dialogue state machine
 
 **Local Result Page**:
 The Web UI result view shown immediately after a Local RAG task completes. It shows `question`, `status`, and stored Local Results with `text`, `source_path`, and optional `heading_path` without rerunning retrieval.

@@ -1695,3 +1695,207 @@ label span {
     max-width: 100%;
   }
 }
+
+/* ---------- Chat over research (ADR-0050) ---------- */
+
+/* The chat layout needs room for the conversation card plus the reference
+   column, so the page widens beyond the single-column research width. */
+.research-page.has-chat {
+  width: min(1060px, 100%);
+}
+
+.chat-section {
+  margin-top: 24px;
+}
+
+.chat-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 16px;
+  align-items: start;
+}
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+}
+
+.chat-panel h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.chat-panel h2 svg {
+  color: var(--accent);
+}
+
+.chat-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 180px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 4px 2px;
+  scroll-behavior: smooth;
+}
+
+.chat-empty {
+  margin: auto;
+  max-width: 380px;
+  text-align: center;
+  color: var(--text-2);
+  font-size: 13.5px;
+}
+
+.chat-bubble {
+  max-width: 82%;
+  padding: 9px 13px;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-bubble.user {
+  align-self: flex-end;
+  background: var(--accent-wash);
+  border: 1px solid rgba(168, 199, 250, 0.32);
+  color: var(--accent-strong);
+}
+
+.chat-bubble.assistant {
+  align-self: flex-start;
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+}
+
+.chat-bubble.pending {
+  color: var(--text-2);
+  font-style: italic;
+}
+
+.chat-input {
+  display: flex;
+  gap: 10px;
+}
+
+.chat-input input {
+  flex: 1;
+  min-width: 0;
+  padding: 11px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  transition: border-color var(--t-micro);
+}
+
+.chat-input input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.chat-input button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 11px 18px;
+  border-radius: 999px;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--t-micro), transform var(--t-micro);
+}
+
+.chat-input button:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+.chat-input button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.chat-sources {
+  padding: 18px;
+}
+
+.chat-sources h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.chat-sources ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 0;
+}
+
+.chat-sources li {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.chat-sources label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13.5px;
+}
+
+.chat-sources label span {
+  overflow-wrap: anywhere;
+}
+
+.chat-sources input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.chat-sources a {
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.chat-sources a:hover {
+  color: var(--accent);
+}
+
+@media (max-width: 920px) {
+  .chat-layout {
+    grid-template-columns: 1fr;
+  }
+}
