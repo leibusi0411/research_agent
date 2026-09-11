@@ -480,7 +480,9 @@ cd web && npm run test:e2e
 | 工具 | 说明 | 参数 |
 |------|------|------|
 | `web.search` | Tavily 网页搜索 | `query`, `max_results` |
-| `web.fetch_extract` | 抓取网页并提取正文 | `url` |
+| `scholar.search` | arXiv 学术论文搜索（无需 key） | `query`, `max_results` |
+| `code.run_python` | 在本地沙箱运行 Python 片段（超时 + 输出截断） | `code` |
+| `web.fetch_extract` | 抓取网页并提取正文（浏览器 UA） | `url` |
 | `web.download_pdf` | 下载 PDF 并提取文本 | `url` |
 
 ---

@@ -24,7 +24,14 @@ from research_agent.core.workspace import Workspace, read_lock_task_id
 from research_agent.web.provider_runtime import ProviderBackedWebResearchRuntime
 from research_agent.web.schemas import PriorKnowledgeChunk
 from research_agent.web.state_graph import RunnerConfig
-from research_agent.web.tools import ToolGateway, ToolRunner, TavilySearchProvider, create_default_web_tool_registry
+from research_agent.web.tools import (
+    ArxivSearchProvider,
+    PythonSandbox,
+    ToolGateway,
+    ToolRunner,
+    TavilySearchProvider,
+    create_default_web_tool_registry,
+)
 
 
 def build_local_retriever(
@@ -127,7 +134,12 @@ def create_provider_runtime(
     if resolved_models is None:
         resolved_models = build_chat_models(config)
     search_provider = TavilySearchProvider(api_key=config.search.api_key)
-    tool_runner = ToolRunner(config=config.web_tools, search_provider=search_provider)
+    tool_runner = ToolRunner(
+        config=config.web_tools,
+        search_provider=search_provider,
+        scholar_provider=ArxivSearchProvider(),
+        python_sandbox=PythonSandbox(),
+    )
     tool_gateway = ToolGateway(registry=create_default_web_tool_registry(), runner=tool_runner)
     resolved_workspace = workspace_obj if workspace_obj is not None else Workspace(workspace_root)
     runner_config = RunnerConfig(

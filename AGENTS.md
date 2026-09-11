@@ -7,7 +7,7 @@
 **Research Agent** 是一个本地优先（local-first）的 AI 研究助手，提供两个**相互独立、不共享上下文**的工作流：
 
 1. **Local RAG（本地知识库检索）** — 对用户指定的 Markdown vault 目录建立索引（SQLite FTS5 关键词 + ChromaDB 语义向量 + RRF 融合排序），检索后可选地用 LLM 生成自然语言总结（`local_summarizer` 角色）。索引构建是**只读**的，不修改源文件。支持 `.md`、`.txt`、`.pdf`、`.html`。
-2. **Web Research（网络调研）** — 基于 LangGraph StateGraph 的多角色流水线：Planner → Executor → Supervisor → Curator。通过 ToolGateway 执行真实工具调用（Tavily 搜索、trafilatura 网页提取、pypdf PDF 解析），最终生成 Markdown 报告文件。
+2. **Web Research（网络调研）** — 基于 LangGraph StateGraph 的多角色流水线：Planner → Executor → Supervisor → Curator。通过 ToolGateway 执行真实工具调用（Tavily 搜索、arXiv 学术搜索、trafilatura 网页提取（浏览器 UA）、pypdf PDF 解析、本地 Python 沙箱），最终生成 Markdown 报告文件。
 
 双界面：CLI（argparse，`research-agent` 命令）+ Web UI（React + Vite），两者通过统一的 FastAPI 后端和 CoreService 应用层暴露相同的能力面。
 
@@ -77,7 +77,7 @@ research_agent/
 │   ├── playwright.config.ts      # E2E 配置（自动起 5174 端口的 dev server）
 │   └── package.json
 ├── docs/
-│   ├── adr/                      # 49 个架构决策记录（0001~0049，顺序编号）
+│   ├── adr/                      # 51 个架构决策记录（0001~0051，顺序编号）
 │   └── agents/                   # agent 协作约定（issue tracker、triage labels、domain docs）
 ├── CONTEXT.md                    # 领域术语表（命名前必读）
 ├── TODO.md                       # v1 有意延期的功能清单

@@ -190,14 +190,30 @@ def _format_tool_result(index: int, result: dict) -> str:
     status = result.get("status", "unknown")
     if status == "ok":
         data = result.get("data", {})
-        if tool_name == "web.search":
+        if tool_name in {"web.search", "scholar.search"}:
             search_results = data.get("results", [])
             lines = [f"\n--- Tool Call {index}: {tool_name} (status: {status}) ---"]
             for j, sr in enumerate(search_results[:5], 1):
                 title = sr.get("title", "No title")
                 url = sr.get("url", "No URL")
-                snippet = sr.get("content", sr.get("snippet", ""))[:200]
-                lines.append(f"  Result {j}: {title}\n  URL: {url}\n  Snippet: {snippet}\n")
+                snippet = sr.get("content", sr.get("summary", sr.get("snippet", "")))[:200]
+                authors = sr.get("authors")
+                if authors:
+                    lines.append(f"  Result {j}: {title}\n  Authors: {authors}\n  URL: {url}\n  Snippet: {snippet}\n")
+                else:
+                    lines.append(f"  Result {j}: {title}\n  URL: {url}\n  Snippet: {snippet}\n")
+            return "\n".join(lines)
+        if tool_name == "code.run_python":
+            lines = [
+                f"\n--- Tool Call {index}: {tool_name} (status: {status}) ---",
+                f"Exit code: {data.get('exit_code', 'N/A')}",
+            ]
+            if data.get("stdout"):
+                lines.append(f"Stdout:\n{data['stdout']}")
+            if data.get("stderr"):
+                lines.append(f"Stderr:\n{data['stderr']}")
+            if data.get("output_truncated"):
+                lines.append("(Output was truncated.)")
             return "\n".join(lines)
         else:
             text_preview = data.get("text", "")[:500]

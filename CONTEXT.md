@@ -364,7 +364,7 @@ A Web Research agent capability such as Web Search, Web Fetch, Web Extract, or W
 _Avoid_: executor feature, helper function
 
 **Tool Registry**:
-The internal catalog of Web Research agent tools, their names, workflow permissions, and input schemas. Standard function calls resolve against the Tool Registry before execution.
+The internal catalog of Web Research agent tools, their names, workflow permissions, and input schemas. Standard function calls resolve against the Tool Registry before execution. Registered tools: `web.search` (Tavily), `scholar.search` (arXiv Atom API, no key), `code.run_python` (process-level Python sandbox), `web.fetch_extract` (trafilatura extraction with browser-style headers), `web.download_pdf` (pypdf) — all allowed for the `web_research` workflow only (ADR-0051).
 _Avoid_: tool list, plugin registry
 
 **Tool Gateway**:

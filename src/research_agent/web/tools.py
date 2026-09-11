@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import contextlib
 import io
+import os
 import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
 from dataclasses import dataclass, field
 from html import unescape
+from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlparse
+from xml.etree import ElementTree
 
 import httpx
 import trafilatura
@@ -76,6 +85,65 @@ class TavilySearchProvider:
         return list(payload.get("results", []))
 
 
+class ScholarSearchProvider(Protocol):
+    def search(self, query: str, max_results: int) -> list[dict[str, Any]]:
+        ...
+
+
+class ArxivSearchProvider:
+    """Academic search against the public arXiv Atom API (no API key)."""
+
+    def __init__(
+        self,
+        *,
+        endpoint: str = "https://export.arxiv.org/api/query",
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        self.endpoint = endpoint
+        self.transport = transport
+
+    def search(self, query: str, max_results: int) -> list[dict[str, Any]]:
+        with httpx.Client(transport=self.transport, timeout=45) as client:
+            response = client.get(
+                self.endpoint,
+                params={"search_query": f"all:{query}", "max_results": max_results},
+            )
+            response.raise_for_status()
+            return _parse_arxiv_atom(response.text)
+
+
+def _parse_arxiv_atom(xml_text: str) -> list[dict[str, Any]]:
+    """Parse an arXiv Atom feed into the generic search-result shape."""
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
+    root = ElementTree.fromstring(xml_text)
+    results: list[dict[str, Any]] = []
+    for entry in root.findall("atom:entry", ns):
+        title = (entry.findtext("atom:title", default="", namespaces=ns) or "").strip()
+        url = ""
+        for link in entry.findall("atom:link", ns):
+            if link.get("type") == "application/pdf":
+                url = link.get("href") or ""
+                break
+        if not url:
+            url = entry.findtext("atom:id", default="", namespaces=ns) or ""
+        authors = ", ".join(
+            (author.findtext("atom:name", default="", namespaces=ns) or "").strip()
+            for author in entry.findall("atom:author", ns)
+        )
+        results.append(
+            {
+                "title": " ".join(title.split()),
+                "url": url.strip(),
+                "authors": authors,
+                "summary": " ".join(
+                    (entry.findtext("atom:summary", default="", namespaces=ns) or "").split()
+                ),
+                "published": (entry.findtext("atom:published", default="", namespaces=ns) or "").strip()[:10],
+            }
+        )
+    return results
+
+
 @dataclass(frozen=True)
 class FetchResponse:
     url: str
@@ -85,9 +153,111 @@ class FetchResponse:
     truncated: bool = False
 
 
+class PythonSandboxClient(Protocol):
+    def run(self, code: str, *, timeout_seconds: int) -> dict[str, Any]:
+        ...
+
+
+class PythonSandbox:
+    """Run a short Python snippet in an isolated subprocess (ADR-0051).
+
+    v1 trust boundary: local trusted execution — the code comes from the
+    Executor role of this very agent, not from an untrusted user upload.
+    Isolation is *process-level only*: fresh temp working directory,
+    ``-I -X utf8`` interpreter mode (no user site / env overrides, UTF-8
+    stdio so Chinese output survives non-UTF8 ANSI codepages), stdin
+    closed, wall-clock timeout that kills the whole process *tree*
+    (a grandchild holding the output pipe must not hang the executor).
+    There is no network or filesystem confinement — that would need a
+    container jail.
+    """
+
+    def __init__(self, *, python_executable: str | None = None, max_output_chars: int = 16_000) -> None:
+        self.python_executable = python_executable or sys.executable
+        self.max_output_chars = max_output_chars
+
+    def run(self, code: str, *, timeout_seconds: int) -> dict[str, Any]:
+        workdir = tempfile.mkdtemp(prefix="ra_sandbox_")
+        try:
+            script = Path(workdir) / "snippet.py"
+            script.write_text(code, encoding="utf-8")
+            process = subprocess.Popen(
+                [self.python_executable, "-I", "-X", "utf8", str(script)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,
+                cwd=workdir,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                start_new_session=sys.platform != "win32",
+            )
+            try:
+                stdout, stderr = process.communicate(timeout=timeout_seconds)
+            except subprocess.TimeoutExpired as exc:
+                _kill_process_tree(process)
+                # Reap what is left of the pipes after the tree kill; if even
+                # that stalls, give up on the output rather than blocking.
+                try:
+                    stdout, stderr = process.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    stdout, stderr = "", ""
+                raise TimeoutError(f"Python snippet timed out after {timeout_seconds}s") from exc
+        finally:
+            # ignore_errors: a surviving grandchild may still hold the dir.
+            shutil.rmtree(workdir, ignore_errors=True)
+        stdout = stdout or ""
+        stderr = stderr or ""
+        bounded_stdout, bounded_stderr, truncated = _bound_text(stdout, stderr, self.max_output_chars)
+        return {
+            "stdout": bounded_stdout,
+            "stderr": bounded_stderr,
+            "exit_code": process.returncode,
+            "output_truncated": truncated,
+        }
+
+
+def _kill_process_tree(process: subprocess.Popen[Any]) -> None:
+    """Kill the sandbox process and everything it spawned.
+
+    ``Popen.kill`` only reaps the direct child; a grandchild holding the
+    inherited stdout pipe keeps ``communicate`` blocked on Windows, so the
+    timeout would not actually be enforced.
+    """
+    with contextlib.suppress(Exception):
+        if sys.platform == "win32":
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                capture_output=True,
+                timeout=10,
+            )
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+
+
+def _bound_text(stdout: str, stderr: str, max_chars: int) -> tuple[str, str, bool]:
+    """Clip each stream independently to *max_chars* with an ellipsis marker."""
+    truncated = len(stdout) > max_chars or len(stderr) > max_chars
+    bounded_stdout = stdout[:max_chars] + ("…" if len(stdout) > max_chars else "")
+    bounded_stderr = stderr[:max_chars] + ("…" if len(stderr) > max_chars else "")
+    return bounded_stdout, bounded_stderr, truncated
+
+
 class HttpClient(Protocol):
     def get(self, url: str, *, timeout_seconds: int, max_bytes: int | None = None) -> FetchResponse:
         ...
+
+
+# Present as a mainstream browser: a bare httpx UA is insta-403'd by many
+# news and docs sites, which used to turn fetch_extract into dead ends.
+_BROWSER_REQUEST_HEADERS: dict[str, str] = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
+}
 
 
 class HttpxHttpClient:
@@ -96,7 +266,7 @@ class HttpxHttpClient:
 
     def get(self, url: str, *, timeout_seconds: int, max_bytes: int | None = None) -> FetchResponse:
         with self.client_factory(follow_redirects=True, timeout=timeout_seconds) as client:
-            with client.stream("GET", url) as response:
+            with client.stream("GET", url, headers=_BROWSER_REQUEST_HEADERS) as response:
                 chunks: list[bytes] = []
                 total = 0
                 truncated = False
@@ -125,19 +295,31 @@ class ToolRunner:
         config: WebToolsConfig,
         search_provider: SearchProvider | None = None,
         http_client: HttpClient | None = None,
+        scholar_provider: ScholarSearchProvider | None = None,
+        python_sandbox: PythonSandboxClient | None = None,
     ) -> None:
         self.config = config
         self.search_provider = search_provider
         self.http_client = http_client or HttpxHttpClient()
+        self.scholar_provider = scholar_provider
+        self.python_sandbox = python_sandbox
 
     def run(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
         try:
             if tool_name == "web.search":
                 return self._run_search(arguments)
+            if tool_name == "scholar.search":
+                return self._run_scholar_search(arguments)
+            if tool_name == "code.run_python":
+                return self._run_run_python(arguments)
             if tool_name == "web.fetch_extract":
                 return self._run_fetch_extract(arguments)
             if tool_name == "web.download_pdf":
                 return self._run_download_pdf(arguments)
+        except TimeoutError as exc:
+            # A killed snippet may just have raced the wall clock; let the
+            # gateway's transient retry policy decide whether to re-run it.
+            return ToolResult(status="error", error="transient_error", message=str(exc))
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             return ToolResult(status="error", error="transient_error", message=str(exc))
         except httpx.HTTPStatusError as exc:
@@ -158,6 +340,26 @@ class ToolRunner:
         max_results = min(max_results, self.config.search_top_k_max)
         results = self.search_provider.search(str(arguments["query"]), max_results)
         return ToolResult(status="ok", data={"results": results}, metadata={"max_results": max_results})
+
+    def _run_scholar_search(self, arguments: dict[str, Any]) -> ToolResult:
+        if self.scholar_provider is None:
+            return ToolResult(status="error", error="permanent_error", message="Scholar search provider is not configured.")
+        max_results = int(arguments.get("max_results") or self.config.search_top_k)
+        if max_results <= 0:
+            return ToolResult(status="error", error="validation_error", message="max_results must be positive.")
+        max_results = min(max_results, self.config.search_top_k_max)
+        results = self.scholar_provider.search(str(arguments["query"]), max_results)
+        return ToolResult(status="ok", data={"results": results}, metadata={"max_results": max_results})
+
+    def _run_run_python(self, arguments: dict[str, Any]) -> ToolResult:
+        if self.python_sandbox is None:
+            return ToolResult(status="error", error="permanent_error", message="Python sandbox is not configured.")
+        outcome = self.python_sandbox.run(str(arguments["code"]), timeout_seconds=self.config.python_timeout_seconds)
+        return ToolResult(
+            status="ok",
+            data=outcome,
+            metadata={"python_timeout_seconds": self.config.python_timeout_seconds},
+        )
 
     def _run_fetch_extract(self, arguments: dict[str, Any]) -> ToolResult:
         url = str(arguments["url"])
@@ -264,6 +466,23 @@ def create_default_web_tool_registry() -> ToolRegistry:
                 "query": {"type": "string", "required": True},
                 "max_results": {"type": "integer", "required": False},
             },
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="scholar.search",
+            allowed_workflows={WEB_RESEARCH_WORKFLOW},
+            input_schema={
+                "query": {"type": "string", "required": True},
+                "max_results": {"type": "integer", "required": False},
+            },
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="code.run_python",
+            allowed_workflows={WEB_RESEARCH_WORKFLOW},
+            input_schema={"code": {"type": "string", "required": True}},
         )
     )
     registry.register(

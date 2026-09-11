@@ -22,6 +22,7 @@ DEFAULT_WEB_TOOLS = {
     "search_top_k": 10,
     "search_top_k_max": 20,
     "tool_retries": 2,
+    "python_timeout_seconds": 20,
 }
 
 
@@ -66,6 +67,7 @@ class WebToolsConfig:
     search_top_k: int
     search_top_k_max: int
     tool_retries: int
+    python_timeout_seconds: int
 
 
 @dataclass(frozen=True)
@@ -308,6 +310,7 @@ def _render_config_toml(
             "search_top_k = 10",
             "search_top_k_max = 20",
             "tool_retries = 2",
+            "python_timeout_seconds = 20",
             "",
         ]
     )
