@@ -41,6 +41,16 @@ class EmbeddingClient(Protocol):
         ...
 
 
+class RerankClient(Protocol):
+    def rerank(self, query: str, documents: list[str]) -> list[tuple[int, float]]:
+        """Score *documents* against *query* (ADR-0053).
+
+        Returns ``(index, relevance_score)`` pairs into *documents*, sorted
+        by relevance score descending.
+        """
+        ...
+
+
 def _post_json_request(
     url: str,
     payload: dict[str, Any],
@@ -221,6 +231,46 @@ class OpenAICompatibleEmbeddingModel:
             self.post_json,
         )
         return [list(item["embedding"]) for item in response["data"]]
+
+
+@dataclass
+class RerankApiModel:
+    """Client for rerank-style ``POST {base_url}/rerank`` endpoints (ADR-0053).
+
+    SiliconFlow / Jina / Cohere share the shape: ``query`` + ``documents``
+    in, ``results: [{index, relevance_score}]`` out.  This is not an
+    OpenAI-compatible protocol, so it does not reuse the chat/embedding
+    request bodies — only the shared HTTP helper.
+    """
+
+    config: ModelConfig
+    post_json: PostJson | None = None
+
+    @classmethod
+    def from_config(cls, config: ModelConfig, *, post_json: PostJson | None = None) -> RerankApiModel:
+        return cls(config=config, post_json=post_json)
+
+    def rerank(self, query: str, documents: list[str]) -> list[tuple[int, float]]:
+        payload = {
+            "model": self.config.model,
+            "query": query,
+            "documents": documents,
+        }
+        response = _post_json_request(
+            _join_endpoint(self.config.base_url, "rerank"),
+            payload,
+            self.config.api_key,
+            self.post_json,
+        )
+        results = response.get("results") or []
+        pairs = [
+            (
+                int(item["index"]),
+                float(item.get("relevance_score", item.get("score", 0.0))),
+            )
+            for item in results
+        ]
+        return sorted(pairs, key=lambda pair: pair[1], reverse=True)
 
 
 def build_role_chat_model_config(config: UserConfig, role: str) -> ModelConfig:

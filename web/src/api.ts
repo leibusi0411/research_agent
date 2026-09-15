@@ -14,14 +14,18 @@ export type SetupPayload = {
   embedding_api_key: string;
   embedding_model: string;
   search_api_key: string;
+  rerank_base_url: string;
+  rerank_api_key: string;
+  rerank_model: string;
 };
 
 // GET /api/setup/config — current settings with key values withheld;
 // has_* flags tell the settings UI whether a key is already saved.
-export type SetupConfig = Omit<SetupPayload, "chat_api_key" | "embedding_api_key" | "search_api_key"> & {
+export type SetupConfig = Omit<SetupPayload, "chat_api_key" | "embedding_api_key" | "search_api_key" | "rerank_api_key"> & {
   has_chat_api_key: boolean;
   has_embedding_api_key: boolean;
   has_search_api_key: boolean;
+  has_rerank_api_key: boolean;
 };
 
 export type TaskSummary = {

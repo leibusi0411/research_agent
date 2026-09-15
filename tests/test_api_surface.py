@@ -571,3 +571,214 @@ def test_local_research_via_api_returns_llm_summary(tmp_path):
     # A+G: the API path must match the CLI capability surface — retrieved
     # chunks are augmented with an LLM-generated summary.
     assert body["summary"] == "Local A+G summary."
+
+
+# ---------------------------------------------------------------------------
+# Setup surface: optional [rerank_model] section (ADR-0053)
+# ---------------------------------------------------------------------------
+
+
+def _init_payload(tmp_path, **overrides):
+    vault = tmp_path / "vault"
+    vault.mkdir(exist_ok=True)
+    payload = {
+        "default_workspace": str(tmp_path / "runtime"),
+        "knowledge_base_path": str(vault),
+        "chat_base_url": "https://models.example/v1",
+        "chat_api_key": "chat-key",
+        "chat_model": "chat-model",
+        "embedding_base_url": "https://embeddings.example/v1",
+        "embedding_api_key": "embedding-key",
+        "embedding_model": "embedding-model",
+        "search_api_key": "search-key",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_setup_init_with_rerank_fields_writes_rerank_model_section(tmp_path):
+    config_path = tmp_path / "config.toml"
+    client = TestClient(create_app(config_path=config_path))
+
+    created = client.post(
+        "/api/setup/init",
+        json=_init_payload(tmp_path,
+            rerank_base_url="https://rerank.example/v1",
+            rerank_api_key="rerank-key",
+            rerank_model="bge-reranker-v2-m3",
+        ),
+    )
+
+    assert created.status_code == 200
+    config = load_user_config(config_path)
+    assert config.rerank_model is not None
+    assert config.rerank_model.base_url == "https://rerank.example/v1"
+    assert config.rerank_model.api_key == "rerank-key"
+    assert config.rerank_model.model == "bge-reranker-v2-m3"
+
+
+def test_setup_init_without_rerank_fields_omits_section(tmp_path):
+    config_path = tmp_path / "config.toml"
+    client = TestClient(create_app(config_path=config_path))
+
+    created = client.post("/api/setup/init", json=_init_payload(tmp_path))
+
+    assert created.status_code == 200
+    assert load_user_config(config_path).rerank_model is None
+
+
+def test_setup_config_returns_rerank_fields(tmp_path):
+    client = TestClient(create_app(config_path=tmp_path / "config.toml"))
+    client.post(
+        "/api/setup/init",
+        json=_init_payload(tmp_path,
+            rerank_base_url="https://rerank.example/v1",
+            rerank_api_key="rerank-key",
+            rerank_model="bge-reranker-v2-m3",
+        ),
+    )
+
+    body = client.get("/api/setup/config").json()
+
+    assert body["rerank_base_url"] == "https://rerank.example/v1"
+    assert body["rerank_model"] == "bge-reranker-v2-m3"
+    assert body["rerank_api_key"] == ""
+    assert body["has_rerank_api_key"] is True
+
+
+def test_setup_config_without_rerank_section_reports_not_set(tmp_path):
+    client = TestClient(create_app(config_path=tmp_path / "config.toml"))
+    client.post("/api/setup/init", json=_init_payload(tmp_path))
+
+    body = client.get("/api/setup/config").json()
+
+    assert body["rerank_base_url"] == ""
+    assert body["rerank_model"] == ""
+    assert body["has_rerank_api_key"] is False
+
+
+def test_setup_init_blank_rerank_key_keeps_saved_value(tmp_path):
+    client = TestClient(create_app(config_path=tmp_path / "config.toml"))
+    client.post(
+        "/api/setup/init",
+        json=_init_payload(tmp_path,
+            rerank_base_url="https://rerank.example/v1",
+            rerank_api_key="rerank-key",
+            rerank_model="bge-reranker-v2-m3",
+        ),
+    )
+
+    saved = client.post(
+        "/api/setup/init",
+        json=_init_payload(tmp_path,
+            rerank_base_url="https://changed.example/v1",
+            rerank_api_key="",
+            rerank_model="bge-reranker-v2-m3",
+        ),
+    )
+
+    assert saved.status_code == 200
+    config = load_user_config(tmp_path / "config.toml")
+    assert config.rerank_model is not None
+    assert config.rerank_model.api_key == "rerank-key"
+    assert config.rerank_model.base_url == "https://changed.example/v1"
+
+
+def test_setup_init_preserves_research_toggles(tmp_path):
+    """Settings edits rewrite the whole TOML — hand-configured research
+    toggles (ADR-0052/0053) must survive a settings save (R-267)."""
+    config_path = tmp_path / "config.toml"
+    client = TestClient(create_app(config_path=config_path))
+    client.post("/api/setup/init", json=_init_payload(tmp_path))
+    content = (
+        config_path.read_text(encoding="utf-8")
+        .replace("query_rewrite = false", "query_rewrite = true")
+        .replace("rerank = false", "rerank = true")
+    )
+    config_path.write_text(content, encoding="utf-8")
+
+    saved = client.post(
+        "/api/setup/init",
+        json=_init_payload(tmp_path, chat_api_key="", embedding_api_key="", search_api_key=""),
+    )
+
+    assert saved.status_code == 200
+    config = load_user_config(config_path)
+    assert config.research.query_rewrite is True
+    assert config.research.rerank is True
+    # Blank keys still resolve to the saved values.
+    assert config.chat_model.api_key == "chat-key"
+
+
+def test_api_local_start_applies_configured_rerank(tmp_path, monkeypatch):
+    """The API Local RAG path builds the rerank client from config so the
+    Web UI matches the CLI capability surface (R-265)."""
+    import research_agent.api.app as api_app_module
+
+    config_path = tmp_path / "config.toml"
+    workspace = tmp_path / "runtime"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    service = CoreService(default_workspace=workspace, config_path=config_path)
+    service.init_config(
+        InitConfigRequest(
+            default_workspace=workspace,
+            knowledge_base_path=vault,
+            chat_base_url="https://models.example/v1",
+            chat_api_key="chat-key",
+            chat_model="chat-model",
+            embedding_base_url="https://embeddings.example/v1",
+            embedding_api_key="embedding-key",
+            embedding_model="embedding-model",
+            search_api_key="search-key",
+        )
+    )
+    for i in range(12):
+        (vault / f"note{i:02d}.md").write_text(f"# Note\n\ncommon unique{i:02d}", encoding="utf-8")
+    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
+    content = (
+        config_path.read_text(encoding="utf-8").replace("rerank = false", "rerank = true")
+        + "\n[rerank_model]\n"
+        + 'base_url = "https://rerank.example/v1"\n'
+        + 'api_key = "rerank-key"\n'
+        + 'model = "bge-reranker-v2-m3"\n'
+    )
+    config_path.write_text(content, encoding="utf-8")
+
+    calls: list[tuple[str, list[str]]] = []
+
+    class _RecordingReranker:
+        def rerank(self, query: str, documents: list[str]) -> list[tuple[int, float]]:
+            calls.append((query, list(documents)))
+            return [(i, 1.0) for i in range(len(documents))]
+
+    monkeypatch.setattr(api_app_module, "build_rerank_client", lambda config, *, offline: _RecordingReranker())
+
+    client = TestClient(
+        create_app(
+            config_path=config_path,
+            embedding_client_factory=lambda _config: _FixedEmbeddingClient(),
+            chat_model_factory=lambda _config: _FixedChatModel(),
+        )
+    )
+    started = client.post("/api/research/local", json={"question": "common"})
+    assert started.status_code == 202
+    task_id = started.json()["task_id"]
+
+    import time as _time
+
+    deadline = _time.time() + 10
+    status = None
+    while _time.time() < deadline:
+        finished = client.get("/api/tasks/finished").json()["tasks"]
+        if any(task["task_id"] == task_id for task in finished):
+            status = "finished"
+            break
+        _time.sleep(0.1)
+    assert status == "finished"
+
+    result = client.get(f"/api/tasks/{task_id}/result").json()
+    assert result["status"] == "completed"
+    assert len(calls) == 1
+    assert len(calls[0][1]) == 12
+    assert len(result["local_results"]) == 10

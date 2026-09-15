@@ -44,7 +44,13 @@ def test_core_service_init_writes_user_config_and_workspace(tmp_path):
     data = tomllib.loads(config_path.read_text(encoding="utf-8"))
     assert data["workspace"]["default_workspace"] == str(workspace)
     assert data["workspace"]["knowledge_base_path"] == str(vault)
-    assert data["research"] == {"max_retrieval_rounds": 3, "max_concurrent_subtasks": 3, "inject_local_context": True}
+    assert data["research"] == {
+        "max_retrieval_rounds": 3,
+        "max_concurrent_subtasks": 3,
+        "inject_local_context": True,
+        "query_rewrite": False,
+        "rerank": False,
+    }
     assert data["chat_model"] == {
         "provider": "openai_compatible",
         "base_url": "https://models.example/v1",
@@ -286,3 +292,114 @@ def test_research_config_inject_local_context_rejects_non_bool(tmp_path):
         load_user_config(config_path)
 
     assert excinfo.value.code == "config_invalid"
+
+
+# ---------------------------------------------------------------------------
+# Query rewrite / rerank toggles + [rerank_model] section + local_summarizer slot
+# ---------------------------------------------------------------------------
+
+
+def test_research_config_query_rewrite_and_rerank_default_off(tmp_path):
+    config_path = tmp_path / "config.toml"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    service = CoreService(default_workspace=tmp_path / "runtime", config_path=config_path)
+    service.init_config(valid_init_request(tmp_path / "runtime", vault))
+
+    loaded = load_user_config(config_path)
+
+    assert loaded.research.query_rewrite is False
+    assert loaded.research.rerank is False
+
+
+def test_research_config_query_rewrite_and_rerank_parse_true(tmp_path):
+    config_path = tmp_path / "config.toml"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    service = CoreService(default_workspace=tmp_path / "runtime", config_path=config_path)
+    service.init_config(valid_init_request(tmp_path / "runtime", vault))
+    content = (
+        config_path.read_text(encoding="utf-8")
+        .replace("query_rewrite = false", "query_rewrite = true")
+        .replace("rerank = false", "rerank = true")
+    )
+    config_path.write_text(content, encoding="utf-8")
+
+    loaded = load_user_config(config_path)
+
+    assert loaded.research.query_rewrite is True
+    assert loaded.research.rerank is True
+
+
+def test_research_config_new_toggles_reject_non_bool(tmp_path):
+    config_path = tmp_path / "config.toml"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    service = CoreService(default_workspace=tmp_path / "runtime", config_path=config_path)
+    service.init_config(valid_init_request(tmp_path / "runtime", vault))
+    content = config_path.read_text(encoding="utf-8").replace(
+        "inject_local_context = true",
+        'inject_local_context = true\nquery_rewrite = "yes"',
+    )
+    config_path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ResearchError) as excinfo:
+        load_user_config(config_path)
+
+    assert excinfo.value.code == "config_invalid"
+
+
+def test_rerank_model_section_parses_when_present(tmp_path):
+    config_path = tmp_path / "config.toml"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    service = CoreService(default_workspace=tmp_path / "runtime", config_path=config_path)
+    service.init_config(valid_init_request(tmp_path / "runtime", vault))
+    content = config_path.read_text(encoding="utf-8") + (
+        "\n[rerank_model]\n"
+        'base_url = "https://rerank.example/v1"\n'
+        'api_key = "rerank-key"\n'
+        'model = "bge-reranker-v2-m3"\n'
+    )
+    config_path.write_text(content, encoding="utf-8")
+
+    loaded = load_user_config(config_path)
+
+    assert loaded.rerank_model is not None
+    assert loaded.rerank_model.base_url == "https://rerank.example/v1"
+    assert loaded.rerank_model.api_key == "rerank-key"
+    assert loaded.rerank_model.model == "bge-reranker-v2-m3"
+
+
+def test_rerank_model_section_absent_returns_none(tmp_path):
+    config_path = tmp_path / "config.toml"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    service = CoreService(default_workspace=tmp_path / "runtime", config_path=config_path)
+    service.init_config(valid_init_request(tmp_path / "runtime", vault))
+
+    loaded = load_user_config(config_path)
+
+    assert loaded.rerank_model is None
+
+
+def test_local_summarizer_slot_override_is_parsed(tmp_path):
+    config_path = tmp_path / "config.toml"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    service = CoreService(default_workspace=tmp_path / "runtime", config_path=config_path)
+    service.init_config(valid_init_request(tmp_path / "runtime", vault))
+    content = config_path.read_text(encoding="utf-8") + (
+        "\n[chat_model.local_summarizer]\n"
+        'model = "rewrite-model"\n'
+    )
+    config_path.write_text(content, encoding="utf-8")
+
+    from research_agent.core.providers import build_role_chat_model_config
+
+    loaded = load_user_config(config_path)
+    resolved = build_role_chat_model_config(loaded, "local_summarizer")
+
+    assert resolved.model == "rewrite-model"
+    # Fields not overridden fall back to the global chat model.
+    assert resolved.base_url == "https://models.example/v1"

@@ -18,7 +18,7 @@ from research_agent.core.ids import generate_task_id
 logger = logging.getLogger(__name__)
 from research_agent.core.kb import KnowledgeBaseIndex
 from research_agent.core.local_research import retrieve_local_chunks, run_local_research
-from research_agent.core.providers import EmbeddingClient, OpenAICompatibleChatModel, OpenAICompatibleEmbeddingModel, build_chat_models, build_role_chat_model_config, ChatModelClient
+from research_agent.core.providers import EmbeddingClient, OpenAICompatibleChatModel, OpenAICompatibleEmbeddingModel, RerankApiModel, RerankClient, build_chat_models, build_role_chat_model_config, ChatModelClient
 from research_agent.core.tasks import TaskStore
 from research_agent.core.workspace import Workspace, read_lock_task_id
 from research_agent.web.provider_runtime import ProviderBackedWebResearchRuntime
@@ -32,6 +32,18 @@ from research_agent.web.tools import (
     TavilySearchProvider,
     create_default_web_tool_registry,
 )
+
+
+def build_rerank_client(config: UserConfig, *, offline: bool) -> RerankClient | None:
+    """Build the cross-encoder rerank client from config (ADR-0053).
+
+    Returns ``None`` — meaning "no rerank layer, keep the RRF order" — when
+    the ``[research] rerank`` toggle is off, no ``[rerank_model]`` section is
+    configured, or the process runs in offline mode.
+    """
+    if offline or not config.research.rerank or config.rerank_model is None:
+        return None
+    return RerankApiModel.from_config(config.rerank_model)
 
 
 def build_local_retriever(
@@ -53,9 +65,13 @@ def build_local_retriever(
     # "stale" is still usable: the FTS5 keyword index is available.
     if status not in ("ready", "stale"):
         return None
+    offline = os.environ.get("RESEARCH_AGENT_OFFLINE") == "1"
     embedding_client: EmbeddingClient | None = None
-    if os.environ.get("RESEARCH_AGENT_OFFLINE") != "1":
+    if not offline:
         embedding_client = OpenAICompatibleEmbeddingModel.from_config(config.embedding_model)
+    # ADR-0053: the Prior Knowledge path gets rerank (no query rewrite) so
+    # web task startup latency stays at one extra API call.
+    rerank_client = build_rerank_client(config, offline=offline)
 
     def retrieve(question: str) -> list[PriorKnowledgeChunk]:
         results = retrieve_local_chunks(
@@ -64,6 +80,7 @@ def build_local_retriever(
             question=question,
             embedding_client=embedding_client,
             top_k=5,
+            rerank_client=rerank_client,
         )
         return [
             PriorKnowledgeChunk(
@@ -178,25 +195,26 @@ class CoreService:
         self.workspace.ensure()
         return config_path
 
-    def run_local_research(self, question: str, *, task_id: str | None = None, embedding_client: EmbeddingClient | None = None, chat_model: ChatModelClient | None = None) -> dict:
+    def run_local_research(self, question: str, *, task_id: str | None = None, embedding_client: EmbeddingClient | None = None, chat_model: ChatModelClient | None = None, rerank_client: RerankClient | None = None) -> dict:
         resolved_task_id = task_id or generate_task_id()
         offline = os.environ.get("RESEARCH_AGENT_OFFLINE") == "1"
-        # Auto-create embedding client from config when none is provided, so
-        # that ChromaDB vector search can supplement FTS5 keyword search.
-        if embedding_client is None and self.config_path is not None and not offline:
+        # Auto-create model clients from config when none is provided: the
+        # embedding client backs the Chroma vector leg, the chat model (from
+        # the "local_summarizer" role slot, ADR-0009) backs summary
+        # generation and Multi-Query rewriting (ADR-0052), and the rerank
+        # client backs cross-encoder reordering (ADR-0053).
+        if self.config_path is not None and not offline:
             config = load_user_config(self.config_path)
-            embedding_client = OpenAICompatibleEmbeddingModel.from_config(config.embedding_model)
-        # Auto-create chat model from config for A+G summarization.
-        # Uses the "local_summarizer" role slot; that slot is reserved but not
-        # parsed from config (see ADR-0009 evolution note), so this currently
-        # falls back to the default chat_model.
-        if chat_model is None and self.config_path is not None and not offline:
-            config = load_user_config(self.config_path)
-            chat_model = OpenAICompatibleChatModel.from_config(
-                build_role_chat_model_config(config, "local_summarizer")
-            )
+            if embedding_client is None:
+                embedding_client = OpenAICompatibleEmbeddingModel.from_config(config.embedding_model)
+            if chat_model is None:
+                chat_model = OpenAICompatibleChatModel.from_config(
+                    build_role_chat_model_config(config, "local_summarizer")
+                )
+            if rerank_client is None:
+                rerank_client = build_rerank_client(config, offline=offline)
         with self._active_family_lock("local", resolved_task_id):
-            return self.run_local_research_unlocked(question, task_id=resolved_task_id, embedding_client=embedding_client, chat_model=chat_model)
+            return self.run_local_research_unlocked(question, task_id=resolved_task_id, embedding_client=embedding_client, chat_model=chat_model, rerank_client=rerank_client)
 
     def run_web_research(self, question: str, *, runtime: WebResearchRuntime | None = None, chat_models: dict[str, ChatModelClient] | None = None, task_id: str | None = None, on_event: Callable[[dict[str, Any]], None] | None = None) -> dict:
         resolved_task_id = task_id or generate_task_id()
@@ -218,7 +236,7 @@ class CoreService:
         with self._active_family_lock("web", resolved_task_id):
             return self.run_web_research_unlocked(question, runtime=resolved_runtime, task_id=resolved_task_id)
 
-    def run_local_research_unlocked(self, question: str, *, task_id: str, embedding_client: EmbeddingClient | None = None, chat_model: ChatModelClient | None = None) -> dict:
+    def run_local_research_unlocked(self, question: str, *, task_id: str, embedding_client: EmbeddingClient | None = None, chat_model: ChatModelClient | None = None, rerank_client: RerankClient | None = None) -> dict:
         return run_local_research(
             question=question,
             workspace=self.workspace,
@@ -227,6 +245,7 @@ class CoreService:
             task_id=task_id,
             embedding_client=embedding_client,
             chat_model=chat_model,
+            rerank_client=rerank_client,
         )
 
     def run_web_research_unlocked(self, question: str, *, runtime: WebResearchRuntime, task_id: str) -> dict:

@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-11 | 测试：Python 232 passed（含真实链路 e2e）+ 前端 32 passed + Playwright 1 passed | 第十轮实现：调研后接地对话 TaskChatService（ADR-0050，R-262：POST/GET /api/tasks/{task_id}/chat + Research 页 ChatPanel）+ Web 工具面扩展（ADR-0051，R-263：scholar.search / code.run_python / fetch 浏览器头）| 第九轮实现：local_kb_search（Planner 本地调研）+ 索引自动增量更新（ADR-0048，R-257）+ Chunking v2（ADR-0049，R-258）+ KB 页独立 Local RAG 入口（R-259）| 第八轮审查（47 ADR 对照代码）32 项全部按"以代码为准"处置 ✅ 2026-09-10（R-225~R-256：29 份 ADR 演进注记 + CONTEXT/AGENTS/README/USAGE/CLAUDE 同步 + 代码清理 4 项；R-237 已由 R-259 以代码解决）
+> 最后更新：2026-09-15 | 测试：Python 262 passed（离线，另有 6 个真实 API e2e 无配置自动 skip）+ 前端 32 passed + Playwright 1 passed | 第十一轮实现+审查：Multi-Query 查询改写（ADR-0052）+ Cross-Encoder rerank（ADR-0053）+ Settings 页 rerank 卡片，审查 12 项（R-264~R-275）11 修复、1 接受 ✅ | 第十轮实现：调研后接地对话 TaskChatService（ADR-0050，R-262）+ Web 工具面扩展（ADR-0051，R-263） | 第九轮实现：local_kb_search + 索引自动增量更新（ADR-0048，R-257）+ Chunking v2（ADR-0049，R-258）+ KB 页独立 Local RAG 入口（R-259）
 
 ---
 
@@ -27,9 +27,43 @@
 
 ---
 
-## 二、本轮 Review（2026-09-09）
+## 二、本轮 Review（2026-09-15）
 
-### 第八轮审查（2026-09-09，历史 ADR 对照最新代码）
+### 第十一轮实现+审查（2026-09-15，Multi-Query 查询改写 + Cross-Encoder rerank / ADR-0052、0053）
+
+#### 审查范围
+
+两个 Local RAG 检索质量增强，TDD 全程红绿循环（21 个新测试 `tests/test_retrieval_enhancements.py` + 5 个 API/配置测试）：
+
+1. **ADR-0052 Multi-Query 查询改写**：`rewrite_question`（一次 LLM 调用生成关键词式 + 语义式两个变体，行解析清洗、去重去原问，LLM 失败降级 `[]`）；提取 `rrf_fuse` 纯函数支持任意列表数融合；`run_local_research` 多查询接线（`[research] query_rewrite`，默认关，仅 Local RAG 路径）；`[chat_model.local_summarizer]` 槽位接线（兑现 ADR-0009 R-226 注记）
+2. **ADR-0053 Cross-Encoder rerank**：`RerankClient` Protocol + `RerankApiModel`（`POST {base_url}/rerank`，SiliconFlow/Jina/Cohere 兼容形态，`score`/`relevance_score` 双读）；`retrieve_local_chunks` RRF 后截断前重排（候选 ≤ top_k 跳过、失败或不完整排列降级回 RRF 顺序）；`[rerank_model]` 节 + `[research] rerank` 开关（默认关）；Prior Knowledge 路径接 rerank 不接 rewrite；Settings 页第三模型卡片 + setup API 可选 rerank 节
+
+审查方式：subagent 独立审查（读 ADR/CONTEXT/diff + 全量测试验证），初判 FAIL，修复后全量回归通过。
+
+#### 发现与处理（12 项：P1×3、P2×1、P3×7、nit×1）
+
+| 编号 | 级别 | 描述 | 修复 |
+|------|------|------|------|
+| R-264 | P1 | Settings 页 `required={!saved}` 使可选的 rerank_base_url/model/未存 key 的 rerank_api_key 全部必填，真实浏览器无法保存不含 rerank 的配置（jsdom 不做约束校验故测试未拦截） | ✅ `isFieldRequired` 按字段区分：基础字段必填、rerank 节全可选、rerank_api_key 仅在填写 base_url 且未存 key 时必填；Vitest 回归断言 |
+| R-265 | P1 | API `POST /api/research/local` 不构建 rerank 客户端，Web UI 路径 rerank 永不生效而 CLI 生效——能力面分裂 | ✅ `_local_research_clients` 经 `build_rerank_client` 装配并传入 unlocked；新增 API 路径回归测试（12 候选重排记录） |
+| R-266 | P1 | "Settings saved." 断言 flaky：双分支渲染期 `findByText` 多元素报错（全套运行约 60% 失败） | ✅ 改 `findAllByText` + 等待表单卸载的 `waitFor` |
+| R-267 | P2 | 设置保存全量覆写 TOML，把手工开启的 query_rewrite/rerank 开关静默复位（唯一启用途径被保存动作破坏） | ✅ `InitConfigRequest` 增 `research_query_rewrite/research_rerank`，setup_init 从已存配置透传；回归测试 |
+| R-268 | P3 | rerank 节"全空 = 删除"语义未写进文档 | ✅ 写入 ADR-0053 决策节 |
+| R-269 | P3 | 保存后 savedKeys.rerank 无条件置真，未配置 rerank 时只读视图显示假掩码 | ✅ 按是否提交 rerank_base_url 置位 |
+| R-270 | P3 | 降级分支测试缺口：不完整排列保持 RRF 顺序；`score` 字段回退解析 | ✅ +2 测试 |
+| R-271 | P3 | AGENTS.md 测试计数失实 | ✅ 更正为 262 离线 + 6 e2e |
+| R-272 | P3 | ADR-0053 "每次 ≤10 文档"不准确（Local RAG 路径候选为 2×top_k、融合后至多 40） | ✅ 修正措辞 |
+| R-273 | P3 | service.run_local_research 死变量 `config = None` | ✅ 删除 |
+| R-274 | P3 | 未跟踪杂物：`.claude/`（本地配置）与 `简历项目介绍.md`（非项目文件） | ✅ `.claude/` 加入 .gitignore；简历文件不入库 |
+| R-275 | nit | run_local_research 第三次加载同一配置（纯冗余 IO，缺失会在 kb.status() 先行报错） | ⚠️ 接受：消除需改签名传 config，收益不成比例 |
+
+#### 已验证（修复后终审）
+
+- `uv run pytest -m "not e2e"` — 262 passed
+- `cd web && npm run test` — 32 passed；`npx playwright test` — 1 passed；`npm run build` 通过，dist 随提交更新
+- 真实 API e2e 6 项（review subagent 本机）— 通过
+
+### 第八轮审查存档（2026-09-09，历史 ADR 对照最新代码）
 
 #### 审查范围
 
@@ -486,10 +520,10 @@
 
 ### 立即
 
-1. **提交本日改动** — Web UI 视觉重设计（第五轮审查 R-184~R-192 处理完毕）；提交时必须 `git add web/dist` 全量新构建资产（R-192），TODO.md 的 `local_kb_search` 条目建议拆成独立提交
-2. **下一步联动候选：`local_kb_search` 注册为 Web 工具（方案 3）** — 触发条件与中间档已记录于 TODO.md"Retrieval And Web Tools"节；先观察 deposit 增长后初始 Top-5 是否漏材料再决定
-3. **择机加固 R-173 家族** — 锁时序偶发测试，让 fake runtime 可阻塞
-4. **第八轮冲突已全部处置（R-225~R-256 ✅ 2026-09-10，以代码为准修文档）** — 遗留观察：R-226/R-229/R-234/R-235 四项被文档追认为现状（恢复代码的路径写进了各 ADR 注记），若未来改代码需回撤对应注记；`local_kb_search` 延期项已由 ADR-0048 落地，仅剩 "Earlier URL deduplication" 的触发条件记录随 TODO.md 清空丢失，如需保留应重录；第八轮处置应用户要求未跑测试，下次提交前建议跑 `uv run pytest` + `cd web && npm run test` 验证
+1. **提交并推送本轮改动**（含 `web/dist` 全量新构建资产，R-192 约定）
+2. **真实链路验证两个质量层**：在配置中启用 `[research] query_rewrite` / `rerank` + `[rerank_model]`（如 SiliconFlow `BAAI/bge-reranker-v2-m3`），用真实 vault 观察 R-264 修复后的 Settings 保存流与检索质量收益
+3. **R-275 冗余 config 加载留观**——local 检索路径若继续加配置读取，考虑把 config 显式传入 run_local_research
+4. **择机加固 R-173 家族** — 锁时序偶发测试，让 fake runtime 可阻塞
 
 ### 阶段 8（功能全部实现）
 

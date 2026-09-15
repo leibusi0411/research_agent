@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
@@ -34,7 +35,7 @@ from research_agent.core.providers import (
     OpenAICompatibleEmbeddingModel,
     build_role_chat_model_config,
 )
-from research_agent.core.service import CoreService, create_provider_runtime
+from research_agent.core.service import CoreService, build_rerank_client, create_provider_runtime
 from research_agent.core.workspace import read_lock_task_id
 from research_agent.web.provider_runtime import ProviderBackedWebResearchRuntime
 
@@ -136,6 +137,15 @@ def _register_setup_routes(app: FastAPI, resolved_config_path: Path, reset_cache
 
     @app.post("/api/setup/init")
     def setup_init(payload: dict[str, Any]) -> dict[str, Any]:
+        # Optional rerank section (ADR-0053): all-rerank-fields-blank means
+        # "no rerank model"; a blank rerank key on an existing section means
+        # "keep the saved key", mirroring the chat/embedding/search keys.
+        rerank_base_url = str(payload.get("rerank_base_url") or "").strip()
+        rerank_api_key = _optional_key(payload.get("rerank_api_key"))
+        rerank_model_name = str(payload.get("rerank_model") or "").strip()
+        if not rerank_base_url:
+            rerank_api_key = ""
+            rerank_model_name = ""
         request = InitConfigRequest(
             default_workspace=Path(payload["default_workspace"]),
             knowledge_base_path=Path(payload["knowledge_base_path"]),
@@ -146,14 +156,18 @@ def _register_setup_routes(app: FastAPI, resolved_config_path: Path, reset_cache
             embedding_api_key=_optional_key(payload.get("embedding_api_key")),
             embedding_model=str(payload["embedding_model"]),
             search_api_key=_optional_key(payload.get("search_api_key")),
+            rerank_base_url=rerank_base_url,
+            rerank_api_key=rerank_api_key,
+            rerank_model=rerank_model_name,
         )
         # Blank key fields mean "keep the saved key": the settings page never
         # receives key values back, so edits resubmit them blank.
-        if not request.chat_api_key or not request.embedding_api_key or not request.search_api_key:
-            try:
-                saved = load_user_config(resolved_config_path)
-            except ResearchError:
-                saved = None
+        rerank_key_pending = bool(request.rerank_base_url) and not request.rerank_api_key
+        try:
+            saved = load_user_config(resolved_config_path)
+        except ResearchError:
+            saved = None
+        if not request.chat_api_key or not request.embedding_api_key or not request.search_api_key or rerank_key_pending:
             if saved is None:
                 missing = ", ".join(
                     label
@@ -161,21 +175,35 @@ def _register_setup_routes(app: FastAPI, resolved_config_path: Path, reset_cache
                         ("chat_api_key", request.chat_api_key),
                         ("embedding_api_key", request.embedding_api_key),
                         ("search_api_key", request.search_api_key),
+                        ("rerank_api_key", "" if rerank_key_pending else "saved"),
                     )
                     if not value
                 )
                 raise ResearchError(code="config_invalid", message=f"Missing config field: {missing}")
-            request = InitConfigRequest(
-                default_workspace=request.default_workspace,
-                knowledge_base_path=request.knowledge_base_path,
-                chat_base_url=request.chat_base_url,
-                chat_api_key=request.chat_api_key or saved.chat_model.api_key,
-                chat_model=request.chat_model,
-                embedding_base_url=request.embedding_base_url,
-                embedding_api_key=request.embedding_api_key or saved.embedding_model.api_key,
-                embedding_model=request.embedding_model,
-                search_api_key=request.search_api_key or saved.search.api_key,
-            )
+            saved_rerank_key = saved.rerank_model.api_key if saved.rerank_model is not None else ""
+            if rerank_key_pending and not saved_rerank_key:
+                raise ResearchError(code="config_invalid", message="Missing config field: rerank_api_key")
+        else:
+            saved_rerank_key = ""
+        # Settings edits rewrite the whole TOML, so research toggles configured
+        # by hand in config.toml (ADR-0052/0053) are carried through instead of
+        # being reset by the rendered defaults.
+        request = InitConfigRequest(
+            default_workspace=request.default_workspace,
+            knowledge_base_path=request.knowledge_base_path,
+            chat_base_url=request.chat_base_url,
+            chat_api_key=request.chat_api_key or (saved.chat_model.api_key if saved else ""),
+            chat_model=request.chat_model,
+            embedding_base_url=request.embedding_base_url,
+            embedding_api_key=request.embedding_api_key or (saved.embedding_model.api_key if saved else ""),
+            embedding_model=request.embedding_model,
+            search_api_key=request.search_api_key or (saved.search.api_key if saved else ""),
+            rerank_base_url=request.rerank_base_url,
+            rerank_api_key=request.rerank_api_key or saved_rerank_key,
+            rerank_model=request.rerank_model,
+            research_query_rewrite=saved.research.query_rewrite if saved else False,
+            research_rerank=saved.research.rerank if saved else False,
+        )
         written = CoreService(default_workspace=request.default_workspace, config_path=resolved_config_path).init_config(request)
         reset_cached_service()
         return {"configured": True, "config_path": str(written)}
@@ -201,6 +229,10 @@ def _register_setup_routes(app: FastAPI, resolved_config_path: Path, reset_cache
                 "has_chat_api_key": bool(config.chat_model.api_key),
                 "has_embedding_api_key": bool(config.embedding_model.api_key),
                 "has_search_api_key": bool(config.search.api_key),
+                "rerank_base_url": config.rerank_model.base_url if config.rerank_model else "",
+                "rerank_model": config.rerank_model.model if config.rerank_model else "",
+                "rerank_api_key": "",
+                "has_rerank_api_key": bool(config.rerank_model and config.rerank_model.api_key),
             }
         )
 
@@ -222,9 +254,10 @@ def _register_research_routes(
         # the UI reports the error instead of starting a doomed task.
         load_user_config(resolved_config_path)
 
-    def _local_research_clients() -> tuple[EmbeddingClient | None, Any | None]:
-        """Build embedding + chat clients for Local RAG A+G so the API path
-        matches the CLI capability surface (vector retrieval + summary).
+    def _local_research_clients() -> tuple[EmbeddingClient | None, Any | None, Any | None]:
+        """Build embedding + chat + rerank clients for Local RAG so the API
+        path matches the CLI capability surface (vector retrieval, summary,
+        query rewrite model, cross-encoder rerank — ADR-0052/0053).
         Factories (test fakes) win over config-built real clients."""
         config = load_user_config(resolved_config_path)
         embedding_client = (
@@ -237,7 +270,8 @@ def _register_research_routes(
             if chat_model_factory is not None
             else OpenAICompatibleChatModel.from_config(build_role_chat_model_config(config, "local_summarizer"))
         )
-        return embedding_client, chat_model
+        rerank_client = build_rerank_client(config, offline=os.environ.get("RESEARCH_AGENT_OFFLINE") == "1")
+        return embedding_client, chat_model, rerank_client
 
     @app.post("/api/research/local")
     def start_local(payload: dict[str, Any]) -> JSONResponse:
@@ -245,13 +279,13 @@ def _register_research_routes(
         task_id = generate_task_id()
         question = _question(payload)
         current_service = get_service()
-        embedding_client, chat_model = _local_research_clients()
+        embedding_client, chat_model, rerank_client = _local_research_clients()
         _create_running_task(current_service, task_id=task_id, mode="local", question=question)
         _submit_background_task(
             executor,
             current_service.acquire_family_lock("local", task_id),
             lambda: current_service.run_local_research_unlocked(
-                question, task_id=task_id, embedding_client=embedding_client, chat_model=chat_model
+                question, task_id=task_id, embedding_client=embedding_client, chat_model=chat_model, rerank_client=rerank_client
             ),
         )
         return JSONResponse({"task_id": task_id, "mode": "local", "status": "running", "question": question}, status_code=202)

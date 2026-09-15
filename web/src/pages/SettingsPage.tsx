@@ -11,12 +11,33 @@ const emptySetup: SetupPayload = {
   embedding_base_url: "",
   embedding_api_key: "",
   embedding_model: "",
-  search_api_key: ""
+  search_api_key: "",
+  rerank_base_url: "",
+  rerank_api_key: "",
+  rerank_model: ""
 };
 
 export { emptySetup };
 
 const SAVED_KEY_PLACEHOLDER = "Saved — leave blank to keep";
+
+// Fields the backend requires on every save. The rerank section (ADR-0053)
+// is optional: its base_url/model are never required, and its key only
+// becomes required once a base_url is entered (and none is saved).
+const ALWAYS_REQUIRED = new Set([
+  "default_workspace",
+  "knowledge_base_path",
+  "chat_base_url",
+  "chat_model",
+  "embedding_base_url",
+  "embedding_model"
+]);
+
+function isFieldRequired(key: string, saved: boolean | undefined, setup: SetupPayload): boolean {
+  if (ALWAYS_REQUIRED.has(key)) return true;
+  if (key === "rerank_api_key") return !saved && setup.rerank_base_url.trim() !== "";
+  return key.endsWith("api_key") ? !saved : false;
+}
 
 function SetupFields({
   setup,
@@ -25,12 +46,13 @@ function SetupFields({
 }: {
   setup: SetupPayload;
   setSetup: (value: SetupPayload) => void;
-  savedKeys: { chat: boolean; embedding: boolean; search: boolean };
+  savedKeys: { chat: boolean; embedding: boolean; search: boolean; rerank: boolean };
 }) {
   const savedByKey: Record<string, boolean> = {
     chat_api_key: savedKeys.chat,
     embedding_api_key: savedKeys.embedding,
-    search_api_key: savedKeys.search
+    search_api_key: savedKeys.search,
+    rerank_api_key: savedKeys.rerank
   };
   return (
     <div className="setup-grid">
@@ -44,7 +66,7 @@ function SetupFields({
               value={setup[key as keyof SetupPayload]}
               onChange={(event) => setSetup({ ...setup, [key]: event.target.value })}
               type={key.includes("api_key") ? "password" : "text"}
-              required={!saved}
+              required={isFieldRequired(key, saved, setup)}
               placeholder={saved ? SAVED_KEY_PLACEHOLDER : ""}
             />
           </label>
@@ -67,7 +89,7 @@ export function SettingsPage({
 }: {
   setup: SetupPayload;
   setSetup: (value: SetupPayload) => void;
-  savedKeys: { chat: boolean; embedding: boolean; search: boolean };
+  savedKeys: { chat: boolean; embedding: boolean; search: boolean; rerank: boolean };
   savedNotice: boolean;
   loadSettings: () => Promise<void>;
   configured: boolean;
@@ -108,7 +130,10 @@ export function SettingsPage({
     { label: "embedding_model", value: setup.embedding_model },
     { label: "chat_api_key", value: savedKeys.chat ? "••••••••" : "(not set)", masked: true },
     { label: "embedding_api_key", value: savedKeys.embedding ? "••••••••" : "(not set)", masked: true },
-    { label: "search_api_key", value: savedKeys.search ? "••••••••" : "(not set)", masked: true }
+    { label: "search_api_key", value: savedKeys.search ? "••••••••" : "(not set)", masked: true },
+    { label: "rerank_base_url", value: setup.rerank_base_url },
+    { label: "rerank_model", value: setup.rerank_model },
+    { label: "rerank_api_key", value: savedKeys.rerank ? "••••••••" : "(not set)", masked: true }
   ];
 
   return (

@@ -1,5 +1,7 @@
 # Use user-level TOML config for settings and API keys
 
+> 演进注记（2026-09-15，ADR-0052）：R-226 所述的 local_summarizer 未接线状态已兑现接线——`_parse_role_chat_models` 的角色解析列表加入 `local_summarizer`，`[chat_model.local_summarizer]` 覆盖现在真实生效（未配置时仍回退全局 `[chat_model]`）。该槽位服务 Local RAG 总结与 Multi-Query 查询改写两个用途。
+
 > 演进注记（2026-09-09，R-226）：下文配置形状中的 `[chat_model.local_summarizer]` 节在 v1 实际未接线：`_parse_role_chat_models`（core/config.py）的角色解析列表只有 `planner`、`executor`、`supervisor`、`curator` 四个 Web 角色，`local_summarizer` 即使写入 TOML 也不会被解析；`build_role_chat_model_config(config, "local_summarizer")`（core/service.py、api/app.py）永远静默回退到全局 `[chat_model]`，无报错。v1 有意只接线 4 个 Web 角色，local_summarizer 槽位保留但未接线（已知取舍）；如需恢复，只需在解析列表中增加一项。四个 Web 角色的 per-role 覆盖机制与字段级回退仍然成立。
 
 > 演进注记（2026-09-09，R-227）：原文 "Existing config: prompt before overwrite" 未兑现。CLI `research-agent init` 没有覆盖提示——cli.py 直接把参数交给 `CoreService.init_config`，core/config.py 无条件 `write_text` 全量覆写已有配置。ADR-0047 只把"全量重写不提示"显式接受给 Web Settings 场景；CLI 的实际行为同样如此，此处一并承认。正文对应条目已按现实修正。

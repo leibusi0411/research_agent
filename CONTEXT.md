@@ -224,7 +224,7 @@ The configured embedding model used for Knowledge Base indexing and Local RAG re
 _Avoid_: chat model, vector model
 
 **Role Model Slot**:
-An optional per-role chat model override that allows research roles to use different chat models. V1 reserves the config structure under `[chat_model.<role>]` sections but defaults all roles to the global `[chat_model]` settings when role-specific overrides are absent; the setup flow only collects the global chat model and does not expose per-role configuration. Config parsing wires only four roles: `planner`, `executor`, `supervisor`, and `curator`; a `[chat_model.local_summarizer]` section has no effect and the local summarizer silently falls back to the global chat model (the slot is reserved but not wired).
+An optional per-role chat model override that allows research roles to use different chat models. V1 reserves the config structure under `[chat_model.<role>]` sections but defaults all roles to the global `[chat_model]` settings when role-specific overrides are absent; the setup flow only collects the global chat model and does not expose per-role configuration. All five roles are wired: `planner`, `executor`, `supervisor`, `curator`, and `local_summarizer` — the last serves Local RAG summarization and Query Rewrite (ADR-0052); its slot was unwired before 2026-09-15 (see ADR-0009 evolution notes).
 _Avoid_: model slot, agent model
 
 **RAG**:
@@ -232,8 +232,16 @@ Retrieval-augmented generation used to retrieve relevant source material from th
 _Avoid_: knowledge base, search
 
 **Hybrid Retrieval**:
-The initial Local RAG retrieval strategy that combines SQLite FTS5 full-text search (keyword) and ChromaDB vector search (semantic), fuses results via Reciprocal Rank Fusion (RRF, k=60), and returns the top-10 fused, traceable Chunks. Falls back to FTS5-only when no embedding client is available. ChromaDB embedding is batched (32 chunks per request) to stay within API limits. Does not require complex reranking or agentic query rewriting in v1.
+The initial Local RAG retrieval strategy that combines SQLite FTS5 full-text search (keyword) and ChromaDB vector search (semantic), fuses results via Reciprocal Rank Fusion (RRF, k=60), and returns the top-10 fused, traceable Chunks. Falls back to FTS5-only when no embedding client is available. ChromaDB embedding is batched (32 chunks per request) to stay within API limits. Since ADR-0052/0053 the retrieval seam optionally adds Query Rewrite (before recall, `[research] query_rewrite`) and Reranker reordering (after RRF fusion, before truncation, `[research] rerank`); both are off by default and degrade gracefully to plain hybrid retrieval. Retrieval enhancements beyond these two opt-in layers remain out of scope.
 _Avoid_: semantic search, reranking
+
+**Query Rewrite**:
+The optional Multi-Query preprocessing step (ADR-0052) in which the `local_summarizer` role model turns the user question into two retrieval variants — one keyword-extraction style, one semantic-descriptive style — in a single LLM call. Every query (original plus variants) runs the full hybrid retrieval and all ranked lists fuse through the same RRF. Enabled by `[research] query_rewrite`; it applies only to Local RAG, never to Prior Knowledge or the Planner local survey, and any LLM failure degrades to the original question alone.
+_Avoid_: query expansion, search rewriting
+
+**Reranker**:
+The optional cross-encoder reordering step (ADR-0053) that scores fused retrieval candidates against the question through a rerank-style HTTP API (`POST {base_url}/rerank`, query + documents in, relevance scores out) and reorders them before the top-k truncation. Configured under `[rerank_model]`, enabled by `[research] rerank`; it applies only when candidates exceed the display budget, and an API failure degrades to the RRF order without failing the task. It never rewrites or filters content — only the order changes.
+_Avoid_: reranking model, ranking engine
 
 **Planner**:
 The Web Research role that turns the original user question into web research goals, subquestions, source strategy, stopping criteria, and an expected report shape. For initial planning it performs a local knowledge survey: it receives Prior Knowledge — a one-time, read-only retrieval seed from the Knowledge Base (ADR-0046) — and formulates up to three targeted local_kb_search queries whose results shape the final plan, so it can avoid planning web research for what local notes already cover (ADR-0048). Plan revision repeats the same survey (question + prior knowledge seed); it revises the plan only when requested by the Supervisor.

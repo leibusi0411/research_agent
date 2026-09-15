@@ -167,9 +167,13 @@ describe("App", () => {
             chat_api_key: "",
             embedding_api_key: "",
             search_api_key: "",
+            rerank_base_url: "https://rerank.example/v1",
+            rerank_model: "bge-reranker-v2-m3",
+            rerank_api_key: "",
             has_chat_api_key: true,
             has_embedding_api_key: true,
             has_search_api_key: true,
+            has_rerank_api_key: true,
           });
         }
         if (url.endsWith("/api/setup/init") && init?.method === "POST") {
@@ -185,7 +189,9 @@ describe("App", () => {
     // View mode: values are read-only text — no editable inputs.
     expect(await screen.findByText("chat_base_url")).toBeInTheDocument();
     expect(await screen.findByText("https://models.example/v1")).toBeInTheDocument();
-    expect(screen.getAllByText("••••••••")).toHaveLength(3);
+    expect(screen.getAllByText("••••••••")).toHaveLength(4);
+    expect(await screen.findByText("rerank_base_url")).toBeInTheDocument();
+    expect(await screen.findByText("bge-reranker-v2-m3")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "chat_base_url" })).toBeNull();
 
     // Edit mode: prefilled inputs; saved keys stay blank with a placeholder.
@@ -196,11 +202,20 @@ describe("App", () => {
     expect(chatKey).toHaveValue("");
     expect(chatKey).not.toBeRequired();
     expect(chatKey).toHaveAttribute("placeholder", "Saved — leave blank to keep");
+    // The rerank section (ADR-0053) is optional: nothing is required unless a
+    // rerank base_url is entered.
+    const rerankUrl = document.querySelector("input[name='rerank_base_url']") as HTMLInputElement;
+    const rerankModel = document.querySelector("input[name='rerank_model']") as HTMLInputElement;
+    const rerankKey = document.querySelector("input[name='rerank_api_key']") as HTMLInputElement;
+    expect(rerankUrl).not.toBeRequired();
+    expect(rerankModel).not.toBeRequired();
+    expect(rerankKey).not.toBeRequired();
 
-    // Save returns to the read-only view with a confirmation.
+    // Save returns to the read-only view with a confirmation. The saved
+    // notice renders in both branches during the transition, so match all.
     await userEvent.click(screen.getByRole("button", { name: "Save Config" }));
-    expect(await screen.findByText("Settings saved.")).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "chat_base_url" })).toBeNull();
+    expect((await screen.findAllByText("Settings saved.")).length).toBeGreaterThanOrEqual(1);
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "chat_base_url" })).toBeNull());
     expect(initBodies[0]).toMatchObject({ chat_api_key: "" });
   });
 

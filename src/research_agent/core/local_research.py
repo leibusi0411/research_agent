@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 from contextlib import closing
@@ -8,12 +9,15 @@ from pathlib import Path
 from typing import Any
 
 from research_agent.core.chroma_store import ChromaStore
+from research_agent.core.config import load_user_config
 from research_agent.core.errors import ResearchError
 from research_agent.core.ids import generate_task_id, utc_now_iso
 from research_agent.core.kb import KnowledgeBaseIndex
-from research_agent.core.providers import ChatModelClient, EmbeddingClient
+from research_agent.core.providers import ChatModelClient, EmbeddingClient, RerankClient
 from research_agent.core.tasks import TaskRecord, TaskStore
 from research_agent.core.workspace import Workspace
+
+logger = logging.getLogger(__name__)
 
 
 def run_local_research(
@@ -25,6 +29,7 @@ def run_local_research(
     task_id: str | None = None,
     embedding_client: EmbeddingClient | None = None,
     chat_model: ChatModelClient | None = None,
+    rerank_client: RerankClient | None = None,
 ) -> dict[str, Any]:
     task_id = task_id or generate_task_id()
     created_at = utc_now_iso()
@@ -52,12 +57,25 @@ def run_local_research(
         },
     )
 
-    local_results = retrieve_local_chunks(
-        sqlite_path=workspace.local_index_dir / "fts.sqlite",
-        chroma_path=workspace.local_index_dir.parent / "chroma",
-        question=question,
-        embedding_client=embedding_client,
-    )
+    queries = [question]
+    # ADR-0052: Multi-Query rewriting is opt-in ([research] query_rewrite) and
+    # only runs when a chat model exists; LLM failure degrades to the original
+    # question alone (rewrite_question returns []).
+    config = load_user_config(config_path)
+    if config.research.query_rewrite and chat_model is not None:
+        queries.extend(rewrite_question(question, chat_model))
+
+    query_result_lists = [
+        retrieve_local_chunks(
+            sqlite_path=workspace.local_index_dir / "fts.sqlite",
+            chroma_path=workspace.local_index_dir.parent / "chroma",
+            question=query,
+            embedding_client=embedding_client,
+            rerank_client=rerank_client,
+        )
+        for query in queries
+    ]
+    local_results = rrf_fuse(query_result_lists, top_k=10)
 
     # A+G: Augment prompt with retrieved chunks + generate answer via LLM
     summary: str | None = None
@@ -99,6 +117,60 @@ def run_local_research(
         result["summary"] = summary
     _persist_task(workspace, task_store, task_id, question, created_at, result, completed_items=source_items, result_count=len(local_results))
     return result
+
+
+# ---------------------------------------------------------------------------
+# Query rewrite (ADR-0052)
+# ---------------------------------------------------------------------------
+
+# Default Multi-Query variant budget: one keyword-extraction style plus one
+# semantic-descriptive style variant.
+_REWRITE_MAX_VARIANTS = 2
+
+_VARIANT_PREFIX_RE = re.compile(r"^\s*(?:\d+\s*[.、)：:)]\s*|[-*•·]\s+)")
+_VARIANT_QUOTES = "\"“”'「」『』"
+
+
+def rewrite_question(
+    question: str,
+    chat_model: ChatModelClient,
+    *,
+    max_variants: int = _REWRITE_MAX_VARIANTS,
+) -> list[str]:
+    """Rewrite *question* into Multi-Query retrieval variants (ADR-0052).
+
+    One LLM call asks for a keyword-extraction variant and a semantic-
+    descriptive variant. Lines are cleaned of numbering, bullets, and
+    quotes; blanks, duplicates, and restatements of the original question
+    are dropped; the result is capped at *max_variants*. Any LLM failure
+    degrades to ``[]`` — the caller falls back to the original question
+    only, so rewriting never blocks Local RAG.
+    """
+    prompt = (
+        "你是一个检索查询改写助手。请把下面的用户问题改写成 "
+        f"{max_variants} 个用于知识库检索的查询变体：\n"
+        "1. 一个关键词式变体：只保留核心检索词，用空格分隔；\n"
+        "2. 一个语义式变体：用一句完整的陈述句换一种说法表达同一信息需求。\n"
+        "每行输出一个变体，不要编号，不要解释。\n\n"
+        f"用户问题：{question}"
+    )
+    try:
+        raw = chat_model.complete(prompt)
+    except Exception as exc:
+        logger.warning("Query rewrite failed; falling back to the original question: %s", exc)
+        return []
+
+    variants: list[str] = []
+    seen: set[str] = {question.strip().lower()}
+    for line in raw.splitlines():
+        cleaned = _VARIANT_PREFIX_RE.sub("", line).strip().strip(_VARIANT_QUOTES).strip()
+        if not cleaned or cleaned.lower() in seen:
+            continue
+        seen.add(cleaned.lower())
+        variants.append(cleaned)
+        if len(variants) >= max_variants:
+            break
+    return variants
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +234,59 @@ def _search_fts5(
     return results
 
 
+def rrf_fuse(
+    result_lists: list[list[dict[str, Any]]],
+    *,
+    top_k: int | None,
+    k: int = 60,
+) -> list[dict[str, Any]]:
+    """Reciprocal Rank Fusion across ranked result lists (ADR-0052).
+
+    Shared by single-question hybrid retrieval and Multi-Query fusion: each
+    list contributes ``1 / (k + rank)`` to the chunk keyed by
+    ``source_path:start:end``; the first-seen record wins for display, and
+    the fused order is truncated to *top_k* (``None`` keeps every chunk).
+    """
+    rrf_scores: dict[str, float] = {}
+    result_map: dict[str, dict[str, Any]] = {}
+    for results in result_lists:
+        for rank, item in enumerate(results, start=1):
+            key = _dedup_key(item)
+            rrf_scores[key] = rrf_scores.get(key, 0) + 1.0 / (k + rank)
+            if key not in result_map:
+                result_map[key] = item
+    ranked_keys = sorted(rrf_scores, key=lambda key: rrf_scores[key], reverse=True)
+    return [result_map[key] for key in ranked_keys[:top_k]]
+
+
+def _apply_rerank(
+    fused: list[dict[str, Any]],
+    *,
+    question: str,
+    top_k: int,
+    rerank_client: RerankClient | None,
+) -> list[dict[str, Any]]:
+    """Reorder *fused* by reranker relevance (ADR-0053).
+
+    Applies only when a client is configured and the candidate set exceeds
+    the display budget — reordering a list that is returned whole buys
+    nothing.  A rerank failure or an incomplete ordering degrades to the
+    RRF order, symmetric with the Chroma→FTS5-only degradation.
+    """
+    if rerank_client is None or len(fused) <= top_k:
+        return fused
+    try:
+        pairs = rerank_client.rerank(question, [item["text"] for item in fused])
+        indices = [index for index, _score in pairs]
+        if sorted(indices) != list(range(len(fused))):
+            logger.warning("Rerank returned an incomplete ordering; keeping RRF order")
+            return fused
+        return [fused[index] for index in indices]
+    except Exception as exc:
+        logger.warning("Rerank failed; falling back to RRF order: %s", exc)
+        return fused
+
+
 def retrieve_local_chunks(
     *,
     sqlite_path: Path,
@@ -169,13 +294,16 @@ def retrieve_local_chunks(
     question: str,
     embedding_client: EmbeddingClient | None = None,
     top_k: int = 10,
+    rerank_client: RerankClient | None = None,
 ) -> list[dict[str, Any]]:
     """Hybrid retrieval: FTS5 keyword + Chroma vector search with RRF fusion.
 
-    Public seam shared by Local RAG and the Web Research Prior Knowledge
-    retriever (ADR-0046). Falls back gracefully to FTS5-only when no
-    embedding_client is available (e.g. in tests or when the embedding
-    model isn't configured).
+    Public seam shared by Local RAG, the Web Research Prior Knowledge
+    retriever (ADR-0046), and the Planner local survey (ADR-0048). Falls
+    back gracefully to FTS5-only when no embedding_client is available
+    (e.g. in tests or when the embedding model isn't configured). When a
+    rerank_client is provided and candidates exceed *top_k*, a cross-encoder
+    reorders the fused list before truncation (ADR-0053).
     """
     # Fetch more candidates than needed so RRF has enough to fuse
     fetch_k = top_k * 2
@@ -194,24 +322,9 @@ def retrieve_local_chunks(
     if not fts5_results and not chroma_results:
         return []
 
-    # Reciprocal Rank Fusion (k=60 is the standard constant)
-    K = 60
-    rrf_scores: dict[str, float] = {}
-    result_map: dict[str, dict[str, Any]] = {}
-
-    for rank, item in enumerate(fts5_results, start=1):
-        key = _dedup_key(item)
-        rrf_scores[key] = rrf_scores.get(key, 0) + 1.0 / (K + rank)
-        result_map[key] = item
-
-    for rank, item in enumerate(chroma_results, start=1):
-        key = _dedup_key(item)
-        rrf_scores[key] = rrf_scores.get(key, 0) + 1.0 / (K + rank)
-        if key not in result_map:
-            result_map[key] = item
-
-    ranked_keys = sorted(rrf_scores, key=lambda k: rrf_scores[k], reverse=True)
-    return [result_map[key] for key in ranked_keys[:top_k]]
+    fused = rrf_fuse([fts5_results, chroma_results], top_k=None)
+    fused = _apply_rerank(fused, question=question, top_k=top_k, rerank_client=rerank_client)
+    return fused[:top_k]
 
 
 def _dedup_key(item: dict[str, Any]) -> str:

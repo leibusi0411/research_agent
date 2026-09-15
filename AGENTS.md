@@ -6,7 +6,7 @@
 
 **Research Agent** 是一个本地优先（local-first）的 AI 研究助手，提供两个**相互独立、不共享上下文**的工作流：
 
-1. **Local RAG（本地知识库检索）** — 对用户指定的 Markdown vault 目录建立索引（SQLite FTS5 关键词 + ChromaDB 语义向量 + RRF 融合排序），检索后可选地用 LLM 生成自然语言总结（`local_summarizer` 角色）。索引构建是**只读**的，不修改源文件。支持 `.md`、`.txt`、`.pdf`、`.html`。
+1. **Local RAG（本地知识库检索）** — 对用户指定的 Markdown vault 目录建立索引（SQLite FTS5 关键词 + ChromaDB 语义向量 + RRF 融合排序），可选启用 Multi-Query 查询改写与 Cross-Encoder 精排（ADR-0052/0053），检索后可选地用 LLM 生成自然语言总结（`local_summarizer` 角色）。索引构建是**只读**的，不修改源文件。支持 `.md`、`.txt`、`.pdf`、`.html`。
 2. **Web Research（网络调研）** — 基于 LangGraph StateGraph 的多角色流水线：Planner → Executor → Supervisor → Curator。通过 ToolGateway 执行真实工具调用（Tavily 搜索、arXiv 学术搜索、trafilatura 网页提取（浏览器 UA）、pypdf PDF 解析、本地 Python 沙箱），最终生成 Markdown 报告文件。
 
 双界面：CLI（argparse，`research-agent` 命令）+ Web UI（React + Vite），两者通过统一的 FastAPI 后端和 CoreService 应用层暴露相同的能力面。
@@ -62,7 +62,7 @@ research_agent/
 │       ├── graph.py              # LangGraph 节点函数与图构建
 │       ├── provider_runtime.py   # Provider-backed 真实运行时
 │       └── report.py             # Markdown 报告生成
-├── tests/                        # pytest，20 个测试文件，207 个离线测试 + 9 个真实 API 测试（无配置自动 skip）
+├── tests/                        # pytest，21 个测试文件，262 个离线测试 + 6 个真实 API 测试（无配置自动 skip）
 ├── web/                          # React + Vite 前端
 │   ├── src/
 │   │   ├── App.tsx               # 主应用（Research / Tasks / KB / Settings 页面路由；未配置时 Research 照常可用，启动调研同步报 config_missing）
@@ -77,7 +77,7 @@ research_agent/
 │   ├── playwright.config.ts      # E2E 配置（自动起 5174 端口的 dev server）
 │   └── package.json
 ├── docs/
-│   ├── adr/                      # 51 个架构决策记录（0001~0051，顺序编号）
+│   ├── adr/                      # 53 个架构决策记录（0001~0053，顺序编号）
 │   └── agents/                   # agent 协作约定（issue tracker、triage labels、domain docs）
 ├── CONTEXT.md                    # 领域术语表（命名前必读）
 ├── TODO.md                       # v1 有意延期的功能清单
@@ -116,7 +116,7 @@ cd web && npm run dev:all
 
 ```bash
 # Python：全部 216 个测试，默认离线且确定性（ADR-0042；207 离线 + 9 个真实 API 测试无配置自动 skip）
-uv run pytest                          # 全部
+uv run pytest                          # 全部（268 个：262 离线 + 6 真实 API）
 uv run pytest -x                       # 首次失败即停
 uv run pytest -k "state_graph"         # 按关键字筛选
 uv run pytest tests/test_web_state_graph.py  # 单文件
@@ -143,7 +143,7 @@ cd web && npm run test:e2e             # Playwright E2E（自动起 5174 端口 
 
 - **中文优先**：Review 生成的文件（代码审查报告、ADR 审查等）一律用中文编写，中文翻译版作为主文件（不加 `-zh` 后缀），不保留英文原版。文档（README/USAGE）也是中文。
 - **命名遵守术语表**：`CONTEXT.md` 定义了领域语言（Local RAG、Web Research、Blackboard、Tool Gateway 等）。命名领域概念时使用其中的术语，避免使用被明确否决的同义词（每个词条下有 `_Avoid_` 列表）。
-- **ADR 冲突规则**：若改动与 `docs/adr/` 中已有决策冲突，必须显式提出冲突，而不是静默推翻决策。ADR 共 49 个，顺序编号。
+- **ADR 冲突规则**：若改动与 `docs/adr/` 中已有决策冲突，必须显式提出冲突，而不是静默推翻决策。ADR 共 53 个，顺序编号。
 - **类型注解**：方法签名使用显式类型参数，不用 `*args, **kwargs`；运行时抽象用 `WebResearchRuntime` Protocol 而非 `object`。
 - **简单优先**：用最少代码解决问题，不做未要求的抽象或功能；精准修改，不顺手重构相邻代码；自己改动产生的孤立 import/变量/函数必须清理。
 - **错误模型**：用户可见错误统一为 `ResearchError`（`code` + `message`），CLI 渲染为 `[code] message` 并以非零码退出。
@@ -171,7 +171,7 @@ cd web && npm run test:e2e             # Playwright E2E（自动起 5174 端口 
 
 - 用户配置为 TOML 文件：Windows `%APPDATA%/research_agent/config.toml`，Linux/macOS `~/.config/research_agent/config.toml`，可用环境变量 `RESEARCH_AGENT_CONFIG_PATH` 覆盖。
 - 配置包含 **API keys**（chat model、embedding model、Tavily search）：**绝不提交到仓库**，不在日志、报告或测试中打印真实 key。测试用 fake key（如 `"test-key"`）。
-- 支持 per-role 模型覆盖：`[chat_model.planner|executor|supervisor|curator]`，未配置时回退到全局 `[chat_model]`；`[chat_model.local_summarizer]` 槽位保留但当前未接线（写了不生效、静默回退全局，见 ADR-0009 演进注记）。
+- 支持 per-role 模型覆盖：`[chat_model.planner|executor|supervisor|curator|local_summarizer]`，未配置时回退到全局 `[chat_model]`；`local_summarizer` 槽位服务 Local RAG 总结与 Multi-Query 查询改写（ADR-0052）。检索质量层可选启用：`[research] query_rewrite`（Multi-Query 改写）与 `[research] rerank` + `[rerank_model]`（Cross-Encoder /rerank API 精排，ADR-0053），默认关闭、失败自动降级。
 - 本项目是单用户本地优先应用：Web UI 只绑定 localhost；Web Research 不包含认证浏览、浏览器自动化或反爬绕过；知识库索引对用户 vault 是只读的。
 - 工作区目录（`default_workspace`）存放运行态：`tasks/<task_id>/`（result.json、events.jsonl、checkpoints.sqlite、artifacts/web_sources/）、`indexes/`、`reports/web/`、`logs/`。这些是用户数据，不属于仓库。
 

@@ -13,6 +13,8 @@ DEFAULT_RESEARCH = {
     "max_retrieval_rounds": 3,
     "max_concurrent_subtasks": 3,
     "inject_local_context": True,
+    "query_rewrite": False,
+    "rerank": False,
 }
 DEFAULT_WEB_TOOLS = {
     "request_timeout_seconds": 45,
@@ -51,6 +53,8 @@ class ResearchConfig:
     max_retrieval_rounds: int
     max_concurrent_subtasks: int
     inject_local_context: bool
+    query_rewrite: bool
+    rerank: bool
 
 
 @dataclass(frozen=True)
@@ -80,6 +84,7 @@ class UserConfig:
     search: SearchConfig
     index: IndexConfig
     web_tools: WebToolsConfig
+    rerank_model: ModelConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -93,6 +98,16 @@ class InitConfigRequest:
     embedding_api_key: str
     embedding_model: str
     search_api_key: str
+    # Optional rerank model (ADR-0053): all three blank → no [rerank_model]
+    # section is written; base_url + model present → section is written.
+    rerank_base_url: str = ""
+    rerank_api_key: str = ""
+    rerank_model: str = ""
+    # Research toggles (ADR-0052/0053). Setup edits rewrite the whole TOML,
+    # so the API layer carries the saved toggle values through to the render
+    # instead of silently resetting them; they default to off.
+    research_query_rewrite: bool = False
+    research_rerank: bool = False
 
 
 def default_config_path() -> Path:
@@ -134,6 +149,11 @@ def init_user_config(
             embedding_api_key=request.embedding_api_key,
             embedding_model=request.embedding_model,
             search_api_key=request.search_api_key,
+            rerank_base_url=request.rerank_base_url,
+            rerank_api_key=request.rerank_api_key,
+            rerank_model=request.rerank_model,
+            research_query_rewrite=request.research_query_rewrite,
+            research_rerank=request.research_rerank,
         )
     )
 
@@ -184,6 +204,8 @@ def _parse_user_config(data: dict) -> UserConfig:
                 max_retrieval_rounds=int(research["max_retrieval_rounds"]),
                 max_concurrent_subtasks=int(research["max_concurrent_subtasks"]),
                 inject_local_context=_parse_bool(research["inject_local_context"], "research.inject_local_context"),
+                query_rewrite=_parse_bool(research["query_rewrite"], "research.query_rewrite"),
+                rerank=_parse_bool(research["rerank"], "research.rerank"),
             ),
             chat_model=ModelConfig(
                 provider=chat_model.get("provider", "openai_compatible"),
@@ -201,11 +223,33 @@ def _parse_user_config(data: dict) -> UserConfig:
             search=SearchConfig(provider=search.get("provider", "tavily"), api_key=search["api_key"]),
             index=IndexConfig(backend=index.get("backend", "sqlite_fts5_chroma")),
             web_tools=WebToolsConfig(**{key: _safe_int(value, f"web_tools.{key}") for key, value in web_tools.items()}),
+            rerank_model=_parse_rerank_model(data.get("rerank_model")),
         )
     except KeyError as exc:
         raise ResearchError(code="config_invalid", message=f"Missing config field: {exc.args[0]}") from exc
     except (TypeError, ValueError) as exc:
         raise ResearchError(code="config_invalid", message=f"Invalid config value: {exc}") from exc
+
+
+def _parse_rerank_model(section: object) -> ModelConfig | None:
+    """Parse the optional ``[rerank_model]`` section (ADR-0053).
+
+    Absent section → ``None`` (rerank unusable regardless of the toggle);
+    present section requires ``base_url`` / ``api_key`` / ``model``.
+    """
+    if section is None:
+        return None
+    if not isinstance(section, dict):
+        raise ResearchError(
+            code="config_invalid",
+            message="[rerank_model] must be a table with base_url, api_key, and model.",
+        )
+    return ModelConfig(
+        provider=section.get("provider", "rerank_api"),
+        base_url=section["base_url"],
+        api_key=section["api_key"],
+        model=section["model"],
+    )
 
 
 def _validate_init_request(request: InitConfigRequest) -> None:
@@ -229,6 +273,17 @@ def _validate_init_request(request: InitConfigRequest) -> None:
     ]:
         if not value.strip():
             raise ResearchError(code="config_invalid", message=f"{label} must be non-empty.")
+    # The rerank section is optional (ADR-0053): when its base_url is set the
+    # rest of the section becomes required.
+    if request.rerank_base_url.strip():
+        if not is_valid_http_url(request.rerank_base_url):
+            raise ResearchError(code="config_invalid", message="Rerank model base URL must be a valid URL.")
+        for label, value in [
+            ("Rerank model API key", request.rerank_api_key),
+            ("Rerank model name", request.rerank_model),
+        ]:
+            if not value.strip():
+                raise ResearchError(code="config_invalid", message=f"{label} must be non-empty.")
 
 
 def _parse_role_chat_models(chat_model: dict) -> dict[str, ModelConfig]:
@@ -239,7 +294,7 @@ def _parse_role_chat_models(chat_model: dict) -> dict[str, ModelConfig]:
         model=chat_model["model"],
     )
     roles: dict[str, ModelConfig] = {}
-    for role in ["planner", "executor", "supervisor", "curator"]:
+    for role in ["planner", "executor", "supervisor", "curator", "local_summarizer"]:
         override = chat_model.get(role)
         if not isinstance(override, dict):
             continue
@@ -272,48 +327,60 @@ def _render_config_toml(
     knowledge_base_path: Path,
     request: InitConfigRequest,
 ) -> str:
-    return "\n".join(
-        [
-            "[workspace]",
-            f'default_workspace = "{_toml_string(default_workspace)}"',
-            f'knowledge_base_path = "{_toml_string(knowledge_base_path)}"',
-            "",
-            "[research]",
-            "max_retrieval_rounds = 3",
-            "max_concurrent_subtasks = 3",
-            "inject_local_context = true",
-            "",
-            "[chat_model]",
-            'provider = "openai_compatible"',
-            f'base_url = "{_toml_string(request.chat_base_url)}"',
-            f'api_key = "{_toml_string(request.chat_api_key)}"',
-            f'model = "{_toml_string(request.chat_model)}"',
-            "",
-            "[embedding_model]",
-            'provider = "openai_compatible"',
-            f'base_url = "{_toml_string(request.embedding_base_url)}"',
-            f'api_key = "{_toml_string(request.embedding_api_key)}"',
-            f'model = "{_toml_string(request.embedding_model)}"',
-            "",
-            "[search]",
-            'provider = "tavily"',
-            f'api_key = "{_toml_string(request.search_api_key)}"',
-            "",
-            "[index]",
-            'backend = "sqlite_fts5_chroma"',
-            "",
-            "[web_tools]",
-            "request_timeout_seconds = 45",
-            "pdf_timeout_seconds = 90",
-            "max_response_bytes = 20971520",
-            "max_pdf_bytes = 104857600",
-            "search_top_k = 10",
-            "search_top_k_max = 20",
-            "tool_retries = 2",
-            "python_timeout_seconds = 20",
-            "",
-        ]
-    )
+    lines = [
+        "[workspace]",
+        f'default_workspace = "{_toml_string(default_workspace)}"',
+        f'knowledge_base_path = "{_toml_string(knowledge_base_path)}"',
+        "",
+        "[research]",
+        "max_retrieval_rounds = 3",
+        "max_concurrent_subtasks = 3",
+        "inject_local_context = true",
+        f"query_rewrite = {_toml_bool(request.research_query_rewrite)}",
+        f"rerank = {_toml_bool(request.research_rerank)}",
+        "",
+        "[chat_model]",
+        'provider = "openai_compatible"',
+        f'base_url = "{_toml_string(request.chat_base_url)}"',
+        f'api_key = "{_toml_string(request.chat_api_key)}"',
+        f'model = "{_toml_string(request.chat_model)}"',
+        "",
+        "[embedding_model]",
+        'provider = "openai_compatible"',
+        f'base_url = "{_toml_string(request.embedding_base_url)}"',
+        f'api_key = "{_toml_string(request.embedding_api_key)}"',
+        f'model = "{_toml_string(request.embedding_model)}"',
+        "",
+        "[search]",
+        'provider = "tavily"',
+        f'api_key = "{_toml_string(request.search_api_key)}"',
+        "",
+        "[index]",
+        'backend = "sqlite_fts5_chroma"',
+        "",
+        "[web_tools]",
+        "request_timeout_seconds = 45",
+        "pdf_timeout_seconds = 90",
+        "max_response_bytes = 20971520",
+        "max_pdf_bytes = 104857600",
+        "search_top_k = 10",
+        "search_top_k_max = 20",
+        "tool_retries = 2",
+        "python_timeout_seconds = 20",
+        "",
+    ]
+    if request.rerank_base_url.strip():
+        lines.extend(
+            [
+                "[rerank_model]",
+                'provider = "rerank_api"',
+                f'base_url = "{_toml_string(request.rerank_base_url)}"',
+                f'api_key = "{_toml_string(request.rerank_api_key)}"',
+                f'model = "{_toml_string(request.rerank_model)}"',
+                "",
+            ]
+        )
+    return "\n".join(lines)
 
 
 def _parse_bool(value: object, label: str) -> bool:
@@ -335,6 +402,10 @@ def _safe_int(value: object, label: str) -> int:
             code="config_invalid",
             message=f"{label} must be an integer, got {value!r}: {exc}",
         ) from exc
+
+
+def _toml_bool(value: bool) -> str:
+    return "true" if value else "false"
 
 
 def _toml_string(value: object) -> str:

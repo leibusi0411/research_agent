@@ -5,3 +5,4 @@ __pycache__/
 .research_agent/
 web/tsconfig.tsbuildinfo
 web/node_modules/
+.claude/

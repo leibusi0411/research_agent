@@ -90,6 +90,12 @@ max_concurrent_subtasks = 3
 # Web Research 启动前注入本地知识库检索结果（Prior Knowledge）给 Planner，
 # 让调研瞄准本地未覆盖的缺口；设为 false 则回到完全独立的纯网络调研
 inject_local_context = true
+# Local RAG Multi-Query 查询改写（ADR-0052）：LLM 生成关键词式 + 语义式两个
+# 查询变体，全部走两路召回后 RRF 统一融合；默认关闭，LLM 失败自动回退原始查询
+query_rewrite = false
+# Local RAG Cross-Encoder 精排（ADR-0053）：对融合后的候选经 /rerank API 重排
+# 再截断；默认关闭，API 失败自动降级回融合顺序
+rerank = false
 
 [chat_model]
 # 全局默认 chat 模型（所有角色回退到此配置）
@@ -112,7 +118,7 @@ model = "deepseek-chat"
 # model = "different-model"
 
 [chat_model.local_summarizer]
-# Local RAG 总结专用模型（可选）
+# Local RAG 总结与查询改写专用模型（可选，ADR-0052）
 
 [embedding_model]
 provider = "openai_compatible"
@@ -123,6 +129,14 @@ model = "Qwen/Qwen3-VL-Embedding-8B"
 [search]
 provider = "tavily"
 api_key = "tvly-xxx"
+
+[rerank_model]
+# Cross-Encoder 精排模型端点（可选，ADR-0053）——配合 [research] rerank = true 使用；
+# 不配置该节时即使开关打开也不会发起 rerank 调用
+provider = "rerank_api"
+base_url = "https://api.siliconflow.cn/v1"
+api_key = "sk-xxx"
+model = "BAAI/bge-reranker-v2-m3"
 
 [index]
 backend = "sqlite_fts5_chroma"
