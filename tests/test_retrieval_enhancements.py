@@ -180,8 +180,11 @@ def _configured_service(tmp_path: Path, *, query_rewrite: bool) -> tuple[CoreSer
         )
     )
     if query_rewrite:
-        content = config_path.read_text(encoding="utf-8").replace(
-            "query_rewrite = false", "query_rewrite = true"
+        # ADR-0052 evolution (2026-09-16): the [research] toggle is gone —
+        # the local_summarizer slot section is the switch.
+        content = config_path.read_text(encoding="utf-8") + (
+            "\n[chat_model.local_summarizer]\n"
+            'model = "rewrite-model"\n'
         )
         config_path.write_text(content, encoding="utf-8")
     return service, config_path
@@ -412,7 +415,7 @@ def _enable_rerank(config_path: Path) -> None:
     config_path.write_text(content, encoding="utf-8")
 
 
-def test_build_rerank_client_returns_none_when_toggle_off(tmp_path):
+def test_build_rerank_client_returns_none_when_section_absent(tmp_path):
     service, config_path = _configured_service(tmp_path, query_rewrite=False)
 
     client = build_rerank_client(load_user_config(config_path), offline=False)

@@ -13,8 +13,6 @@ DEFAULT_RESEARCH = {
     "max_retrieval_rounds": 3,
     "max_concurrent_subtasks": 3,
     "inject_local_context": True,
-    "query_rewrite": False,
-    "rerank": False,
 }
 DEFAULT_WEB_TOOLS = {
     "request_timeout_seconds": 45,
@@ -53,8 +51,6 @@ class ResearchConfig:
     max_retrieval_rounds: int
     max_concurrent_subtasks: int
     inject_local_context: bool
-    query_rewrite: bool
-    rerank: bool
 
 
 @dataclass(frozen=True)
@@ -103,11 +99,12 @@ class InitConfigRequest:
     rerank_base_url: str = ""
     rerank_api_key: str = ""
     rerank_model: str = ""
-    # Research toggles (ADR-0052/0053). Setup edits rewrite the whole TOML,
-    # so the API layer carries the saved toggle values through to the render
-    # instead of silently resetting them; they default to off.
-    research_query_rewrite: bool = False
-    research_rerank: bool = False
+    # Optional local_summarizer slot (ADR-0052): all three blank → no
+    # [chat_model.local_summarizer] section; blank fields inside the section
+    # are omitted so the slot inherits the global [chat_model] values.
+    summarizer_base_url: str = ""
+    summarizer_api_key: str = ""
+    summarizer_model: str = ""
 
 
 def default_config_path() -> Path:
@@ -152,8 +149,9 @@ def init_user_config(
             rerank_base_url=request.rerank_base_url,
             rerank_api_key=request.rerank_api_key,
             rerank_model=request.rerank_model,
-            research_query_rewrite=request.research_query_rewrite,
-            research_rerank=request.research_rerank,
+            summarizer_base_url=request.summarizer_base_url,
+            summarizer_api_key=request.summarizer_api_key,
+            summarizer_model=request.summarizer_model,
         )
     )
 
@@ -204,8 +202,6 @@ def _parse_user_config(data: dict) -> UserConfig:
                 max_retrieval_rounds=int(research["max_retrieval_rounds"]),
                 max_concurrent_subtasks=int(research["max_concurrent_subtasks"]),
                 inject_local_context=_parse_bool(research["inject_local_context"], "research.inject_local_context"),
-                query_rewrite=_parse_bool(research["query_rewrite"], "research.query_rewrite"),
-                rerank=_parse_bool(research["rerank"], "research.rerank"),
             ),
             chat_model=ModelConfig(
                 provider=chat_model.get("provider", "openai_compatible"),
@@ -284,6 +280,10 @@ def _validate_init_request(request: InitConfigRequest) -> None:
         ]:
             if not value.strip():
                 raise ResearchError(code="config_invalid", message=f"{label} must be non-empty.")
+    # The summarizer slot is optional (ADR-0052); blank fields inherit the
+    # global chat model, so only a submitted base_url is format-checked.
+    if request.summarizer_base_url.strip() and not is_valid_http_url(request.summarizer_base_url):
+        raise ResearchError(code="config_invalid", message="Summarizer model base URL must be a valid URL.")
 
 
 def _parse_role_chat_models(chat_model: dict) -> dict[str, ModelConfig]:
@@ -336,8 +336,6 @@ def _render_config_toml(
         "max_retrieval_rounds = 3",
         "max_concurrent_subtasks = 3",
         "inject_local_context = true",
-        f"query_rewrite = {_toml_bool(request.research_query_rewrite)}",
-        f"rerank = {_toml_bool(request.research_rerank)}",
         "",
         "[chat_model]",
         'provider = "openai_compatible"',
@@ -345,6 +343,7 @@ def _render_config_toml(
         f'api_key = "{_toml_string(request.chat_api_key)}"',
         f'model = "{_toml_string(request.chat_model)}"',
         "",
+        *_summarizer_section_lines(request),
         "[embedding_model]",
         'provider = "openai_compatible"',
         f'base_url = "{_toml_string(request.embedding_base_url)}"',
@@ -404,8 +403,28 @@ def _safe_int(value: object, label: str) -> int:
         ) from exc
 
 
-def _toml_bool(value: bool) -> str:
-    return "true" if value else "false"
+def _summarizer_section_lines(request: InitConfigRequest) -> list[str]:
+    """Render the optional ``[chat_model.local_summarizer]`` section.
+
+    Written only when at least one field is submitted; blank fields are
+    omitted so the slot inherits the global ``[chat_model]`` values (ADR-0052).
+    """
+    submitted = [
+        value
+        for value in (request.summarizer_base_url, request.summarizer_api_key, request.summarizer_model)
+        if value.strip()
+    ]
+    if not submitted:
+        return []
+    lines = ["[chat_model.local_summarizer]"]
+    if request.summarizer_base_url.strip():
+        lines.append(f'base_url = "{_toml_string(request.summarizer_base_url)}"')
+    if request.summarizer_api_key.strip():
+        lines.append(f'api_key = "{_toml_string(request.summarizer_api_key)}"')
+    if request.summarizer_model.strip():
+        lines.append(f'model = "{_toml_string(request.summarizer_model)}"')
+    lines.append("")
+    return lines
 
 
 def _toml_string(value: object) -> str:

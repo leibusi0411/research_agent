@@ -19,7 +19,7 @@ import { KbPage } from "./pages/KbPage";
 export function App() {
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [setup, setSetup] = useState<SetupPayload>(emptySetup);
-  const [savedKeys, setSavedKeys] = useState({ chat: false, embedding: false, search: false, rerank: false });
+  const [savedKeys, setSavedKeys] = useState({ chat: false, embedding: false, search: false, rerank: false, summarizer: false });
   const [savedNotice, setSavedNotice] = useState(false);
   const [question, setQuestion] = useState("");
   const [result, setResult] = useState<ResearchResult | null>(null);
@@ -145,15 +145,24 @@ export function App() {
     try {
       await api.setupInit(setup);
       setConfigured(true);
-      // rerank is optional — only mark its key as saved when a section was submitted.
-      setSavedKeys({ chat: true, embedding: true, search: true, rerank: setup.rerank_base_url.trim() !== "" });
+      // The optional sections (rerank, summarizer slot) only mark their key
+      // as saved when a section was actually submitted.
+      setSavedKeys({
+        chat: true,
+        embedding: true,
+        search: true,
+        rerank: setup.rerank_base_url.trim() !== "",
+        summarizer:
+          setup.summarizer_base_url.trim() !== "" || setup.summarizer_model.trim() !== ""
+      });
       // Never keep real key values in form state after a successful save.
       setSetup((current) => ({
         ...current,
         chat_api_key: "",
         embedding_api_key: "",
         search_api_key: "",
-        rerank_api_key: ""
+        rerank_api_key: "",
+        summarizer_api_key: ""
       }));
       setMessage("");
       if (wasConfigured) {
@@ -183,13 +192,16 @@ export function App() {
         embedding_base_url: config.embedding_base_url,
         embedding_model: config.embedding_model,
         rerank_base_url: config.rerank_base_url,
-        rerank_model: config.rerank_model
+        rerank_model: config.rerank_model,
+        summarizer_base_url: config.summarizer_base_url,
+        summarizer_model: config.summarizer_model
       }));
       setSavedKeys({
         chat: config.has_chat_api_key,
         embedding: config.has_embedding_api_key,
         search: config.has_search_api_key,
-        rerank: config.has_rerank_api_key
+        rerank: config.has_rerank_api_key,
+        summarizer: config.has_chat_summarizer_api_key
       });
     } catch {
       // No saved config yet — keep the blank form.

@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-15 | 测试：Python 262 passed（离线，另有 6 个真实 API e2e 无配置自动 skip）+ 前端 32 passed + Playwright 1 passed | 第十一轮实现+审查：Multi-Query 查询改写（ADR-0052）+ Cross-Encoder rerank（ADR-0053）+ Settings 页 rerank 卡片，审查 12 项（R-264~R-275）11 修复、1 接受 ✅ | 第十轮实现：调研后接地对话 TaskChatService（ADR-0050，R-262）+ Web 工具面扩展（ADR-0051，R-263） | 第九轮实现：local_kb_search + 索引自动增量更新（ADR-0048，R-257）+ Chunking v2（ADR-0049，R-258）+ KB 页独立 Local RAG 入口（R-259）
+> 最后更新：2026-09-16 | 线上调整：功能开关取消、配置即开关（ADR-0052/0053 演进）+ Settings 页查询改写槽位卡片 |  测试：Python 266 passed（离线，另有 6 个真实 API e2e 无配置自动 skip）+ 前端 32 passed + Playwright 1 passed | 第十一轮实现+审查：Multi-Query 查询改写（ADR-0052）+ Cross-Encoder rerank（ADR-0053）+ Settings 页 rerank 卡片，审查 12 项（R-264~R-275）11 修复、1 接受 ✅ | 第十轮实现：调研后接地对话 TaskChatService（ADR-0050，R-262）+ Web 工具面扩展（ADR-0051，R-263） | 第九轮实现：local_kb_search + 索引自动增量更新（ADR-0048，R-257）+ Chunking v2（ADR-0049，R-258）+ KB 页独立 Local RAG 入口（R-259）
 
 ---
 
@@ -62,6 +62,16 @@
 - `uv run pytest -m "not e2e"` — 262 passed
 - `cd web && npm run test` — 32 passed；`npx playwright test` — 1 passed；`npm run build` 通过，dist 随提交更新
 - 真实 API e2e 6 项（review subagent 本机）— 通过
+
+### 线上调整（2026-09-16，配置即开关 / ADR-0052、0053 演进）
+
+用户实测反馈：Settings 页配了 rerank 模型但功能不生效（还差 TOML 开关），且不接受"开关进 UI"的方案。决策：**取消 `[research] query_rewrite` / `[research] rerank` 两个功能开关，配置项本身就是开关**——
+
+- `[rerank_model]` 节存在 → rerank 启用；不存在 → 回退（无精排，保持 RRF 顺序）
+- `[chat_model.local_summarizer]` 节存在 → 查询改写启用；不存在 → 回退（不改写，总结回退全局模型）
+- Settings 页新增"查询改写模型"槽位卡片（summarizer_base_url / summarizer_api_key / summarizer_model，空字段省略并**继承全局 `[chat_model]` 对应值**；key 空白 = 保留已存槽位 key，无已存则省略继承全局）
+- 配置解析对旧 TOML 中残留的开关键静默忽略（向后兼容）；设置保存不再渲染开关行
+- 测试：后端离线 266 passed / Vitest 32 passed / Playwright 1 passed；ADR-0052/0053 加演进注记，CONTEXT/AGENTS/USAGE/TODO 同步
 
 ### 第八轮审查存档（2026-09-09，历史 ADR 对照最新代码）
 

@@ -684,30 +684,18 @@ def test_setup_init_blank_rerank_key_keeps_saved_value(tmp_path):
     assert config.rerank_model.base_url == "https://changed.example/v1"
 
 
-def test_setup_init_preserves_research_toggles(tmp_path):
-    """Settings edits rewrite the whole TOML — hand-configured research
-    toggles (ADR-0052/0053) must survive a settings save (R-267)."""
+def test_setup_init_stops_rendering_removed_toggles(tmp_path):
+    """ADR-0052/0053 evolution (2026-09-16): the [research] toggles are gone —
+    a settings save no longer renders them at all."""
     config_path = tmp_path / "config.toml"
     client = TestClient(create_app(config_path=config_path))
-    client.post("/api/setup/init", json=_init_payload(tmp_path))
-    content = (
-        config_path.read_text(encoding="utf-8")
-        .replace("query_rewrite = false", "query_rewrite = true")
-        .replace("rerank = false", "rerank = true")
-    )
-    config_path.write_text(content, encoding="utf-8")
 
-    saved = client.post(
-        "/api/setup/init",
-        json=_init_payload(tmp_path, chat_api_key="", embedding_api_key="", search_api_key=""),
-    )
+    saved = client.post("/api/setup/init", json=_init_payload(tmp_path))
 
     assert saved.status_code == 200
-    config = load_user_config(config_path)
-    assert config.research.query_rewrite is True
-    assert config.research.rerank is True
-    # Blank keys still resolve to the saved values.
-    assert config.chat_model.api_key == "chat-key"
+    research_section = config_path.read_text(encoding="utf-8").split("[chat_model]")[0]
+    assert "query_rewrite" not in research_section
+    assert "rerank =" not in research_section
 
 
 def test_api_local_start_applies_configured_rerank(tmp_path, monkeypatch):
@@ -782,3 +770,122 @@ def test_api_local_start_applies_configured_rerank(tmp_path, monkeypatch):
     assert len(calls) == 1
     assert len(calls[0][1]) == 12
     assert len(result["local_results"]) == 10
+
+
+# ---------------------------------------------------------------------------
+# Setup surface: optional [chat_model.local_summarizer] slot (ADR-0052)
+# ---------------------------------------------------------------------------
+
+
+def test_setup_init_with_summarizer_fields_writes_slot_section(tmp_path):
+    config_path = tmp_path / "config.toml"
+    client = TestClient(create_app(config_path=config_path))
+
+    created = client.post(
+        "/api/setup/init",
+        json=_init_payload(
+            tmp_path,
+            summarizer_base_url="https://rewrite.example/v1",
+            summarizer_api_key="rewrite-key",
+            summarizer_model="rewrite-model",
+        ),
+    )
+
+    assert created.status_code == 200
+    config = load_user_config(config_path)
+    slot = config.role_chat_models["local_summarizer"]
+    assert slot.base_url == "https://rewrite.example/v1"
+    assert slot.api_key == "rewrite-key"
+    assert slot.model == "rewrite-model"
+
+
+def test_setup_init_without_summarizer_fields_omits_slot(tmp_path):
+    config_path = tmp_path / "config.toml"
+    client = TestClient(create_app(config_path=config_path))
+
+    created = client.post("/api/setup/init", json=_init_payload(tmp_path))
+
+    assert created.status_code == 200
+    assert "local_summarizer" not in load_user_config(config_path).role_chat_models
+
+
+def test_setup_init_summarizer_blank_fields_inherit_global(tmp_path):
+    """Empty summarizer fields are omitted from the section so the slot
+    inherits the corresponding global [chat_model] values (ADR-0009)."""
+    config_path = tmp_path / "config.toml"
+    client = TestClient(create_app(config_path=config_path))
+
+    created = client.post(
+        "/api/setup/init",
+        json=_init_payload(tmp_path, summarizer_model="rewrite-model"),
+    )
+
+    assert created.status_code == 200
+    config = load_user_config(config_path)
+    slot = config.role_chat_models["local_summarizer"]
+    assert slot.model == "rewrite-model"
+    # Fields not submitted inherit the global chat model.
+    assert slot.base_url == "https://models.example/v1"
+    assert slot.api_key == "chat-key"
+
+
+def test_setup_init_blank_summarizer_key_keeps_saved_slot_key(tmp_path):
+    config_path = tmp_path / "config.toml"
+    client = TestClient(create_app(config_path=config_path))
+    client.post(
+        "/api/setup/init",
+        json=_init_payload(
+            tmp_path,
+            summarizer_base_url="https://rewrite.example/v1",
+            summarizer_api_key="rewrite-key",
+            summarizer_model="rewrite-model",
+        ),
+    )
+
+    saved = client.post(
+        "/api/setup/init",
+        json=_init_payload(
+            tmp_path,
+            summarizer_base_url="https://changed.example/v1",
+            summarizer_api_key="",
+            summarizer_model="rewrite-model",
+        ),
+    )
+
+    assert saved.status_code == 200
+    slot = load_user_config(config_path).role_chat_models["local_summarizer"]
+    assert slot.api_key == "rewrite-key"
+    assert slot.base_url == "https://changed.example/v1"
+
+
+def test_setup_config_returns_summarizer_fields(tmp_path):
+    config_path = tmp_path / "config.toml"
+    client = TestClient(create_app(config_path=config_path))
+    client.post(
+        "/api/setup/init",
+        json=_init_payload(
+            tmp_path,
+            summarizer_base_url="https://rewrite.example/v1",
+            summarizer_api_key="rewrite-key",
+            summarizer_model="rewrite-model",
+        ),
+    )
+
+    body = client.get("/api/setup/config").json()
+
+    assert body["summarizer_base_url"] == "https://rewrite.example/v1"
+    assert body["summarizer_model"] == "rewrite-model"
+    assert body["summarizer_api_key"] == ""
+    assert body["has_chat_summarizer_api_key"] is True
+
+
+def test_setup_config_without_slot_reports_not_set(tmp_path):
+    config_path = tmp_path / "config.toml"
+    client = TestClient(create_app(config_path=config_path))
+    client.post("/api/setup/init", json=_init_payload(tmp_path))
+
+    body = client.get("/api/setup/config").json()
+
+    assert body["summarizer_base_url"] == ""
+    assert body["summarizer_model"] == ""
+    assert body["has_chat_summarizer_api_key"] is False

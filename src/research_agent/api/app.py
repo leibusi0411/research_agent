@@ -146,6 +146,15 @@ def _register_setup_routes(app: FastAPI, resolved_config_path: Path, reset_cache
         if not rerank_base_url:
             rerank_api_key = ""
             rerank_model_name = ""
+        # Optional local_summarizer slot (ADR-0052): same keep-saved-key rule;
+        # blank base_url/model fields are omitted so the slot inherits the
+        # global [chat_model] values.
+        summarizer_base_url = str(payload.get("summarizer_base_url") or "").strip()
+        summarizer_api_key = _optional_key(payload.get("summarizer_api_key"))
+        summarizer_model = str(payload.get("summarizer_model") or "").strip()
+        summarizer_submitted = bool(summarizer_base_url or summarizer_api_key or summarizer_model)
+        if not summarizer_submitted:
+            summarizer_api_key = ""
         request = InitConfigRequest(
             default_workspace=Path(payload["default_workspace"]),
             knowledge_base_path=Path(payload["knowledge_base_path"]),
@@ -159,6 +168,9 @@ def _register_setup_routes(app: FastAPI, resolved_config_path: Path, reset_cache
             rerank_base_url=rerank_base_url,
             rerank_api_key=rerank_api_key,
             rerank_model=rerank_model_name,
+            summarizer_base_url=summarizer_base_url,
+            summarizer_api_key=summarizer_api_key,
+            summarizer_model=summarizer_model,
         )
         # Blank key fields mean "keep the saved key": the settings page never
         # receives key values back, so edits resubmit them blank.
@@ -167,6 +179,12 @@ def _register_setup_routes(app: FastAPI, resolved_config_path: Path, reset_cache
             saved = load_user_config(resolved_config_path)
         except ResearchError:
             saved = None
+        # The summarizer key never hard-fails: blank resolves to the saved
+        # slot key, or to omission (the slot then inherits the global key).
+        summarizer_api_key = request.summarizer_api_key
+        if summarizer_submitted and not summarizer_api_key:
+            saved_slot = saved.role_chat_models.get("local_summarizer") if saved else None
+            summarizer_api_key = saved_slot.api_key if saved_slot is not None else ""
         if not request.chat_api_key or not request.embedding_api_key or not request.search_api_key or rerank_key_pending:
             if saved is None:
                 missing = ", ".join(
@@ -185,9 +203,6 @@ def _register_setup_routes(app: FastAPI, resolved_config_path: Path, reset_cache
                 raise ResearchError(code="config_invalid", message="Missing config field: rerank_api_key")
         else:
             saved_rerank_key = ""
-        # Settings edits rewrite the whole TOML, so research toggles configured
-        # by hand in config.toml (ADR-0052/0053) are carried through instead of
-        # being reset by the rendered defaults.
         request = InitConfigRequest(
             default_workspace=request.default_workspace,
             knowledge_base_path=request.knowledge_base_path,
@@ -201,8 +216,9 @@ def _register_setup_routes(app: FastAPI, resolved_config_path: Path, reset_cache
             rerank_base_url=request.rerank_base_url,
             rerank_api_key=request.rerank_api_key or saved_rerank_key,
             rerank_model=request.rerank_model,
-            research_query_rewrite=saved.research.query_rewrite if saved else False,
-            research_rerank=saved.research.rerank if saved else False,
+            summarizer_base_url=summarizer_base_url,
+            summarizer_api_key=summarizer_api_key,
+            summarizer_model=summarizer_model,
         )
         written = CoreService(default_workspace=request.default_workspace, config_path=resolved_config_path).init_config(request)
         reset_cached_service()
@@ -233,6 +249,12 @@ def _register_setup_routes(app: FastAPI, resolved_config_path: Path, reset_cache
                 "rerank_model": config.rerank_model.model if config.rerank_model else "",
                 "rerank_api_key": "",
                 "has_rerank_api_key": bool(config.rerank_model and config.rerank_model.api_key),
+                "summarizer_base_url": (config.role_chat_models["local_summarizer"].base_url if "local_summarizer" in config.role_chat_models else "") or "",
+                "summarizer_model": (config.role_chat_models["local_summarizer"].model if "local_summarizer" in config.role_chat_models else "") or "",
+                "summarizer_api_key": "",
+                "has_chat_summarizer_api_key": bool(
+                    "local_summarizer" in config.role_chat_models and config.role_chat_models["local_summarizer"].api_key
+                ),
             }
         )
 

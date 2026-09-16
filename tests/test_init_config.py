@@ -48,8 +48,6 @@ def test_core_service_init_writes_user_config_and_workspace(tmp_path):
         "max_retrieval_rounds": 3,
         "max_concurrent_subtasks": 3,
         "inject_local_context": True,
-        "query_rewrite": False,
-        "rerank": False,
     }
     assert data["chat_model"] == {
         "provider": "openai_compatible",
@@ -299,20 +297,10 @@ def test_research_config_inject_local_context_rejects_non_bool(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_research_config_query_rewrite_and_rerank_default_off(tmp_path):
-    config_path = tmp_path / "config.toml"
-    vault = tmp_path / "vault"
-    vault.mkdir()
-    service = CoreService(default_workspace=tmp_path / "runtime", config_path=config_path)
-    service.init_config(valid_init_request(tmp_path / "runtime", vault))
-
-    loaded = load_user_config(config_path)
-
-    assert loaded.research.query_rewrite is False
-    assert loaded.research.rerank is False
-
-
-def test_research_config_query_rewrite_and_rerank_parse_true(tmp_path):
+def test_research_config_ignores_legacy_toggle_keys(tmp_path):
+    """ADR-0052/0053 evolution (2026-09-16): the [research] query_rewrite /
+    rerank toggles were removed — config presence is the switch now. Old
+    TOML files carrying the keys must still parse (keys are ignored)."""
     config_path = tmp_path / "config.toml"
     vault = tmp_path / "vault"
     vault.mkdir()
@@ -320,33 +308,18 @@ def test_research_config_query_rewrite_and_rerank_parse_true(tmp_path):
     service.init_config(valid_init_request(tmp_path / "runtime", vault))
     content = (
         config_path.read_text(encoding="utf-8")
-        .replace("query_rewrite = false", "query_rewrite = true")
-        .replace("rerank = false", "rerank = true")
+        .replace(
+            "inject_local_context = true",
+            "inject_local_context = true\nquery_rewrite = true\nrerank = true",
+        )
     )
     config_path.write_text(content, encoding="utf-8")
 
     loaded = load_user_config(config_path)
 
-    assert loaded.research.query_rewrite is True
-    assert loaded.research.rerank is True
-
-
-def test_research_config_new_toggles_reject_non_bool(tmp_path):
-    config_path = tmp_path / "config.toml"
-    vault = tmp_path / "vault"
-    vault.mkdir()
-    service = CoreService(default_workspace=tmp_path / "runtime", config_path=config_path)
-    service.init_config(valid_init_request(tmp_path / "runtime", vault))
-    content = config_path.read_text(encoding="utf-8").replace(
-        "inject_local_context = true",
-        'inject_local_context = true\nquery_rewrite = "yes"',
-    )
-    config_path.write_text(content, encoding="utf-8")
-
-    with pytest.raises(ResearchError) as excinfo:
-        load_user_config(config_path)
-
-    assert excinfo.value.code == "config_invalid"
+    assert not hasattr(loaded.research, "query_rewrite")
+    assert not hasattr(loaded.research, "rerank")
+    assert loaded.research.inject_local_context is True
 
 
 def test_rerank_model_section_parses_when_present(tmp_path):

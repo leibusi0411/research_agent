@@ -14,7 +14,10 @@ const emptySetup: SetupPayload = {
   search_api_key: "",
   rerank_base_url: "",
   rerank_api_key: "",
-  rerank_model: ""
+  rerank_model: "",
+  summarizer_base_url: "",
+  summarizer_api_key: "",
+  summarizer_model: ""
 };
 
 export { emptySetup };
@@ -35,7 +38,9 @@ const ALWAYS_REQUIRED = new Set([
 
 function isFieldRequired(key: string, saved: boolean | undefined, setup: SetupPayload): boolean {
   if (ALWAYS_REQUIRED.has(key)) return true;
-  if (key === "rerank_api_key") return !saved && setup.rerank_base_url.trim() !== "";
+  // The optional enhancement sections (ADR-0052/0053) are never required:
+  // blank fields mean "not configured" and the features gracefully fall back.
+  if (key.startsWith("rerank_") || key.startsWith("summarizer_")) return false;
   return key.endsWith("api_key") ? !saved : false;
 }
 
@@ -46,13 +51,14 @@ function SetupFields({
 }: {
   setup: SetupPayload;
   setSetup: (value: SetupPayload) => void;
-  savedKeys: { chat: boolean; embedding: boolean; search: boolean; rerank: boolean };
+  savedKeys: { chat: boolean; embedding: boolean; search: boolean; rerank: boolean; summarizer: boolean };
 }) {
   const savedByKey: Record<string, boolean> = {
     chat_api_key: savedKeys.chat,
     embedding_api_key: savedKeys.embedding,
     search_api_key: savedKeys.search,
-    rerank_api_key: savedKeys.rerank
+    rerank_api_key: savedKeys.rerank,
+    summarizer_api_key: savedKeys.summarizer
   };
   return (
     <div className="setup-grid">
@@ -89,7 +95,7 @@ export function SettingsPage({
 }: {
   setup: SetupPayload;
   setSetup: (value: SetupPayload) => void;
-  savedKeys: { chat: boolean; embedding: boolean; search: boolean; rerank: boolean };
+  savedKeys: { chat: boolean; embedding: boolean; search: boolean; rerank: boolean; summarizer: boolean };
   savedNotice: boolean;
   loadSettings: () => Promise<void>;
   configured: boolean;
@@ -133,7 +139,10 @@ export function SettingsPage({
     { label: "search_api_key", value: savedKeys.search ? "••••••••" : "(not set)", masked: true },
     { label: "rerank_base_url", value: setup.rerank_base_url },
     { label: "rerank_model", value: setup.rerank_model },
-    { label: "rerank_api_key", value: savedKeys.rerank ? "••••••••" : "(not set)", masked: true }
+    { label: "rerank_api_key", value: savedKeys.rerank ? "••••••••" : "(not set)", masked: true },
+    { label: "summarizer_base_url", value: setup.summarizer_base_url },
+    { label: "summarizer_model", value: setup.summarizer_model },
+    { label: "summarizer_api_key", value: savedKeys.summarizer ? "••••••••" : "(not set)", masked: true }
   ];
 
   return (

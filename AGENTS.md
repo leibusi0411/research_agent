@@ -62,7 +62,7 @@ research_agent/
 │       ├── graph.py              # LangGraph 节点函数与图构建
 │       ├── provider_runtime.py   # Provider-backed 真实运行时
 │       └── report.py             # Markdown 报告生成
-├── tests/                        # pytest，21 个测试文件，262 个离线测试 + 6 个真实 API 测试（无配置自动 skip）
+├── tests/                        # pytest，21 个测试文件，266 个离线测试 + 6 个真实 API 测试（无配置自动 skip）
 ├── web/                          # React + Vite 前端
 │   ├── src/
 │   │   ├── App.tsx               # 主应用（Research / Tasks / KB / Settings 页面路由；未配置时 Research 照常可用，启动调研同步报 config_missing）
@@ -116,7 +116,7 @@ cd web && npm run dev:all
 
 ```bash
 # Python：全部 216 个测试，默认离线且确定性（ADR-0042；207 离线 + 9 个真实 API 测试无配置自动 skip）
-uv run pytest                          # 全部（268 个：262 离线 + 6 真实 API）
+uv run pytest                          # 全部（272 个：266 离线 + 6 真实 API）
 uv run pytest -x                       # 首次失败即停
 uv run pytest -k "state_graph"         # 按关键字筛选
 uv run pytest tests/test_web_state_graph.py  # 单文件
@@ -171,7 +171,7 @@ cd web && npm run test:e2e             # Playwright E2E（自动起 5174 端口 
 
 - 用户配置为 TOML 文件：Windows `%APPDATA%/research_agent/config.toml`，Linux/macOS `~/.config/research_agent/config.toml`，可用环境变量 `RESEARCH_AGENT_CONFIG_PATH` 覆盖。
 - 配置包含 **API keys**（chat model、embedding model、Tavily search）：**绝不提交到仓库**，不在日志、报告或测试中打印真实 key。测试用 fake key（如 `"test-key"`）。
-- 支持 per-role 模型覆盖：`[chat_model.planner|executor|supervisor|curator|local_summarizer]`，未配置时回退到全局 `[chat_model]`；`local_summarizer` 槽位服务 Local RAG 总结与 Multi-Query 查询改写（ADR-0052）。检索质量层可选启用：`[research] query_rewrite`（Multi-Query 改写）与 `[research] rerank` + `[rerank_model]`（Cross-Encoder /rerank API 精排，ADR-0053），默认关闭、失败自动降级。
+- 支持 per-role 模型覆盖：`[chat_model.planner|executor|supervisor|curator|local_summarizer]`，未配置时回退到全局 `[chat_model]`；`local_summarizer` 槽位服务 Local RAG 总结与 Multi-Query 查询改写（ADR-0052）。检索质量层**配置即开关**：配 `[chat_model.local_summarizer]` 节启用改写、配 `[rerank_model]` 节启用 Cross-Encoder /rerank API 精排（ADR-0053），不配自动回退，失败自动降级。
 - 本项目是单用户本地优先应用：Web UI 只绑定 localhost；Web Research 不包含认证浏览、浏览器自动化或反爬绕过；知识库索引对用户 vault 是只读的。
 - 工作区目录（`default_workspace`）存放运行态：`tasks/<task_id>/`（result.json、events.jsonl、checkpoints.sqlite、artifacts/web_sources/）、`indexes/`、`reports/web/`、`logs/`。这些是用户数据，不属于仓库。
 

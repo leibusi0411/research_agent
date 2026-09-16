@@ -170,10 +170,14 @@ describe("App", () => {
             rerank_base_url: "https://rerank.example/v1",
             rerank_model: "bge-reranker-v2-m3",
             rerank_api_key: "",
+            summarizer_base_url: "",
+            summarizer_model: "rewrite-model",
+            summarizer_api_key: "",
             has_chat_api_key: true,
             has_embedding_api_key: true,
             has_search_api_key: true,
             has_rerank_api_key: true,
+            has_chat_summarizer_api_key: false,
           });
         }
         if (url.endsWith("/api/setup/init") && init?.method === "POST") {
@@ -190,6 +194,8 @@ describe("App", () => {
     expect(await screen.findByText("chat_base_url")).toBeInTheDocument();
     expect(await screen.findByText("https://models.example/v1")).toBeInTheDocument();
     expect(screen.getAllByText("••••••••")).toHaveLength(4);
+    expect(await screen.findByText("summarizer_model")).toBeInTheDocument();
+    expect(await screen.findByText("rewrite-model")).toBeInTheDocument();
     expect(await screen.findByText("rerank_base_url")).toBeInTheDocument();
     expect(await screen.findByText("bge-reranker-v2-m3")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "chat_base_url" })).toBeNull();

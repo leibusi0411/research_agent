@@ -58,11 +58,12 @@ def run_local_research(
     )
 
     queries = [question]
-    # ADR-0052: Multi-Query rewriting is opt-in ([research] query_rewrite) and
-    # only runs when a chat model exists; LLM failure degrades to the original
-    # question alone (rewrite_question returns []).
+    # ADR-0052 (evolution 2026-09-16): the [chat_model.local_summarizer]
+    # section is the switch — present → Multi-Query rewriting active, absent →
+    # the question runs as-is; LLM failure degrades to the original question
+    # alone (rewrite_question returns []).
     config = load_user_config(config_path)
-    if config.research.query_rewrite and chat_model is not None:
+    if "local_summarizer" in config.role_chat_models and chat_model is not None:
         queries.extend(rewrite_question(question, chat_model))
 
     query_result_lists = [

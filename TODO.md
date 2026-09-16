@@ -9,7 +9,7 @@
 - LLM 一次调用生成 2~3 个查询变体（引导生成一个偏关键词提取、一个偏语义描述的变体）
 - 每个查询（原问题 + 变体）都走**完整两路混合检索**（FTS5 + 向量），不做变体定向路由——交叉覆盖有真实收益；本地检索是毫秒级，真正开销只是每变体一次 embedding 调用 + 改写一次 LLM 调用
 - 全部结果列表（2N 个排名列表）进入现有 RRF 统一融合，去重键 `path:start:end` 不变，融合器本身不动，只在检索外套一层循环
-- 开关 `[research] query_rewrite`（默认关）；未配置 chat model 或开关关闭时透明回退原始查询——离线确定性测试建立在这条回退上
+- 启用语义（2026-09-16 演进）：`[chat_model.local_summarizer]` 槽位节存在即启用，不配即回退原始查询（无独立开关）；未配置 chat model 同样回退——离线确定性测试建立在这条回退上
 - 模型槽位：接上保留未接线的 `[chat_model.local_summarizer]` 槽位（改写与总结同属 local 检索域，顺手解决 ADR-0009 遗留注记）
 - 实施前置：写新 ADR 显式演进 CONTEXT.md `Hybrid Retrieval` 词条（其 v1 注明 "does not require … agentic query rewriting"）；`local_summarizer` 槽位接线需同步修订 ADR-0009 演进注记
 - 测试缝（TDD，全部离线 fake model）：`rewrite_query` 纯函数行为、配置解析与回退路径、RRF 多列表融合正确性
@@ -26,7 +26,7 @@
 
 - 路线：`providers.py` 新增第三种客户端 `RerankClient`——`POST {base_url}/rerank`，入参 `query + documents`，出参 relevance 分数数组。三家 API 形态相近（均为 query+documents→scores），单客户端可覆盖，per-provider 字段差异留适配余量；协议与 OpenAI 兼容 chat/embedding 不同，不复用现有客户端代码
 - 依赖：仅 httpx，**零新增重量级依赖**；明确拒绝本地部署路线（torch + sentence-transformers + bge-reranker 权重下载/HF 镜像链路），与单用户本地优先假设冲突
-- 配置：新 `[rerank_model]` 节（base_url / model / api_key）；未配置或 `[research] rerank = false` 时整层跳过，检索行为与现状完全一致
+- 启用语义（2026-09-16 演进）：`[rerank_model]` 节存在即启用，不配即整层跳过（无独立开关），检索行为与现状完全一致
 - 集成缝：`retrieve_local_chunks` 内 RRF 融合排序之后、`[:top_k]` 截断之前——对 top 20 候选（fetch_k 不变）打分重排取 top 10
 - 失败语义：rerank API 调用失败**降级回 RRF 顺序**（对称既有"Chroma 失败→FTS5-only"模式），log warning，不报错不中断任务；错误码归 `model_error` 家族还是新 `rerank_error`，实施时随 ADR 定
 - 界面/文档配套：Settings 页新增第三个模型配置卡片（现有 chat/embedding 旁）；新 ADR + CONTEXT.md 词条（Reranker / Rerank）

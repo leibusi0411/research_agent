@@ -36,6 +36,10 @@
 - 三个调用方自动受益：Local RAG、Prior Knowledge 注入、`local_kb_search`（同一公共接口）。Prior Knowledge 路径**只接 rerank 不接 query rewrite**（ADR-0052），Web 任务启动延迟至多多一次 API 调用
 - 与 Multi-Query 叠加时：每个查询的融合列表各自重排（N 次调用，每次至多 2×top_k 个候选——Local RAG 路径 fetch_k=20、融合去重后至多 40，Prior Knowledge 路径 top_k=5 即至多 10；成本可接受）；两者独立开关
 
+## 演进注记（2026-09-16，用户决策）
+
+原决策中的 `[research] rerank` 开关**已移除**：rerank 的启用条件改为 **`[rerank_model]` 节存在即启用、不配即回退**（不配节 = 无 rerank 层，保持 RRF 顺序）。"开关 + 配置"双层机制收敛为"配置即开关"，与 ADR-0052 的改写同步调整。
+
 ## 影响
 
 - 一次开启 rerank 的检索多 1 次（多查询时 N 次）HTTP 调用；`build_rerank_client(config, offline)` 为唯一构建缝，service 与 Prior Knowledge 装配共用

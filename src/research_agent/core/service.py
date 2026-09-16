@@ -37,11 +37,11 @@ from research_agent.web.tools import (
 def build_rerank_client(config: UserConfig, *, offline: bool) -> RerankClient | None:
     """Build the cross-encoder rerank client from config (ADR-0053).
 
-    Returns ``None`` — meaning "no rerank layer, keep the RRF order" — when
-    the ``[research] rerank`` toggle is off, no ``[rerank_model]`` section is
-    configured, or the process runs in offline mode.
+    The ``[rerank_model]`` section is the switch (ADR-0053 evolution,
+    2026-09-16): configured → rerank layer active; absent → ``None``, meaning
+    "no rerank layer, keep the RRF order". Offline mode also disables it.
     """
-    if offline or not config.research.rerank or config.rerank_model is None:
+    if offline or config.rerank_model is None:
         return None
     return RerankApiModel.from_config(config.rerank_model)
 

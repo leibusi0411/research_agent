@@ -33,6 +33,10 @@ Local RAG 的混合检索（FTS5 + 向量，RRF 融合）接收**原始问题原
 - **模型槽位**：使用 `[chat_model.local_summarizer]` 角色槽位（改写与总结同属 local 检索域）。本 ADR 同时接线该槽位：`_parse_role_chat_models` 角色解析列表加入 `local_summarizer`（此前写入不生效、静默回退全局，见 ADR-0009 演进注记 R-226，现已兑现）
 - 改写**仅作用于 Local RAG**：Prior Knowledge 注入与 `local_kb_search` 不改写，控制 Web 任务启动延迟
 
+## 演进注记（2026-09-16，用户决策）
+
+原决策中的 `[research] query_rewrite` 开关**已移除**：改写的启用条件改为 **`[chat_model.local_summarizer]` 槽位节存在即启用、不配即回退**（不配槽位 = 不改写，总结回退全局 chat model）。设置页新增槽位卡片（summarizer_base_url / summarizer_api_key / summarizer_model，空字段省略并继承全局对应值）。"开关 + 配置"双层机制收敛为"配置即开关"，与 ADR-0053 的 rerank 同步调整。
+
 ## 影响
 
 - 一次开启改写的 Local RAG 任务多 1 次 LLM 调用 + 每变体 1 次 embedding 调用
