@@ -168,8 +168,10 @@ def _render_tool_plan_prompt(
     if tool_descriptions is None:
         tool_descriptions = (
             '1. web.search - Search the web. Arguments: {"query": "search query", "max_results": 5}\n'
-            '2. web.fetch_extract - Fetch and extract text from a URL. Arguments: {"url": "https://..."}\n'
-            '3. web.download_pdf - Download and extract text from a PDF. Arguments: {"url": "https://..."}\n'
+            '2. scholar.search - Search academic papers on arXiv. Arguments: {"query": "search query", "max_results": 5}\n'
+            '3. code.run_python - Run a short Python snippet for computation or data processing. Arguments: {"code": "print(1 + 1)"}\n'
+            '4. web.fetch_extract - Fetch and extract text from a URL. Arguments: {"url": "https://..."}\n'
+            '5. web.download_pdf - Download and extract text from a PDF. Arguments: {"url": "https://..."}\n'
         )
     return (
         "You are a Research Executor for a web research task.\n"
@@ -180,7 +182,9 @@ def _render_tool_plan_prompt(
         f"{tool_descriptions}\n"
         "Plan a series of tool calls to gather evidence for this subtask.\n"
         "Start with web.search to find relevant sources, then use web.fetch_extract or web.download_pdf to get details.\n"
-        "Make 2-5 tool calls. Include at least one web.search call.\n"
+        "Use scholar.search instead of web.search when the subtask needs academic papers, preprints, or citation-worthy primary literature.\n"
+        "Use code.run_python only when plain calculation, aggregation, or data processing is needed — never as a substitute for searching.\n"
+        "Make 2-5 tool calls. Include at least one web.search or scholar.search call.\n"
     )
 
 

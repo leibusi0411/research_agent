@@ -128,6 +128,23 @@ def test_build_executor_tool_plan_prompt_includes_tool_descriptions():
     assert "web.download_pdf" in prompt
 
 
+def test_build_executor_tool_plan_prompt_guides_when_to_use_new_tools():
+    # R-263 follow-up: the five tools are listed from the registry, but the
+    # strategy line must tell the model WHEN to reach for the new ones —
+    # otherwise scholar.search and code.run_python sit unused in the list.
+    state = create_initial_state(original_question="What is LangGraph?")
+    _add_planner_output(state, PlannerOutput("LangGraph Research", [PlannerSubtaskDraft("Find architecture overview.")]))
+    prompt = build_executor_tool_plan_prompt(state, "st_1")
+
+    assert "scholar.search" in prompt
+    assert "academic" in prompt.lower()
+    assert "code.run_python" in prompt
+    assert "computation" in prompt.lower() or "calculation" in prompt.lower()
+    # The mandatory-search floor accepts either search flavor, so a purely
+    # academic subtask is not forced back onto web.search.
+    assert "at least one web.search or scholar.search call" in prompt
+
+
 def test_build_supervisor_prompt_requests_json_with_route():
     state = create_initial_state(original_question="What is LangGraph?")
     _add_planner_output(state, PlannerOutput("LangGraph Research", [PlannerSubtaskDraft("Find architecture overview.")]))
