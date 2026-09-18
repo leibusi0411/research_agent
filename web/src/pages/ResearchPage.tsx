@@ -54,13 +54,17 @@ export function ResearchPage({
         </button>
       </form>
       <label className="local-context-toggle">
+        <span className="toggle-label">Check local first</span>
         <input
           type="checkbox"
+          className="toggle-input"
           checked={localContext}
           onChange={(event) => setLocalContext(event.target.checked)}
           disabled={running}
         />
-        Check my notes first
+        <span className="toggle-track" aria-hidden="true">
+          <span className="toggle-knob" />
+        </span>
       </label>
       {events.length > 0 && <TraceCard events={events} phase={phase} running={running} />}
       {result && <ResultCards result={result} events={events} />}

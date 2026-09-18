@@ -1900,27 +1900,89 @@ label span {
   }
 }
 
-/* ---------- Notes toggle (R-264) ---------- */
+/* ---------- Notes toggle (R-264) — pill switch, bottom-right of the search bar ---------- */
 
 .local-context-toggle {
-  display: inline-flex;
+  display: flex;
+  flex-direction: row; /* the global `label` rule forces column — undo it */
   align-items: center;
-  gap: 7px;
+  justify-content: flex-end;
+  gap: 8px;
   margin-top: 10px;
-  font-size: 12.5px;
+  padding-right: 4px;
   color: var(--text-2);
   cursor: pointer;
   user-select: none;
+  transition: color var(--t-micro);
 }
 
-.local-context-toggle input {
-  accent-color: var(--accent);
-  width: 13px;
-  height: 13px;
-  margin: 0;
-  flex: none;
+.local-context-toggle .toggle-label {
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-2);
+  letter-spacing: normal;
+  transition: color var(--t-micro);
 }
 
 .local-context-toggle:hover {
   color: var(--text);
+}
+
+/* The native input stays focusable for a11y but is visually replaced by the track. */
+.local-context-toggle .toggle-input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+}
+
+.local-context-toggle .toggle-track {
+  position: relative;
+  width: 34px;
+  height: 19px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  transition: background var(--t-micro), border-color var(--t-micro), box-shadow var(--t-micro);
+  flex: none;
+}
+
+.local-context-toggle .toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: transform var(--t-micro), background var(--t-micro);
+}
+
+.local-context-toggle:active .toggle-knob {
+  transform: scale(0.88);
+}
+
+.local-context-toggle input:checked + .toggle-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.local-context-toggle input:checked + .toggle-track .toggle-knob {
+  transform: translateX(15px);
+  background: var(--accent-ink);
+}
+
+.local-context-toggle input:checked ~ .toggle-label {
+  color: var(--accent-strong);
+}
+
+.local-context-toggle input:focus-visible + .toggle-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.local-context-toggle input:disabled + .toggle-track {
+  opacity: 0.5;
 }

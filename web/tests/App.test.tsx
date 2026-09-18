@@ -245,7 +245,7 @@ describe("App", () => {
     render(<MemoryRouter><App /></MemoryRouter>);
 
     // Checked by default: pre-planning local retrieval stays on (ADR-0048).
-    const toggle = await screen.findByRole("checkbox", { name: /check my notes first/i });
+    const toggle = await screen.findByRole("checkbox", { name: /check local first/i });
     expect(toggle).toBeChecked();
 
     await userEvent.click(toggle);
