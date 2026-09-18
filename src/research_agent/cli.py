@@ -209,6 +209,9 @@ def _print_web_result(result: dict, *, heading_prefix: str = "") -> int:
     output = result.get("curator_output", {})
     print(f"{heading_prefix}Summary")
     print(output.get("summary", ""))
+    for section in output.get("sections", []):
+        print(f"{heading_prefix}{section.get('heading', '')}")
+        print(section.get("text", ""))
     print(f"{heading_prefix}Findings")
     for finding in output.get("findings", []):
         print(f"- {finding.get('text', '')}")

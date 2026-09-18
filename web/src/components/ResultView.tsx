@@ -140,6 +140,12 @@ export function ResultCards({ result, events }: { result: ResearchResult; events
           <>
             <h3>Summary</h3>
             <p>{result.curator_output.summary}</p>
+            {(result.curator_output.sections ?? []).map((section, index) => (
+              <div className="report-section" key={`${section.heading}-${index}`}>
+                <h3>{section.heading}</h3>
+                <p>{section.text}</p>
+              </div>
+            ))}
             <h3>Findings</h3>
             <ul>
               {result.curator_output.findings.map((finding) => (

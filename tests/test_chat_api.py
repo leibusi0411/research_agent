@@ -109,6 +109,26 @@ def test_chat_message_returns_grounded_reply_and_persists_history(tmp_path):
     assert messages[1]["content"] == "Grounded answer."
 
 
+def test_chat_grounds_on_report_sections_when_present(tmp_path):
+    """R-277: sectioned report chapters are part of the chat grounding context."""
+    chat_model = _RecordingChatModel()
+    client, workspace = _chat_client(tmp_path, chat_model)
+    task_id = _write_completed_web_task(workspace)
+    # Add sections to the stored result, as post-R-277 curators do.
+    result_path = workspace / "tasks" / task_id / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["curator_output"]["sections"] = [
+        {"heading": "Overview", "text": "RAG pipelines retrieve then generate."},
+    ]
+    result_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+
+    sent = client.post(f"/api/tasks/{task_id}/chat", json={"message": "Summarize the overview."})
+
+    assert sent.status_code == 200
+    assert "RAG pipelines retrieve then generate." in chat_model.prompts[0]
+    assert "Overview" in chat_model.prompts[0]
+
+
 def test_chat_selected_sources_narrow_the_grounding_context(tmp_path):
     chat_model = _RecordingChatModel()
     client, workspace = _chat_client(tmp_path, chat_model)

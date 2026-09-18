@@ -45,13 +45,16 @@ def render_web_report(task_id: str, created_at: str, output: CuratorOutput) -> s
         "",
         _escape_markdown_text(output.summary),
         "",
-        "## Findings",
-        "",
     ]
+    # R-277: sectioned report body (NotebookLM-style chapters); legacy
+    # outputs without sections keep the previous Summary+Findings shape.
+    for section in output.sections:
+        lines.extend([f"## {_clean_heading(section.heading)}", "", _escape_markdown_text(section.text), ""])
+    lines.extend(["## Findings", ""])
     for finding in output.findings:
         refs = " ".join(f"[{source_numbers[source_id]}]" for source_id in finding.source_ids if source_id in source_numbers)
         suffix = f" {refs}" if refs else ""
-        lines.append(f"- {_escape_markdown_text(finding.text)}{suffix}")
+        lines.append(f"- [{finding.finding_id}] {_escape_markdown_text(finding.text)}{suffix}")
     lines.extend(["", "## Sources", ""])
     for index, source in enumerate(output.sources, start=1):
         lines.append(f"{index}. {_escape_markdown_text(source.title)} - {source.url}")
@@ -88,6 +91,12 @@ def _next_report_path(reports_dir: Path, slug: str, date: str) -> Path:
         if not candidate.exists():
             return candidate
         suffix += 1
+
+
+def _clean_heading(heading: str) -> str:
+    """Collapse whitespace and strip leading markdown markers from a chapter heading."""
+    cleaned = re.sub(r"\s+", " ", heading).strip()
+    return cleaned.lstrip("#*-> ").strip()
 
 
 def _escape_frontmatter(value: str) -> str:

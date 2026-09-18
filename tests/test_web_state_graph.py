@@ -113,13 +113,16 @@ def _make_empty_tool_plan_response() -> str:
     return json.dumps({"tool_calls": []})
 
 
-def _make_curator_response(title: str, summary: str) -> str:
-    return json.dumps({
+def _make_curator_response(title: str, summary: str, sections: list | None = None) -> str:
+    payload = {
         "title": title,
         "summary": summary,
         "findings": [],
         "sources": [],
-    })
+    }
+    if sections is not None:
+        payload["sections"] = sections
+    return json.dumps(payload)
 
 
 def _make_chat_models(client: object) -> dict[str, object]:
@@ -934,3 +937,38 @@ def test_state_graph_runner_local_context_defaults_to_enabled(tmp_path):
 
     assert result["status"] == "completed"
     assert len(calls) >= 1  # prior-knowledge retrieval ran (survey returned no queries)
+
+
+
+def test_curator_report_sections_reach_the_persisted_result(tmp_path):
+    """R-277: a sectioned curator report (NotebookLM-style) round-trips to result.json."""
+    _service, _config_path, workspace = configured_service(tmp_path)
+    sections = [
+        {"heading": "Overview", "text": "RAG pipelines retrieve then generate."},
+        {"heading": "Indexing", "text": "Chunking quality drives recall [S1]."},
+    ]
+    # No local_retriever configured, so the survey never calls the LLM.
+    completions = [
+        _make_planner_response("RAG Research", ["What is RAG?"]),
+        _make_tool_plan_response("What is RAG"),
+        _make_executor_response("st_1", "RAG retrieves context.", "https://example.com/1"),
+        _make_supervisor_response("curate", "Enough evidence.", saturation=True),
+        _make_curator_response("RAG Report", "RAG in one line.", sections=sections),
+    ]
+    mock_chat = _SequencedChatClient(completions)
+
+    runner = StateGraphRunner(
+        config=RunnerConfig(
+            workspace=str(workspace),
+            chat_models=_make_chat_models(mock_chat),
+            tool_gateway=_ok_gateway(),
+            max_concurrent_subtasks=1,
+        ),
+    )
+
+    result = runner.run("What is RAG?")
+
+    assert result["status"] == "completed"
+    persisted = result["curator_output"]["sections"]
+    assert [s["heading"] for s in persisted] == ["Overview", "Indexing"]
+    assert "Chunking quality" in persisted[1]["text"]

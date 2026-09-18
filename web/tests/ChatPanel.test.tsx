@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatPanel } from "../src/components/ChatPanel";
+import { ResultCards } from "../src/components/ResultView";
 import { ResearchPage } from "../src/pages/ResearchPage";
 import type { ResearchResult } from "../src/api";
 
@@ -172,5 +173,47 @@ describe("ResearchPage chat entry", () => {
       />
     );
     expect(screen.queryByRole("region", { name: /chat with this research/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("ResultCards sectioned report", () => {
+  const sectionedResult: ResearchResult = {
+    task_id: "task_20260624_000009_dddddd",
+    mode: "web",
+    question: "sectioned question",
+    status: "completed",
+    curator_output: {
+      title: "Sectioned",
+      summary: "Lead-in paragraph.",
+      sections: [
+        { heading: "Overview", text: "RAG retrieves then generates." },
+        { heading: "Indexing", text: "Chunking quality drives recall." }
+      ],
+      findings: [{ finding_id: "f_1", subtask_id: "st_1", text: "Finding", source_ids: ["src_1"] }],
+      sources: [{ source_id: "src_1", title: "Source", url: "https://example.com", fetched_at: "now" }]
+    }
+  };
+
+  it("renders report chapters when sections exist (R-277)", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ messages: [] }) }))
+    );
+    render(<ResultCards result={sectionedResult} events={[]} />);
+    expect(screen.getByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    expect(screen.getByText("RAG retrieves then generates.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Indexing" })).toBeInTheDocument();
+    expect(screen.getByText("Chunking quality drives recall.")).toBeInTheDocument();
+  });
+
+  it("keeps the legacy summary+findings shape when sections are absent", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ messages: [] }) }))
+    );
+    const legacy = { ...webResult }; // webResult has no sections
+    render(<ResultCards result={legacy} events={[]} />);
+    expect(screen.getByText("Web summary")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Overview" })).not.toBeInTheDocument();
   });
 });

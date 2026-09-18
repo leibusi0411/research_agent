@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from research_agent.core.errors import ResearchError
 from research_agent.web.schemas import (
@@ -42,6 +42,7 @@ class CuratorInput:
     title: str
     findings: list[Finding]
     sources: list[WebSource]
+    subtasks: list[ResearchSubtask] = field(default_factory=list)
 
 
 def build_planner_context(state: WebResearchStateDict, plan_revision_request: str | None = None) -> PlannerInput:
@@ -82,4 +83,5 @@ def build_curator_context(state: WebResearchStateDict) -> CuratorInput:
         title=state.get("research_title") or state["original_question"],
         findings=list(state["findings"]),
         sources=list(state["sources"]),
+        subtasks=list(state.get("subtasks", [])),
     )

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import operator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Literal, TypedDict
 
 
@@ -93,11 +93,24 @@ class SupervisorOutput:
 
 
 @dataclass(frozen=True)
+class ReportSection:
+    """One themed chapter of the curated research report (R-277)."""
+    heading: str
+    text: str
+
+    def to_dict(self) -> dict:
+        return {"heading": self.heading, "text": self.text}
+
+
+@dataclass(frozen=True)
 class CuratorOutput:
     title: str
     summary: str
     findings: list[Finding]
     sources: list[WebSource]
+    # NotebookLM-style sectioned report body; empty for tasks curated
+    # before R-277 (consumers fall back to summary + findings).
+    sections: list[ReportSection] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -105,6 +118,7 @@ class CuratorOutput:
             "summary": self.summary,
             "findings": [finding.to_dict() for finding in self.findings],
             "sources": [source.to_dict() for source in self.sources],
+            "sections": [section.to_dict() for section in self.sections],
         }
 
 

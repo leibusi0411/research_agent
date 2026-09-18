@@ -320,7 +320,7 @@ The role that turns completed research into a structured `CuratorOutput` after t
 _Avoid_: writer, note agent
 
 **CuratorOutput**:
-The final structured Web Research report content produced by Curator before Markdown rendering. V1 fields are `title`, `summary`, `findings`, and `sources`; it does not include workflow-internal `research_gaps`.
+The final structured Web Research report content produced by Curator before Markdown rendering. Fields are `title`, `summary`, `sections` (one themed chapter per research subtask in plan order — heading + synthesized prose with inline finding/source citations; empty for pre-R-277 tasks), `findings`, and `sources`; it does not include workflow-internal `research_gaps` (the optional "Gaps & open questions" chapter states subtask evidence coverage, a different thing).
 _Avoid_: markdown file, draft report
 
 **Research Output**:
@@ -328,7 +328,7 @@ The output produced by the Web Research Workflow, represented as a local Web Rep
 _Avoid_: final report, answer
 
 **Web Report File**:
-A local Markdown file written by Web Research under `reports/web/` immediately after `CuratorOutput` is produced successfully. It contains summary, findings, linked evidence, and the full web source list; it does not include workflow-internal research gaps, does not cite Local Results, and is exposed through `report_path` rather than a download action in v1. A Web Research task is `completed` only after both CuratorOutput generation and Web Report File writing succeed. If writing the file fails, the Web Research task is `failed` with `file_write_error` because the user-visible report file was not created.
+A local Markdown file written by Web Research under `reports/web/` immediately after `CuratorOutput` is produced successfully. It contains summary, the per-subtask report chapters (when sections exist), findings with their finding ids, linked evidence, and the full web source list; it does not include workflow-internal research gaps, does not cite Local Results, and is exposed through `report_path` rather than a download action in v1. A Web Research task is `completed` only after both CuratorOutput generation and Web Report File writing succeed. If writing the file fails, the Web Research task is `failed` with `file_write_error` because the user-visible report file was not created.
 _Avoid_: download, deposited note
 
 **Report Filename**:
@@ -412,7 +412,7 @@ The Web UI result view shown immediately after a Local RAG task completes. It sh
 _Avoid_: comparison view, local report
 
 **Web Report Page**:
-The Web UI result view shown immediately after a Web Research task completes. It shows `question`, `status`, Process View grouped by phase, Summary, Findings, Sources, and `report_path` for the generated Web Report File. A completed Web Report Page offers a Knowledge Deposit action that copies the Web Report File into the Markdown Vault and then offers to rebuild the Knowledge Base Index so the deposited note becomes searchable. Opening the current result view does not resume Web Research, call tools, regenerate CuratorOutput, or rewrite the Web Report File. If report file writing fails after CuratorOutput succeeds, this page shows the task as `failed` with the `file_write_error` instead of showing a completed task without a report.
+The Web UI result view shown immediately after a Web Research task completes. It shows `question`, `status`, Process View grouped by phase, Summary, the per-subtask report chapters (when sections exist), Findings, Sources, and `report_path` for the generated Web Report File. A completed Web Report Page offers a Knowledge Deposit action that copies the Web Report File into the Markdown Vault and then offers to rebuild the Knowledge Base Index so the deposited note becomes searchable. Opening the current result view does not resume Web Research, call tools, regenerate CuratorOutput, or rewrite the Web Report File. If report file writing fails after CuratorOutput succeeds, this page shows the task as `failed` with the `file_write_error` instead of showing a completed task without a report.
 _Avoid_: comparison view, merged report
 
 **Tasks Page**:

@@ -70,6 +70,7 @@ export type ResearchResult = {
   curator_output?: {
     title: string;
     summary: string;
+    sections?: Array<{ heading: string; text: string }>;
     findings: Finding[];
     sources: Source[];
   };

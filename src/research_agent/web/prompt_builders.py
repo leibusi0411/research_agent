@@ -302,12 +302,32 @@ def _render_curator_prompt(context: CuratorInput) -> str:
         sources_lines.append(f"- [{source.source_id}] {source.title}: {source.url}")
     sources_text = "\n".join(sources_lines) if sources_lines else "(no sources)"
 
+    subtask_lines = []
+    for subtask in context.subtasks:
+        findings_for_subtask = [f for f in context.findings if f.subtask_id == subtask.subtask_id]
+        subtask_lines.append(f"- [{subtask.subtask_id}] {subtask.question} ({len(findings_for_subtask)} findings)")
+    subtasks_text = "\n".join(subtask_lines) if subtask_lines else "(no subtasks)"
+
     return (
         "You are the Curator for a web research task.\n"
-        "Your job is to synthesize findings into a coherent research summary.\n\n"
+        "Your job is to synthesize the findings into a complete, well-structured research report\n"
+        "(think NotebookLM / Gemini deep-research style), not a single summary paragraph.\n\n"
         f"Original research question: {context.original_question}\n\n"
+        f"Research subtasks:\n{subtasks_text}\n\n"
         f"Findings:\n{findings_text}\n\n"
         f"Sources:\n{sources_text}\n\n"
-        "Create a concise title and summary that answers the research question.\n"
-        "Select the most relevant findings and sources.\n"
+        "Produce:\n"
+        "1. title — a concise research title.\n"
+        "2. summary — a 2-4 sentence executive lead-in that directly answers the research question.\n"
+        "3. sections — structured chapters, one section per subtask, in plan order. Each section:\n"
+        "   - heading: a short title distilled from the subtask question (not the raw subtask_id);\n"
+        "   - text: 1-3 paragraphs of synthesized prose (NOT bullet lists) answering that subtask\n"
+        "     with its findings. Cite evidence inline using the exact finding/source ids from the\n"
+        "     lists above (e.g. [f_st_1] or [src_st_1]), so every citation stays resolvable.\n"
+        "   If a subtask has no findings, fold it into a final \"Gaps & open questions\" section\n"
+        "   instead of inventing content. Where evidence conflicts or is thin, say so explicitly.\n"
+        "4. findings — the most relevant atomic findings (keep their finding_id/subtask_id/source_ids).\n"
+        "5. sources — the sources actually cited above.\n\n"
+        "Grounding rule: every claim in summary and sections must trace to at least one finding or source.\n"
+        "Do not invent facts, numbers, or conclusions beyond the findings above.\n"
     )

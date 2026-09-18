@@ -106,6 +106,27 @@ def test_build_curator_prompt_contains_findings():
     assert "title" in prompt.lower()
 
 
+def test_build_curator_prompt_requests_a_sectioned_report_per_subtask():
+    """R-277: one report chapter per research subtask, NotebookLM-style."""
+    state = create_initial_state(original_question="What is LangGraph?")
+    _add_planner_output(state, PlannerOutput("LangGraph Research", [PlannerSubtaskDraft("Find architecture overview.")]))
+    source = WebSource(source_id="src_1", title="Docs", url="https://example.com", fetched_at="2026-06-23T10:00:00Z")
+    finding = Finding(finding_id="f_1", subtask_id="st_1", text="LangGraph supports state graphs.", source_ids=["src_1"])
+    executor_output = ExecutorOutput(subtask_id="st_1", status="completed", findings=[finding], sources=[source])
+    _merge_executor_output(state, executor_output)
+    prompt = build_curator_prompt(state)
+    assert "sections" in prompt.lower()
+    # The subtask list is visible to the curator with per-subtask finding counts...
+    assert "Find architecture overview." in prompt
+    assert "(1 findings)" in prompt
+    # ...and chapters map one-to-one onto subtasks, in plan order.
+    assert "one section per subtask" in prompt.lower()
+    # Sections must be synthesized prose grounded in the findings, not lists.
+    assert "paragraph" in prompt.lower()
+    # Anti-hallucination guard: every claim traces to a finding/source.
+    assert "do not invent" in prompt.lower()
+
+
 def test_build_planner_prompt_for_initial_plan_requests_3_to_5_subtasks():
     state = create_initial_state(original_question="What is LangGraph?")
     prompt = build_planner_prompt(state)

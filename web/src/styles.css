@@ -1986,3 +1986,19 @@ label span {
 .local-context-toggle input:disabled + .toggle-track {
   opacity: 0.5;
 }
+
+/* ---------- Sectioned report body (R-277) ---------- */
+
+.report-section {
+  margin-top: 14px;
+}
+
+.report-section h3 {
+  margin: 0 0 6px;
+}
+
+.report-section p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.65;
+}

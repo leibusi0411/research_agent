@@ -2,7 +2,7 @@ from pathlib import Path
 
 from research_agent.core.workspace import Workspace
 from research_agent.web.report import render_web_report, slugify_report_topic, write_web_report
-from research_agent.web.schemas import CuratorOutput, Finding, WebSource
+from research_agent.web.schemas import CuratorOutput, Finding, ReportSection, WebSource
 
 
 def curator_output() -> CuratorOutput:
@@ -99,3 +99,44 @@ def test_write_web_report_failure_is_raised_as_file_write_error(tmp_path):
         assert getattr(exc, "code", None) == "file_write_error"
     else:
         raise AssertionError("Expected file_write_error")
+
+
+def test_render_web_report_renders_sections_as_chapters():
+    """R-277: a sectioned report becomes headed chapters in the Markdown file."""
+    output = curator_output()
+    output = CuratorOutput(
+        title=output.title,
+        summary=output.summary,
+        findings=output.findings,
+        sources=output.sources,
+        sections=[
+            ReportSection(heading="Overview", text="RAG retrieves then generates."),
+            ReportSection(heading="Indexing", text="Chunking quality drives recall."),
+        ],
+    )
+
+    markdown = render_web_report(
+        task_id="task_20260623_103000_a1b2c3",
+        created_at="2026-06-23T10:30:00Z",
+        output=output,
+    )
+
+    # Chapters appear after the summary, before findings.
+    assert "## Overview" in markdown
+    assert "RAG retrieves then generates." in markdown
+    assert "## Indexing" in markdown
+    assert "Chunking quality drives recall." in markdown
+    assert markdown.index("## Summary") < markdown.index("## Overview") < markdown.index("## Findings")
+
+
+def test_render_web_report_without_sections_keeps_legacy_shape():
+    """Pre-R-277 curator outputs (no sections) render exactly as before."""
+    markdown = render_web_report(
+        task_id="task_20260623_103000_a1b2c3",
+        created_at="2026-06-23T10:30:00Z",
+        output=curator_output(),
+    )
+
+    assert "## Overview" not in markdown
+    assert "## Summary" in markdown
+    assert "## Findings" in markdown

@@ -20,6 +20,7 @@ from research_agent.web.role_invocation import invoke_role_json
 from research_agent.web.schemas import (
     CuratorOutput,
     Finding,
+    ReportSection,
     PlannerOutput,
     PlannerSubtaskDraft,
     PriorKnowledgeChunk,
@@ -69,6 +70,14 @@ def _validate_curator_payload(payload: dict[str, Any]) -> dict[str, Any]:
     for i, item in enumerate(payload.get("sources", [])):
         if not isinstance(item, dict):
             raise ValueError(f"sources[{i}] must be a dict, got {type(item).__name__}")
+    # sections is optional in the schema: absent key means no chapters,
+    # but a present non-list value is malformed.
+    sections = payload.get("sections", [])
+    if not isinstance(sections, list):
+        raise ValueError("sections must be a list")
+    for i, item in enumerate(sections):
+        if not isinstance(item, dict) or not isinstance(item.get("heading"), str) or not isinstance(item.get("text"), str):
+            raise ValueError(f"sections[{i}] must be an object with string heading and text")
     return payload
 
 
@@ -104,11 +113,17 @@ def _parse_curator_output(payload: dict[str, Any]) -> CuratorOutput:
             url=s.get("url", ""),
             fetched_at=s.get("fetched_at", ""),
         ))
+    sections = [
+        ReportSection(heading=s.get("heading", ""), text=s.get("text", ""))
+        for s in payload.get("sections", [])
+        if isinstance(s, dict)
+    ]
     return CuratorOutput(
         title=payload["title"],
         summary=payload["summary"],
         findings=findings,
         sources=sources,
+        sections=sections,
     )
 
 # ── GraphContext: dependency bundle for node closures ──────────────────
@@ -200,6 +215,17 @@ _CURATOR_SCHEMA: dict[str, Any] = {
     "properties": {
         "title": {"type": "string"},
         "summary": {"type": "string"},
+        "sections": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "heading": {"type": "string"},
+                    "text": {"type": "string"},
+                },
+                "required": ["heading", "text"],
+            },
+        },
         "findings": {
             "type": "array",
             "items": {

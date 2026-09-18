@@ -35,8 +35,9 @@ _SYSTEM_PROMPT = (
     "If the research context does not answer the question, say so plainly instead of guessing."
 )
 
-# Hard cap so a huge report cannot blow the chat context window; findings
-# are dropped oldest-subtask-first beyond this budget.
+# Hard caps so a huge report cannot blow the chat context window. Findings
+# and report sections are each capped separately (additive in the worst
+# case); findings drop oldest-subtask-first beyond their budget.
 _MAX_CONTEXT_CHARS = 24_000
 
 
@@ -150,21 +151,38 @@ def _render_research_context(
     curator = result.get("curator_output") or {}
     sources = [s for s in curator.get("sources", []) if isinstance(s, dict)]
     findings = [f for f in curator.get("findings", []) if isinstance(f, dict)]
+    sections = [s for s in curator.get("sections", []) if isinstance(s, dict)]
 
     if selected_source_ids:
         wanted = set(selected_source_ids)
         sources = [s for s in sources if s.get("source_id") in wanted]
         findings = [f for f in findings if wanted.intersection(f.get("source_ids") or [])]
+        # Sections are already curated prose; keep them regardless of the
+        # source selection — they answer the subtasks, not one source.
 
     lines = ["[Research context]", f"Research question: {result.get('question', '')}"]
     if curator.get("summary"):
         lines.append(f"Summary: {curator['summary']}")
 
+    report_budget = _MAX_CONTEXT_CHARS // 2
+    for section in sections:
+        heading = str(section.get("heading", ""))
+        text = str(section.get("text", ""))
+        if report_budget - len(text) < 0:
+            break
+        report_budget -= len(text)
+        lines.append(f"Report — {heading}: {text}")
+
     if sources:
         lines.append("Sources:")
         numbers = {source.get("source_id"): f"[S{index}]" for index, source in enumerate(sources, start=1)}
         for source in sources:
-            lines.append(f"  {numbers[source.get('source_id')]} {source.get('title', '')} — {source.get('url', '')}")
+            # The raw source_id rides along so the report chapters' inline
+            # [src_x] citations stay resolvable next to the [S#] numbering.
+            lines.append(
+                f"  {numbers[source.get('source_id')]} ({source.get('source_id', '')}) "
+                f"{source.get('title', '')} — {source.get('url', '')}"
+            )
 
     budget = _MAX_CONTEXT_CHARS
     if findings:
@@ -176,7 +194,8 @@ def _render_research_context(
                 break
             budget -= len(text)
             cited = " ".join(numbers[sid] for sid in finding.get("source_ids") or [] if sid in numbers)
-            lines.append(f"  - {text} ({cited})" if cited else f"  - {text}")
+            prefix = f"[{finding.get('finding_id', '')}] " if finding.get("finding_id") else ""
+            lines.append(f"  {prefix}- {text} ({cited})" if cited else f"  {prefix}- {text}")
     if len(lines) == 2:
         lines.append("(No research findings are available for this task.)")
     return "\n".join(lines)
