@@ -22,6 +22,8 @@ export function App() {
   const [savedKeys, setSavedKeys] = useState({ chat: false, embedding: false, search: false, rerank: false, summarizer: false });
   const [savedNotice, setSavedNotice] = useState(false);
   const [question, setQuestion] = useState("");
+  // R-264: per-run switch for the pre-planning local retrieval stages.
+  const [localContext, setLocalContext] = useState(true);
   const [result, setResult] = useState<ResearchResult | null>(null);
   const [events, setEvents] = useState<ProgressEvent[]>([]);
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
@@ -220,7 +222,7 @@ export function App() {
     setResult(null);
     setBusy("web");
     try {
-      const started = await api.runWeb(question);
+      const started = await api.runWeb(question, localContext);
       if (started.status !== "running") {
         setResult(started);
         setSelectedResult(started);
@@ -372,6 +374,8 @@ export function App() {
                 result={result}
                 events={events}
                 phase={phase}
+                localContext={localContext}
+                setLocalContext={setLocalContext}
               />
             }
           />

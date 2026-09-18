@@ -1899,3 +1899,28 @@ label span {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- Notes toggle (R-264) ---------- */
+
+.local-context-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+.local-context-toggle input {
+  accent-color: var(--accent);
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  flex: none;
+}
+
+.local-context-toggle:hover {
+  color: var(--text);
+}

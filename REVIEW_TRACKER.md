@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-16 | 线上调整：功能开关取消、配置即开关（ADR-0052/0053 演进）+ Settings 页查询改写槽位卡片 |  测试：Python 266 passed（离线，另有 6 个真实 API e2e 无配置自动 skip）+ 前端 32 passed + Playwright 1 passed | 第十一轮实现+审查：Multi-Query 查询改写（ADR-0052）+ Cross-Encoder rerank（ADR-0053）+ Settings 页 rerank 卡片，审查 12 项（R-264~R-275）11 修复、1 接受 ✅ | 第十轮实现：调研后接地对话 TaskChatService（ADR-0050，R-262）+ Web 工具面扩展（ADR-0051，R-263） | 第九轮实现：local_kb_search + 索引自动增量更新（ADR-0048，R-257）+ Chunking v2（ADR-0049，R-258）+ KB 页独立 Local RAG 入口（R-259）
+> 最后更新：2026-09-18 | 线上调整：功能开关取消、配置即开关（ADR-0052/0053 演进）+ Settings 页查询改写槽位卡片 + 本地前置检索 per-run 开关（R-276） |  测试：Python 271 passed（离线，另有 6 个真实 API e2e 无配置自动 skip）+ 前端 33 passed + Playwright 1 passed | 第十一轮实现+审查：Multi-Query 查询改写（ADR-0052）+ Cross-Encoder rerank（ADR-0053）+ Settings 页 rerank 卡片，审查 12 项（R-264~R-275）11 修复、1 接受 ✅ | 第十轮实现：调研后接地对话 TaskChatService（ADR-0050，R-262）+ Web 工具面扩展（ADR-0051，R-263） | 第九轮实现：local_kb_search + 索引自动增量更新（ADR-0048，R-257）+ Chunking v2（ADR-0049，R-258）+ KB 页独立 Local RAG 入口（R-259）
 
 ---
 
@@ -148,6 +148,12 @@
 |------|------|------|
 | R-262 | 用户需求：调研后 NotebookLM 式对话——Research 页调研完成出现入口，右侧参考资料卡片（可勾选加入对话）、中间对话区、底部输入栏 | ✅ ADR-0050：`TaskChatService`（core/chat.py，单角色零工具，两层上下文=result.json 接地块 + chat.jsonl 滚动历史，selected_sources 勾选过滤接地面，24k findings 预算双分支统一封顶）+ `POST/GET /api/tasks/{task_id}/chat`（config_missing/task_not_found(404)/config_invalid/runtime_error(未完成任务拒绝)/llm_call_failed/file_write_error 统一错误形状）+ `ChatPanel` 组件（web+completed+curator_output 才渲染，key=task_id，页面聊天态扩宽 1060px）；v1 非流式；subagent 复审 11 项发现（1 P1 + 10 P2）全部处置——P1 为 ADR 角色覆盖失实已改注记，P2 含 running 任务门禁、findings 无 sources 分支预算、chat.jsonl 写入 OSError 包装、ChatModelClient Protocol 类型等；实测 DeepSeek 真实回复带 [S#] 引用、历史持久化与勾选过滤均验证 |
 | R-263 | 用户需求：对照业界调研 agent 工具面"全部补充"三项缺口——学术搜索源、code interpreter、fetch 反爬健壮性 | ✅ ADR-0051：`scholar.search`（ArxivSearchProvider 公共 Atom API 免 key，PDF 链接优先，429 走 transient 重试）+ `code.run_python`（PythonSandbox：临时目录 + `-I -X utf8` 隔离模式 + stdin 关闭 + 墙钟超时**进程树击杀**（python_timeout_seconds 默认 20s 新增 [web_tools] 配置）+ stdout/stderr 各 16k 截断；崩溃=ok+traceback 给模型自修，超时=transient）+ `HttpxHttpClient` 浏览器 UA/Accept/Accept-Language（裸 httpx UA 常被 403）；Executor 工具清单经 R-128 registry 动态生成自动生效；`_format_tool_result` 统一 .search 渲染（论文多一行作者）+ code.run_python 专属渲染；subagent 复审 6 项发现全部处置（P0 中文 Windows GBK 编码崩溃→-X utf8 修复+回归测试；P1 孙进程持管道超时不生效→taskkill /T 进程树击杀+回归测试；P2/P3 transport 注入 HTTP 层测试、渲染分支测试、Protocol 化注入缝、noqa 清理）；当日出口 IP 被 arXiv 限流，解析以真实结构 Atom fixture 单测锁定 |
+
+### 第十二轮实现（2026-09-18，本地前置检索 per-run 开关 / ADR-0048 演进，R-276）
+
+| 编号 | 背景 | 处置 |
+|------|------|------|
+| R-276 | 用户需求：把 Web 调研之前的 local RAG（Prior Knowledge 注入 + Planner survey）做成开关 | ✅ ADR-0048 演进注记：per-run 开关——Research 页 "Check my notes first" 勾选（默认开）+ `POST /api/research/web` 接受 `local_context` 布尔（缺省 true，响应回显）+ CLI `web --no-local`；`WebResearchStateDict.local_context_enabled` 贯穿 graph：关闭时跳过 web_local_context 检索、Planner survey（含 plan_revision）与 survey 前的索引增量更新（钩子本为 survey 专属）；配置级 `research.inject_local_context` 全局关语义不变；注意 R-264~R-275 已由并行第十一轮审查占用，本行编号顺延 |
 
 ### 第九轮实现（2026-09-09，Chunking v2 / ADR-0049，R-258）
 

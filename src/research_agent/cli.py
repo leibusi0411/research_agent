@@ -34,6 +34,11 @@ def build_parser() -> argparse.ArgumentParser:
     local_parser.add_argument("question", nargs="?")
     web_parser = subparsers.add_parser("web", help="Run Web Research.")
     web_parser.add_argument("question", nargs="?")
+    web_parser.add_argument(
+        "--no-local",
+        action="store_true",
+        help="Skip the pre-planning local knowledge check (prior notes + local survey).",
+    )
     both_parser = subparsers.add_parser("both", help="Run Local RAG and Web Research as separate tasks.")
     both_parser.add_argument("question", nargs="?")
 
@@ -186,7 +191,7 @@ def _run_web(args: argparse.Namespace, service: CoreService) -> int:
         # It is threaded through create_provider_runtime -> ProviderBackedWebResearchRuntime
         # -> StateGraphRunner._emit -> self.on_event (see R-33 fix).
         # Events carry _seq and event_subtype for rich formatting.
-        result = service.run_web_research(args.question, on_event=_print_web_event)
+        result = service.run_web_research(args.question, on_event=_print_web_event, local_context=not args.no_local)
     except ResearchError as error:
         print(f"[{error.code}] {error.message}")
         return 1

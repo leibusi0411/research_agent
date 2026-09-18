@@ -12,6 +12,8 @@ export function ResearchPage({
   result,
   events,
   phase,
+  localContext,
+  setLocalContext,
 }: {
   question: string;
   setQuestion: (value: string) => void;
@@ -20,6 +22,8 @@ export function ResearchPage({
   result: ResearchResult | null;
   events: ProgressEvent[];
   phase: string | null;
+  localContext: boolean;
+  setLocalContext: (value: boolean) => void;
 }) {
   // Running = request in flight, or events streaming in with no result yet.
   const running = busy === "web" || (events.length > 0 && !result);
@@ -49,6 +53,15 @@ export function ResearchPage({
           {running ? "Researching…" : "Research"}
         </button>
       </form>
+      <label className="local-context-toggle">
+        <input
+          type="checkbox"
+          checked={localContext}
+          onChange={(event) => setLocalContext(event.target.checked)}
+          disabled={running}
+        />
+        Check my notes first
+      </label>
       {events.length > 0 && <TraceCard events={events} phase={phase} running={running} />}
       {result && <ResultCards result={result} events={events} />}
       {chatReady && <ChatPanel key={result.task_id} result={result} />}

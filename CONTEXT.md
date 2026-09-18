@@ -37,7 +37,7 @@ The independent flow that finds and presents relevant existing content from the 
 _Avoid_: local-first research, local search mode
 
 **Web Research Workflow**:
-The independent workflow that researches a question using network search, fetch, and extraction. Its only Knowledge Base touchpoints are Planner-side and read-only: the one-time Prior Knowledge retrieval before the graph starts (ADR-0046) and the Planner's bounded local knowledge survey (`local_kb_search`: up to three targeted queries before planning and before each plan revision, ADR-0048). The Executor's tool loop never touches the Knowledge Base.
+The independent workflow that researches a question using network search, fetch, and extraction. Its only Knowledge Base touchpoints are Planner-side and read-only: the one-time Prior Knowledge retrieval before the graph starts (ADR-0046) and the Planner's bounded local knowledge survey (`local_kb_search`: up to three targeted queries before planning and before each plan revision, ADR-0048). Both are switchable per run through the notes toggle (Research Page checkbox / `local_context` request flag / CLI `--no-local`, default on; ADR-0048 evolution R-264) and globally through `research.inject_local_context`. The Executor's tool loop never touches the Knowledge Base.
 _Avoid_: online mode, web search mode
 
 **Research Workflow Boundary**:

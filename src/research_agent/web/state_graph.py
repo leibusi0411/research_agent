@@ -212,12 +212,12 @@ class StateGraphRunner:
         """The task this runner is bound to, or None before ``run()`` starts."""
         return self._task_id
 
-    def run(self, question: str, task_id: str | None = None) -> dict[str, Any]:
+    def run(self, question: str, task_id: str | None = None, *, local_context: bool = True) -> dict[str, Any]:
         self.workspace.ensure()
         task_id = task_id or generate_task_id()
         self._task_id = task_id
         created_at = utc_now_iso()
-        state = create_initial_state(original_question=question)
+        state = create_initial_state(original_question=question, local_context_enabled=local_context)
 
         task_dir = self.workspace.task_dir(task_id)
         if not task_dir.exists():
@@ -231,7 +231,8 @@ class StateGraphRunner:
         # state so the Planner can aim web research at genuine gaps. Retrieval
         # failure must never break Web Research — degrade to no injection.
         # This stage is a first-class pipeline phase (web_local_context).
-        if self.local_retriever is not None:
+        # R-264: the per-run local_context switch skips it entirely.
+        if local_context and self.local_retriever is not None:
             self._emit(task_id, "web_local_context", "started", "Checking your notes before planning…")
             try:
                 chunks = self.local_retriever(question) or []

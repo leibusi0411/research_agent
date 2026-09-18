@@ -33,8 +33,10 @@ class _TestWebRuntime:
         self._workspace = Workspace(workspace_path)
         self._task_store = TaskStore(self._workspace.root / "tasks.sqlite")
         self.runner = None  # No LangGraph runner in test runtime
+        self.local_context_flags: list[bool] = []
 
-    def run(self, question: str, task_id: str | None = None) -> dict:
+    def run(self, question: str, task_id: str | None = None, *, local_context: bool = True) -> dict:
+        self.local_context_flags.append(local_context)
         resolved_id = task_id or generate_task_id()
         now = utc_now_iso()
         self._workspace.ensure()
@@ -889,3 +891,52 @@ def test_setup_config_without_slot_reports_not_set(tmp_path):
     assert body["summarizer_base_url"] == ""
     assert body["summarizer_model"] == ""
     assert body["has_chat_summarizer_api_key"] is False
+
+
+def test_api_web_start_passes_local_context_flag_to_runtime(tmp_path):
+    """R-264: the notes toggle rides the start request through to the runtime."""
+    config_path = tmp_path / "config.toml"
+    workspace = tmp_path / "runtime"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    service = CoreService(default_workspace=workspace, config_path=config_path)
+    service.init_config(
+        InitConfigRequest(
+            default_workspace=workspace,
+            knowledge_base_path=vault,
+            chat_base_url="https://models.example/v1",
+            chat_api_key="chat-key",
+            chat_model="chat-model",
+            embedding_base_url="https://embeddings.example/v1",
+            embedding_api_key="embedding-key",
+            embedding_model="embedding-model",
+            search_api_key="search-key",
+        )
+    )
+    runtimes: list[_TestWebRuntime] = []
+
+    def factory(workspace_path: str) -> _TestWebRuntime:
+        runtime = _TestWebRuntime(workspace_path=str(workspace_path))
+        runtimes.append(runtime)
+        return runtime
+
+    app = create_app(
+        config_path=config_path,
+        web_runtime_factory=factory,
+        embedding_client_factory=lambda _config: _FixedEmbeddingClient(),
+        chat_model_factory=lambda _config: _FixedChatModel(),
+    )
+    client = TestClient(app)
+
+    explicit_off = client.post("/api/research/web", json={"question": "q1", "local_context": False})
+    wait_for_finished_tasks(client, expected_count=1)
+    explicit_on = client.post("/api/research/web", json={"question": "q2", "local_context": True})
+    wait_for_finished_tasks(client, expected_count=2)
+    default_run = client.post("/api/research/web", json={"question": "q3"})
+    wait_for_finished_tasks(client, expected_count=3)
+
+    assert explicit_off.status_code == 202
+    assert explicit_on.status_code == 202
+    assert default_run.status_code == 202
+    flags = [flag for runtime in runtimes for flag in runtime.local_context_flags]
+    assert flags == [False, True, True]

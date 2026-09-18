@@ -855,3 +855,82 @@ def test_state_graph_runner_tolerates_retriever_returning_none(tmp_path):
     result = runner.run("What is LangGraph?")
 
     assert result["status"] == "completed"
+
+
+def test_state_graph_runner_skips_local_context_when_disabled(tmp_path):
+    """local_context=False turns off every pre-planning local retrieval (R-264).
+
+    Both the web_local_context prior-knowledge stage and the planner survey
+    (including the index auto-update hook) stay out of the run: the notes
+    toggle on the Research page promises exactly this.
+    """
+    _service, _config_path, workspace = configured_service(tmp_path)
+    # Survey is skipped, so the planner consumes the first completion slot.
+    completions = [
+        _make_planner_response("LangGraph Research", ["What is LangGraph?", "How to use LangGraph?"]),
+        _make_tool_plan_response("What is LangGraph"),
+        _make_executor_response("st_1", "LangGraph is a state graph framework.", "https://example.com/1"),
+        _make_tool_plan_response("How to use LangGraph"),
+        _make_executor_response("st_2", "LangGraph example code.", "https://example.com/2"),
+        _make_supervisor_response("curate", "Enough evidence gathered.", saturation=True),
+        _make_curator_response("LangGraph Research", "LangGraph is a framework for building state graphs."),
+    ]
+    mock_chat = _SequencedChatClient(completions)
+
+    calls: list[str] = []
+
+    def recording_retriever(question: str) -> list:
+        calls.append(question)
+        return []
+
+    updates: list[int] = []
+
+    runner = StateGraphRunner(
+        config=RunnerConfig(
+            workspace=str(workspace),
+            chat_models=_make_chat_models(mock_chat),
+            tool_gateway=_ok_gateway(),
+            max_concurrent_subtasks=1,
+            local_retriever=recording_retriever,
+            index_updater=lambda: updates.append(1) or {"updated_files": 0},
+        ),
+    )
+
+    result = runner.run("What is LangGraph?", local_context=False)
+
+    assert result["status"] == "completed"
+    assert calls == []  # neither prior-knowledge nor survey retrieval ran
+    assert updates == []  # the auto-update hook is survey-scoped, skipped too
+    # No web_local_context phase events at all.
+    events_path = workspace / "tasks" / result["task_id"] / "events.jsonl"
+    events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert [e for e in events if e["phase"] == "web_local_context"] == []
+    # The first LLM call is the planner itself, not the local survey.
+    assert "queries" not in mock_chat.prompts[0]
+
+
+def test_state_graph_runner_local_context_defaults_to_enabled(tmp_path):
+    """Omitting the flag keeps the ADR-0048 behavior untouched."""
+    _service, _config_path, workspace = configured_service(tmp_path)
+    mock_chat = _SequencedChatClient(_full_flow_completions())
+
+    calls: list[str] = []
+
+    def recording_retriever(question: str) -> list:
+        calls.append(question)
+        return []
+
+    runner = StateGraphRunner(
+        config=RunnerConfig(
+            workspace=str(workspace),
+            chat_models=_make_chat_models(mock_chat),
+            tool_gateway=_ok_gateway(),
+            max_concurrent_subtasks=1,
+            local_retriever=recording_retriever,
+        ),
+    )
+
+    result = runner.run("What is LangGraph?")
+
+    assert result["status"] == "completed"
+    assert len(calls) >= 1  # prior-knowledge retrieval ran (survey returned no queries)

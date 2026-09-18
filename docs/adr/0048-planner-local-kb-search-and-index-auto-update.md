@@ -46,3 +46,16 @@ Research Workflow Boundary 从"Web 任务不接触本地知识"细化为**按角
 - 提示词：`build_planner_prompt` 新增 `local_survey` 参数与"仅供参考"区块；新增 `build_planner_survey_prompt`
 - 降级矩阵：索引 missing/failed/building 或关闭注入 → 跳过调研（不发 LLM 调用）；stale → 调研旧索引（结果标注可能不完整）；stale + 变更小 → 先增量更新；调研 LLM 失败 → 吞掉并继续（辅助阶段不允许杀死规划）
 - 测试：`tests/test_kb_index.py` +4（增量更新/无变更 no-op/超限跳过/缺索引跳过）、`tests/test_kb_deposit.py` +2（deposit 触发/离线跳过）、`tests/test_planner_survey.py` +6（问卷提示词/节点编排/并行检索/降级/自动更新）
+
+## 演进注记
+
+- 2026-09-18（R-264）：本地前置检索改为**每次可选**。Research 页新增
+  "Check my notes first" 勾选（默认勾选，保持本 ADR 的默认行为）；
+  `POST /api/research/web` 接受 `local_context` 布尔（缺省 true），CLI
+  `research-agent web --no-local` 等价。关闭时三件事一起跳过：
+  `web_local_context` Prior Knowledge 检索、Planner survey（含 plan_revision
+  的重复调研）、survey 前的索引增量更新（该钩子本就是 survey 专属）。
+  状态字段 `WebResearchStateDict.local_context_enabled` 贯穿 graph 节点。
+  与原决策"无条件先查本地"的差异是显式演进：默认路径不变，控制权交给
+  每次调研——用户问题与笔记无关时可省去本地检索开销与提示词噪音。
+  配置级开关 `research.inject_local_context` 继续有效且语义不变（全局关）。

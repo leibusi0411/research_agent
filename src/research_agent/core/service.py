@@ -177,7 +177,7 @@ def create_provider_runtime(
 
 class WebResearchRuntime(Protocol):
     """Protocol for web research runtime implementations."""
-    def run(self, question: str, task_id: str | None = None) -> dict:
+    def run(self, question: str, task_id: str | None = None, *, local_context: bool = True) -> dict:
         ...
 
 
@@ -216,7 +216,7 @@ class CoreService:
         with self._active_family_lock("local", resolved_task_id):
             return self.run_local_research_unlocked(question, task_id=resolved_task_id, embedding_client=embedding_client, chat_model=chat_model, rerank_client=rerank_client)
 
-    def run_web_research(self, question: str, *, runtime: WebResearchRuntime | None = None, chat_models: dict[str, ChatModelClient] | None = None, task_id: str | None = None, on_event: Callable[[dict[str, Any]], None] | None = None) -> dict:
+    def run_web_research(self, question: str, *, runtime: WebResearchRuntime | None = None, chat_models: dict[str, ChatModelClient] | None = None, task_id: str | None = None, on_event: Callable[[dict[str, Any]], None] | None = None, local_context: bool = True) -> dict:
         resolved_task_id = task_id or generate_task_id()
         resolved_runtime = runtime
         if resolved_runtime is None:
@@ -234,7 +234,9 @@ class CoreService:
             if hasattr(resolved_runtime, "on_event"):
                 resolved_runtime.on_event = on_event  # type: ignore[union-attr]
         with self._active_family_lock("web", resolved_task_id):
-            return self.run_web_research_unlocked(question, runtime=resolved_runtime, task_id=resolved_task_id)
+            return self.run_web_research_unlocked(
+                question, runtime=resolved_runtime, task_id=resolved_task_id, local_context=local_context
+            )
 
     def run_local_research_unlocked(self, question: str, *, task_id: str, embedding_client: EmbeddingClient | None = None, chat_model: ChatModelClient | None = None, rerank_client: RerankClient | None = None) -> dict:
         return run_local_research(
@@ -248,8 +250,8 @@ class CoreService:
             rerank_client=rerank_client,
         )
 
-    def run_web_research_unlocked(self, question: str, *, runtime: WebResearchRuntime, task_id: str) -> dict:
-        return runtime.run(question, task_id=task_id)
+    def run_web_research_unlocked(self, question: str, *, runtime: WebResearchRuntime, task_id: str, local_context: bool = True) -> dict:
+        return runtime.run(question, task_id=task_id, local_context=local_context)
 
     def run_both(self, question: str, *, web_runtime: WebResearchRuntime | None = None, on_event: Callable[[dict[str, Any]], None] | None = None) -> dict:
         with ThreadPoolExecutor(max_workers=2) as executor:

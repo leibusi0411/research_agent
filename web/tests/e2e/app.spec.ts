@@ -143,6 +143,8 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
   await page.getByRole("button", { name: "Save Config" }).click();
   await expect(page.getByRole("heading", { name: "Inkwell" })).toBeVisible();
 
+  // R-264: the notes toggle ships with every web research start (default on).
+  await expect(page.getByRole("checkbox", { name: /check my notes first/i })).toBeChecked();
   await page.getByRole("textbox", { name: "Research question" }).fill("web question");
   await page.getByRole("button", { name: "Research" }).click();
   await expect(page.getByText("Web summary")).toBeVisible();

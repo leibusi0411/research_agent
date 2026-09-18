@@ -240,6 +240,27 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: "Web Report" })).toBeInTheDocument();
   });
 
+  it("sends local_context=false when the notes toggle is unchecked (R-264)", async () => {
+    mockConfiguredFetch();
+    render(<MemoryRouter><App /></MemoryRouter>);
+
+    // Checked by default: pre-planning local retrieval stays on (ADR-0048).
+    const toggle = await screen.findByRole("checkbox", { name: /check my notes first/i });
+    expect(toggle).toBeChecked();
+
+    await userEvent.click(toggle);
+    await userEvent.type(screen.getByRole("textbox", { name: "Research question" }), "web question");
+    await userEvent.click(screen.getByRole("button", { name: "Research" }));
+    await waitFor(() => expect(screen.getByText("Web summary")).toBeInTheDocument());
+
+    const fetchMock = fetch as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit | undefined]> } };
+    const webPost = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).endsWith("/api/research/web") && init?.method === "POST"
+    );
+    expect(webPost).toBeDefined();
+    expect(JSON.parse(String(webPost![1]?.body)).local_context).toBe(false);
+  });
+
   it("shows the curation phase as active when the final task_result completes the run", async () => {
     mockConfiguredFetch();
     render(<MemoryRouter><App /></MemoryRouter>);

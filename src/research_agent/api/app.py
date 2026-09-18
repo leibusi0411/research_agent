@@ -319,6 +319,8 @@ def _register_research_routes(
         runtime = web_runtime_factory(str(current_service.workspace.root)) if web_runtime_factory is not None else None
         task_id = generate_task_id()
         question = _question(payload)
+        # R-264: optional per-run switch for the pre-planning local stages.
+        local_context = bool(payload.get("local_context", True))
         if runtime is None:
             runtime = _default_web_runtime(current_service, bus)
         _active_runtimes[task_id] = runtime
@@ -326,10 +328,15 @@ def _register_research_routes(
         _submit_background_task(
             executor,
             current_service.acquire_family_lock("web", task_id),
-            lambda: current_service.run_web_research_unlocked(question, runtime=runtime, task_id=task_id),
+            lambda: current_service.run_web_research_unlocked(
+                question, runtime=runtime, task_id=task_id, local_context=local_context
+            ),
             task_id=task_id,
         )
-        return JSONResponse({"task_id": task_id, "mode": "web", "status": "running", "question": question}, status_code=202)
+        return JSONResponse(
+            {"task_id": task_id, "mode": "web", "status": "running", "question": question, "local_context": local_context},
+            status_code=202,
+        )
 
 
 def _register_task_routes(app: FastAPI, get_service: Callable[[], CoreService]) -> None:

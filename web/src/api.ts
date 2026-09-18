@@ -144,8 +144,11 @@ export const api = {
   setupConfig: () => request<SetupConfig>("/api/setup/config"),
   setupInit: (payload: SetupPayload) =>
     request<SetupStatus>("/api/setup/init", { method: "POST", body: JSON.stringify(payload) }),
-  runWeb: (question: string) =>
-    request<ResearchResult>("/api/research/web", { method: "POST", body: JSON.stringify({ question }) }),
+  runWeb: (question: string, localContext: boolean = true) =>
+    request<ResearchResult>("/api/research/web", {
+      method: "POST",
+      body: JSON.stringify({ question, local_context: localContext })
+    }),
   runLocal: (question: string) =>
     request<ResearchResult>("/api/research/local", { method: "POST", body: JSON.stringify({ question }) }),
   finishedTasks: () => request<{ tasks: TaskSummary[] }>("/api/tasks/finished"),

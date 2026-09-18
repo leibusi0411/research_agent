@@ -183,6 +183,9 @@ class WebResearchStateDict(TypedDict, total=False):
     route_history: Annotated[list[str], operator.add]
     revision_subtask_ids: Annotated[list[str], operator.add]  # R-123: track IDs added by plan_revision
     retrieval_round: int
+    # R-264: per-run switch for every pre-planning local retrieval
+    # (web_local_context stage + planner survey + index auto-update).
+    local_context_enabled: bool
 
 
 def check_required_field(payload: dict[str, Any], field: str, expected_type: type, *, allow_empty: bool = False) -> None:
@@ -202,10 +205,12 @@ def create_initial_state(
     original_question: str,
     *,
     prior_knowledge: list[PriorKnowledgeChunk] | None = None,
+    local_context_enabled: bool = True,
 ) -> WebResearchStateDict:
     """Return a fresh ``WebResearchStateDict`` with all fields initialized."""
     return {
         "original_question": original_question,
+        "local_context_enabled": local_context_enabled,
         "research_title": None,
         "prior_knowledge": list(prior_knowledge or []),
         "subtasks": [],

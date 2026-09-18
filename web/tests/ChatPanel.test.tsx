@@ -141,6 +141,8 @@ describe("ResearchPage chat entry", () => {
         result={result}
         events={[]}
         phase={null}
+        localContext={true}
+        setLocalContext={() => undefined}
       />
     );
   }
@@ -165,6 +167,8 @@ describe("ResearchPage chat entry", () => {
         result={{ ...webResult, status: "failed", error: { code: "runtime_error", message: "boom" } }}
         events={[]}
         phase={null}
+        localContext={true}
+        setLocalContext={() => undefined}
       />
     );
     expect(screen.queryByRole("region", { name: /chat with this research/i })).not.toBeInTheDocument();

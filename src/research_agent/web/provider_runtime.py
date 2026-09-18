@@ -16,6 +16,6 @@ class ProviderBackedWebResearchRuntime:
         self._config = config
         self.runner: StateGraphRunner | None = None
 
-    def run(self, question: str, task_id: str | None = None) -> dict[str, Any]:
+    def run(self, question: str, task_id: str | None = None, *, local_context: bool = True) -> dict[str, Any]:
         self.runner = StateGraphRunner(config=self._config)
-        return self.runner.run(question, task_id)
+        return self.runner.run(question, task_id, local_context=local_context)

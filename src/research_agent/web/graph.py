@@ -414,6 +414,10 @@ def _run_local_survey(
     (ADR-0023) even when the survey runs during plan revision.
     """
     task_id = ctx.task_id
+    # R-264: the per-run switch turns the survey (and its index auto-update)
+    # off entirely — same contract as the config-level inject_local_context.
+    if not state.get("local_context_enabled", True):
+        return []
     if ctx.local_retriever is None:
         return []
     ctx._emit(task_id, phase, "progress", "Surveying local knowledge base.")
