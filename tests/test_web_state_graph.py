@@ -972,3 +972,41 @@ def test_curator_report_sections_reach_the_persisted_result(tmp_path):
     persisted = result["curator_output"]["sections"]
     assert [s["heading"] for s in persisted] == ["Overview", "Indexing"]
     assert "Chunking quality" in persisted[1]["text"]
+
+
+def test_curator_output_inherits_state_findings_when_model_omits_them(tmp_path):
+    """R-278 fix: the curator no longer echoes findings/sources (output-budget
+    truncation on long sectioned reports); the graph merges them from state.
+
+    A payload with only title/summary/sections must still yield a complete
+    CuratorOutput carrying the executor's findings and sources.
+    """
+    _service, _config_path, workspace = configured_service(tmp_path)
+    sections = [{"heading": "Overview", "text": "A2A is an open protocol."}]
+    completions = [
+        _make_planner_response("A2A Research", ["What is A2A?"]),
+        _make_tool_plan_response("What is A2A"),
+        _make_executor_response("st_1", "A2A lets agents interoperate.", "https://example.com/a2a"),
+        _make_supervisor_response("curate", "Enough evidence.", saturation=True),
+        # Curator echoes NO findings/sources — title/summary/sections only.
+        json.dumps({"title": "A2A Report", "summary": "A2A in one line.", "sections": sections}),
+    ]
+    mock_chat = _SequencedChatClient(completions)
+
+    runner = StateGraphRunner(
+        config=RunnerConfig(
+            workspace=str(workspace),
+            chat_models=_make_chat_models(mock_chat),
+            tool_gateway=_ok_gateway(),
+            max_concurrent_subtasks=1,
+        ),
+    )
+
+    result = runner.run("What is A2A?")
+
+    assert result["status"] == "completed"
+    curator = result["curator_output"]
+    assert [s["heading"] for s in curator["sections"]] == ["Overview"]
+    # Findings/sources inherited from the executed subtasks, not the model.
+    assert curator["findings"][0]["text"] == "A2A lets agents interoperate."
+    assert curator["sources"][0]["url"] == "https://example.com/a2a"

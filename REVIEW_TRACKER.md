@@ -155,6 +155,7 @@
 |------|------|------|
 | R-276 | 用户需求：把 Web 调研之前的 local RAG（Prior Knowledge 注入 + Planner survey）做成开关 | ✅ ADR-0048 演进注记：per-run 开关——Research 页 "Check my notes first" 勾选（默认开）+ `POST /api/research/web` 接受 `local_context` 布尔（缺省 true，响应回显）+ CLI `web --no-local`；`WebResearchStateDict.local_context_enabled` 贯穿 graph：关闭时跳过 web_local_context 检索、Planner survey（含 plan_revision）与 survey 前的索引增量更新（钩子本为 survey 专属）；配置级 `research.inject_local_context` 全局关语义不变；注意 R-264~R-275 已由并行第十一轮审查占用，本行编号顺延 |
 | R-277 | 用户需求：调研报告只有一段 Summary，要求生成完整结构化报告（NotebookLM 式），按调研子任务分章节 | ✅ ADR-0054：CuratorOutput 新增 sections（heading+text，按子任务一节、计划顺序、成文论述+行内引用，无 findings 子任务并入 Gaps 章）；CuratorInput.subtasks 注入提示词（含每子任务 findings 计数）+ "one section per subtask" 指引 + 显式反幻觉规则；报告文件/Web Report 卡片/对话接地三端消费（有 sections 用、无则回退旧形态；chat 接地 sections 预算 12k 且不随来源勾选裁剪）；schema+validator 校验形状；测试 +8（graph 往返/report 两态/前端两态/prompt 指引与计数/chat 接地；复审 9 项发现全处置——ADR-0020 冲突声明+演进注记、[f_x]/[src_x] 引用全链路可解析（report findings 带 id、chat Sources/Findings 附 id、提示词示例对齐真实格式）、chat 预算 additive 注记、validator 可选键容错、heading 清洗防注入、CONTEXT 三词条、CLI 章节打印、React key 防撞） |
+| R-278 | 用户实测：分章报告调研失败——curator 输出超预算被截断（invalid JSON → llm_call_failed，重试同样截断） | ✅ 根因：初版要求 curator 复述 findings/sources 数组，回声+章节正文超出 16384 token（reasoning/content 共享）；修复：schema 移除 findings/sources、提示词禁止复述、_parse_curator_output 从图状态全量合并（兼容旧回声）；语义变化（curator 不再筛选 findings，全量保留）记入 ADR-0054 演进注记；复验：同一问题真实重跑通过 |
 
 ### 第九轮实现（2026-09-09，Chunking v2 / ADR-0049，R-258）
 

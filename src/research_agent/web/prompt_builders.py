@@ -326,8 +326,8 @@ def _render_curator_prompt(context: CuratorInput) -> str:
         "     lists above (e.g. [f_st_1] or [src_st_1]), so every citation stays resolvable.\n"
         "   If a subtask has no findings, fold it into a final \"Gaps & open questions\" section\n"
         "   instead of inventing content. Where evidence conflicts or is thin, say so explicitly.\n"
-        "4. findings — the most relevant atomic findings (keep their finding_id/subtask_id/source_ids).\n"
-        "5. sources — the sources actually cited above.\n\n"
+        "The findings and sources lists are merged automatically by the system from the lists above —\n"
+        "do NOT repeat them in your output. Return only title, summary, and sections.\n\n"
         "Grounding rule: every claim in summary and sections must trace to at least one finding or source.\n"
         "Do not invent facts, numbers, or conclusions beyond the findings above.\n"
     )

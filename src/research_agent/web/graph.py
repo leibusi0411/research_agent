@@ -61,15 +61,15 @@ def _validate_supervisor_payload(payload: dict[str, Any]) -> dict[str, Any]:
 def _validate_curator_payload(payload: dict[str, Any]) -> dict[str, Any]:
     check_required_field(payload, "title", str)
     check_required_field(payload, "summary", str)
-    # R-125: validate findings/sources structure to catch malformed LLM output early
-    check_required_field(payload, "findings", list, allow_empty=True)
-    check_required_field(payload, "sources", list, allow_empty=True)
-    for i, item in enumerate(payload.get("findings", [])):
-        if not isinstance(item, dict):
-            raise ValueError(f"findings[{i}] must be a dict, got {type(item).__name__}")
-    for i, item in enumerate(payload.get("sources", [])):
-        if not isinstance(item, dict):
-            raise ValueError(f"sources[{i}] must be a dict, got {type(item).__name__}")
+    # R-125: validate echoed findings/sources structure when present (legacy
+    # model behavior); they are no longer required — the graph merges state.
+    for field_name in ("findings", "sources"):
+        value = payload.get(field_name)
+        if value is not None and not isinstance(value, list):
+            raise ValueError(f"{field_name} must be a list")
+        for i, item in enumerate(value or []):
+            if not isinstance(item, dict):
+                raise ValueError(f"{field_name}[{i}] must be a dict, got {type(item).__name__}")
     # sections is optional in the schema: absent key means no chapters,
     # but a present non-list value is malformed.
     sections = payload.get("sections", [])
@@ -96,23 +96,27 @@ def _parse_supervisor_output(payload: dict[str, Any]) -> SupervisorOutput:
     )
 
 
-def _parse_curator_output(payload: dict[str, Any]) -> CuratorOutput:
-    findings = []
-    for f in payload.get("findings", []):
-        findings.append(Finding(
+def _parse_curator_output(payload: dict[str, Any], state: WebResearchStateDict) -> CuratorOutput:
+    echoed_findings = payload.get("findings")
+    if echoed_findings is not None:
+        findings = [Finding(
             finding_id=f.get("finding_id", ""),
             subtask_id=f.get("subtask_id", ""),
             text=f.get("text", ""),
             source_ids=f.get("source_ids", []),
-        ))
-    sources = []
-    for s in payload.get("sources", []):
-        sources.append(WebSource(
+        ) for f in echoed_findings if isinstance(f, dict)]
+    else:
+        findings = list(state.get("findings", []))
+    echoed_sources = payload.get("sources")
+    if echoed_sources is not None:
+        sources = [WebSource(
             source_id=s.get("source_id", ""),
             title=s.get("title", ""),
             url=s.get("url", ""),
             fetched_at=s.get("fetched_at", ""),
-        ))
+        ) for s in echoed_sources if isinstance(s, dict)]
+    else:
+        sources = list(state.get("sources", []))
     sections = [
         ReportSection(heading=s.get("heading", ""), text=s.get("text", ""))
         for s in payload.get("sections", [])
@@ -226,34 +230,12 @@ _CURATOR_SCHEMA: dict[str, Any] = {
                 "required": ["heading", "text"],
             },
         },
-        "findings": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "finding_id": {"type": "string"},
-                    "subtask_id": {"type": "string"},
-                    "text": {"type": "string"},
-                    "source_ids": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["finding_id", "subtask_id", "text", "source_ids"],
-            },
-        },
-        "sources": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "source_id": {"type": "string"},
-                    "title": {"type": "string"},
-                    "url": {"type": "string"},
-                    "fetched_at": {"type": "string"},
-                },
-                "required": ["source_id", "title", "url", "fetched_at"],
-            },
-        },
     },
-    "required": ["title", "summary", "findings", "sources"],
+    # R-278 fix: findings/sources are merged from the graph state by code —
+    # making the model echo them blew the output budget on sectioned reports
+    # (truncated JSON → llm_call_failed). Legacy payloads that still carry
+    # them are tolerated by the validator/parser.
+    "required": ["title", "summary"],
 }
 
 
@@ -579,7 +561,7 @@ def _curate_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[str, An
         task_id, "curator", curator_prompt, curator_payload,
         round_num=state["retrieval_round"],
     )
-    curator_output = _parse_curator_output(curator_payload)
+    curator_output = _parse_curator_output(curator_payload, state)
     ctx._emit(task_id, "web_curation", "completed", "Curation completed.")
     return {"curator_output": curator_output}
 

@@ -52,3 +52,12 @@ Curator 原先只产出一段 `summary`（"Create a concise title and summary"�
 ## 演进注记
 
 - 2026-09-18（R-277）：初版落地。
+- 2026-09-18（R-278，线上失败修复）：初版让 curator 在输出里复述
+  findings/sources 数组，分章报告叠加回声使输出超过 16384 token 预算
+  （deepseek-v4-flash 的 reasoning 与 content 共享预算），JSON 中途截断
+  → 解析失败 → 重试同样截断 → `llm_call_failed`。修复：模型只产
+  title/summary/sections（schema 移除 findings/sources，提示词明令
+  "do NOT repeat them"），findings/sources 由 `_parse_curator_output`
+  从图状态全量合并（模型仍回声时兼容采用）。语义变化：curator 不再
+  "筛选最相关 findings"，改为全量保留——对 deposit 与对话接地反而更有
+  用，且把输出预算全部留给报告正文。
