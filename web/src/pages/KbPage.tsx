@@ -33,19 +33,6 @@ export function KbPage({
         <p className="kb-subtitle">Local retrieval over your Markdown vault</p>
       </header>
 
-      <form className="kb-search" onSubmit={onLocalSearch}>
-        <Search className="kb-search-icon" size={18} aria-hidden />
-        <input
-          aria-label="Local RAG question"
-          placeholder="Ask your local knowledge base…"
-          value={localQuestion}
-          onChange={(event) => setLocalQuestion(event.target.value)}
-        />
-        <button type="submit" disabled={localRunning || busy} aria-label="Search">
-          <span>Search</span>
-        </button>
-      </form>
-
       {status && (
         <section className="kb-panel" aria-label="Knowledge Base Index">
           <div className="kb-panel-head">
@@ -84,6 +71,19 @@ export function KbPage({
           </div>
         </section>
       )}
+
+      <form className="kb-search" onSubmit={onLocalSearch}>
+        <Search className="kb-search-icon" size={18} aria-hidden />
+        <input
+          aria-label="Local RAG question"
+          placeholder="Ask your local knowledge base…"
+          value={localQuestion}
+          onChange={(event) => setLocalQuestion(event.target.value)}
+        />
+        <button type="submit" disabled={localRunning || busy} aria-label="Search">
+          <span>Search</span>
+        </button>
+      </form>
 
       {localEvents.length > 0 && (
         <TraceCard events={localEvents} phase={null} running={localRunning} />
