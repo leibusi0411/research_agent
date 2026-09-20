@@ -372,6 +372,32 @@ def test_gateway_retries_transient_search_provider_http_status_failures():
     assert provider.calls == 2
 
 
+def test_http_status_error_message_carries_provider_detail():
+    """R-280: Tavily quota exhaustion (432) must surface its detail text so
+    the supervisor/model/user can see WHY, not just a bare status code."""
+    class QuotaExhaustedProvider(SearchProvider):
+        def search(self, query: str, max_results: int) -> list[dict]:
+            request = httpx.Request("POST", "https://api.tavily.com/search")
+            response = httpx.Response(
+                432,
+                text="{\"detail\":{\"error\":\"This request exceeds your plan's set usage limit.\"}}",
+                request=request,
+            )
+            raise httpx.HTTPStatusError("432", request=request, response=response)
+
+    gateway = ToolGateway(
+        registry=create_default_web_tool_registry(),
+        runner=ToolRunner(config=web_tools_config(), search_provider=QuotaExhaustedProvider()),
+    )
+
+    result = gateway.call("web_research", {"name": "web.search", "arguments": {"query": "robots"}})
+
+    assert result.status == "error"
+    assert result.error == "permanent_error"
+    assert "HTTP status 432" in result.message
+    assert "usage limit" in result.message
+
+
 def test_web_search_uses_search_provider_and_result_limit_defaults():
     gateway = ToolGateway(
         registry=create_default_web_tool_registry(),

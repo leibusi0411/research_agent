@@ -324,9 +324,16 @@ class ToolRunner:
             return ToolResult(status="error", error="transient_error", message=str(exc))
         except httpx.HTTPStatusError as exc:
             status_code = exc.response.status_code
+            # Surface the provider's own detail (e.g. Tavily quota exhaustion
+            # on 432) so the failure reason reaches the model and the UI
+            # instead of a bare status code.
+            detail = ""
+            with contextlib.suppress(Exception):
+                detail = (exc.response.text or "").strip().replace("\n", " ")[:200]
+            suffix = f": {detail}" if detail else ""
             if status_code in {408, 425, 429} or status_code >= 500:
-                return ToolResult(status="error", error="transient_error", message=f"HTTP status {status_code}")
-            return ToolResult(status="error", error="permanent_error", message=f"HTTP status {status_code}")
+                return ToolResult(status="error", error="transient_error", message=f"HTTP status {status_code}{suffix}")
+            return ToolResult(status="error", error="permanent_error", message=f"HTTP status {status_code}{suffix}")
         except Exception as exc:
             return ToolResult(status="error", error="permanent_error", message=str(exc))
         return ToolResult(status="error", error="validation_error", message=f"Unknown tool: {tool_name}")
