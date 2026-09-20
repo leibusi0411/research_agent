@@ -1,9 +1,46 @@
 import { Fragment, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { ChevronDown } from "lucide-react";
 import { api, ApiError, type ProgressEvent, type ResearchResult } from "../api";
 import { groupEvents, ProcessView } from "./ProcessView";
 import { ConnectionBadge } from "./ConnectionBadge";
 import { PhaseIndicator } from "./PhaseIndicator";
+
+/**
+ * Collapsible card chrome (R-281): the head renders the card's own <h2>
+ * (semantics and existing per-card styles keep working) plus a chevron;
+ * the body hides on click. Finished-research cards fold; running cards
+ * stay open by default.
+ */
+function FoldCard({
+  className,
+  headClassName,
+  head,
+  children,
+  defaultOpen = true,
+}: {
+  className: string;
+  headClassName?: string;
+  head: ReactNode;
+  children: ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <article className={className}>
+      <button
+        type="button"
+        className={`card-fold-head${headClassName ? ` ${headClassName}` : ""}`}
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {head}
+        <ChevronDown size={16} aria-hidden="true" className={open ? "card-fold-chev" : "card-fold-chev closed"} />
+      </button>
+      {open && <div className="card-fold-body">{children}</div>}
+    </article>
+  );
+}
 
 // Inline tokens of a section body: **bold**, `code`, and [f_x]/[src_x]
 // citation chips. React text nodes keep any HTML inert.
@@ -133,17 +170,22 @@ export function TraceCard({
   if (events.length === 0) return null;
   const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
   return (
-    <article className={running ? "card trace-card running" : "card trace-card"}>
-      <div className="trace-head">
-        <h2>Research Trace</h2>
-        {running && <ConnectionBadge status="connected" />}
-        <span className="trace-stats">
-          {plural(stats.notes, "note")} · {plural(stats.searches, "search")} · {plural(stats.sources, "source")} · {plural(stats.findings, "finding")}
-        </span>
-      </div>
+    <FoldCard
+      className={running ? "card trace-card running" : "card trace-card"}
+      headClassName="trace-head"
+      head={
+        <>
+          <h2>Research Trace</h2>
+          {running && <ConnectionBadge status="connected" />}
+          <span className="trace-stats">
+            {plural(stats.notes, "note")} · {plural(stats.searches, "search")} · {plural(stats.sources, "source")} · {plural(stats.findings, "finding")}
+          </span>
+        </>
+      }
+    >
       {phase && <PhaseIndicator currentPhase={phase} mode="web" running={running} />}
       <ProcessView groupedEvents={groupedEvents} newestSeq={newestSeq} />
-    </article>
+    </FoldCard>
   );
 }
 
@@ -192,11 +234,15 @@ export function ResultCards({ result, events }: { result: ResearchResult; events
   const sources = result.curator_output?.sources ?? [];
   return (
     <div className="result-cards">
-      <article className="card report-card">
-        <h2>
-          <span className="lane-glyph lane-web" aria-hidden="true" />
-          Web Report
-        </h2>
+      <FoldCard
+        className="card report-card"
+        head={
+          <h2>
+            <span className="lane-glyph lane-web" aria-hidden="true" />
+            Web Report
+          </h2>
+        }
+      >
         <p className="report-question">{result.question}</p>
         <StatusLine result={result} />
         {result.curator_output && (
@@ -221,13 +267,17 @@ export function ResultCards({ result, events }: { result: ResearchResult; events
         {result.status === "completed" && result.report_path && (
           <DepositPanel key={result.task_id} taskId={result.task_id} />
         )}
-      </article>
+      </FoldCard>
       {notePaths.length > 0 && (
-        <article className="card notes-card">
-          <h2>
-            <span className="lane-glyph lane-local" aria-hidden="true" />
-            From Your Notes
-          </h2>
+        <FoldCard
+          className="card notes-card"
+          head={
+            <h2>
+              <span className="lane-glyph lane-local" aria-hidden="true" />
+              From Your Notes
+            </h2>
+          }
+        >
           <p className="card-note">These local notes were injected into the planner before the web run.</p>
           <ul>
             {notePaths.map((path) => (
@@ -236,11 +286,13 @@ export function ResultCards({ result, events }: { result: ResearchResult; events
               </li>
             ))}
           </ul>
-        </article>
+        </FoldCard>
       )}
       {sources.length > 0 && (
-        <article className="card sources-card">
-          <h2>Sources</h2>
+        <FoldCard
+          className="card sources-card"
+          head={<h2>Sources</h2>}
+        >
           <ul>
             {sources.map((source) => (
               <li key={source.source_id}>
@@ -251,7 +303,7 @@ export function ResultCards({ result, events }: { result: ResearchResult; events
               </li>
             ))}
           </ul>
-        </article>
+        </FoldCard>
       )}
     </div>
   );

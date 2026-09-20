@@ -240,6 +240,28 @@ describe("ResultCards sectioned report", () => {
     expect(items[0].textContent).toBe("task model");
   });
 
+  it("collapses and re-expands the report card from its header (R-281)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ messages: [] }) }))
+    );
+    render(<ResultCards result={sectionedResult} events={[]} />);
+
+    const head = screen.getByRole("button", { name: /web report/i });
+    expect(head).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Lead-in paragraph.")).toBeInTheDocument();
+
+    await userEvent.click(head);
+    expect(head).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Lead-in paragraph.")).not.toBeInTheDocument();
+    // Sources card stays open — cards fold independently.
+    expect(screen.getByRole("link", { name: "Source" })).toBeInTheDocument();
+
+    await userEvent.click(head);
+    expect(head).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Lead-in paragraph.")).toBeInTheDocument();
+  });
+
   it("keeps the legacy summary+findings shape when sections are absent", () => {
     vi.stubGlobal(
       "fetch",

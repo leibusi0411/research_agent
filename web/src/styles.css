@@ -504,7 +504,7 @@ label span {
   gap: 12px;
   overflow: hidden;
   margin-bottom: 20px;
-  padding: 18px 20px;
+  padding: 0;
   animation: panel-in var(--t-enter) both;
 }
 
@@ -553,12 +553,19 @@ label span {
 
 .report-card,
 .notes-card,
-.sources-card,
+.sources-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0;
+}
+
 .result-panel {
   display: flex;
   flex-direction: column;
   gap: 12px;
   padding: 22px 24px;
+}
 }
 
 .result-panel {
@@ -1712,7 +1719,7 @@ label span {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .chat-panel {
@@ -1720,6 +1727,7 @@ label span {
   flex-direction: column;
   gap: 12px;
   padding: 18px;
+  height: 560px;
 }
 
 .chat-panel h2 {
@@ -1741,8 +1749,8 @@ label span {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  min-height: 180px;
-  max-height: 420px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 4px 2px;
   scroll-behavior: smooth;
@@ -1754,6 +1762,10 @@ label span {
   text-align: center;
   color: var(--text-2);
   font-size: 13.5px;
+}
+
+.chat-panel form.chat-input {
+  flex: none;
 }
 
 .chat-bubble {
@@ -1833,6 +1845,11 @@ label span {
 }
 
 .chat-sources {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 560px;
+  overflow: hidden;
   padding: 18px;
 }
 
@@ -1850,7 +1867,10 @@ label span {
   flex-direction: column;
   gap: 10px;
   margin: 10px 0 0;
-  padding: 0;
+  padding: 0 4px 0 0;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .chat-sources li {
@@ -1897,6 +1917,19 @@ label span {
 @media (max-width: 920px) {
   .chat-layout {
     grid-template-columns: 1fr;
+  }
+
+  .chat-panel,
+  .chat-sources {
+    height: auto;
+  }
+
+  .chat-stream {
+    max-height: 320px;
+  }
+
+  .chat-sources ul {
+    max-height: 280px;
   }
 }
 
@@ -2050,4 +2083,69 @@ label span {
   color: var(--accent-strong);
   vertical-align: 2px;
   white-space: nowrap;
+}
+
+
+/* ---------- Collapsible cards (R-281) ---------- */
+
+.card-fold-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+  font: inherit;
+  padding: 18px 20px;
+}
+
+.card-fold-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 20px 18px;
+}
+
+/* report/notes/sources cards use a wider padding rhythm */
+.report-card > .card-fold-head,
+.notes-card > .card-fold-head,
+.sources-card > .card-fold-head {
+  padding: 22px 24px 0;
+}
+
+.report-card > .card-fold-body,
+.notes-card > .card-fold-body,
+.sources-card > .card-fold-body {
+  padding: 0 24px 22px;
+}
+
+/* the trace head keeps its own flex idiom; h2 stays inside the button */
+.trace-head {
+  width: 100%;
+}
+
+.card-fold-head h2 {
+  margin: 0;
+}
+
+.card-fold-head:hover h2 {
+  color: var(--accent);
+}
+
+.card-fold-chev {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-2);
+  transition: transform var(--t-micro);
+}
+
+.card-fold-chev.closed {
+  transform: rotate(-90deg);
+}
+
+.card-fold-head:hover .card-fold-chev {
+  color: var(--accent);
 }
