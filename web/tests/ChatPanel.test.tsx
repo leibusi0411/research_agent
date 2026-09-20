@@ -52,45 +52,84 @@ beforeEach(() => {
 });
 
 describe("ChatPanel", () => {
-  it("renders the references card with all sources checked by default, and the chat area with input bar", async () => {
+  it("starts with nothing imported: send is gated until an import (R-283)", async () => {
     const captures: Captured[] = [];
     stubChatFetch("reply", captures);
 
     render(<ChatPanel result={webResult} />);
 
-    // References card lists every source with a checked checkbox.
+    // References card lists every source, none imported.
     expect(await screen.findByText("LangGraph docs")).toBeInTheDocument();
     expect(screen.getByText("Checkpointing guide")).toBeInTheDocument();
     const checkboxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
     expect(checkboxes).toHaveLength(2);
-    expect(checkboxes.every((box) => box.checked)).toBe(true);
+    expect(checkboxes.every((box) => !box.checked)).toBe(true);
+    expect(screen.queryByText("Imported")).not.toBeInTheDocument();
 
-    // Empty conversation hint and the input bar.
-    expect(screen.getByText(/Ask a follow-up question/i)).toBeInTheDocument();
+    // Empty conversation hint points at importing first; send is gated.
+    expect(screen.getByText(/Import references on the right first/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/chat message/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /send/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /import selected/i })).toBeDisabled();
   });
 
-  it("sends the message with the selected sources and shows the grounded reply", async () => {
+  it("imports selected references, then sends messages grounded in the import set", async () => {
     const captures: Captured[] = [];
     stubChatFetch("Checkpoints persist on disk.", captures);
 
     render(<ChatPanel result={webResult} />);
     await screen.findByText("LangGraph docs");
 
-    // Narrow the grounding: uncheck the second source.
-    await userEvent.click(screen.getAllByRole("checkbox")[1]);
+    // Import only the first source.
+    await userEvent.click(screen.getAllByRole("checkbox")[0]);
+    await userEvent.click(screen.getByRole("button", { name: /import 1 selected/i }));
 
+    // Both sources now show as imported (checkbox disabled, badge present).
+    const badges = screen.getAllByText("Imported");
+    expect(badges).toHaveLength(1);
+    expect((screen.getAllByRole("checkbox") as HTMLInputElement[]).map((b) => b.checked)).toEqual([true, false]);
+    expect((screen.getAllByRole("checkbox") as HTMLInputElement[]).map((b) => b.disabled)).toEqual([true, false]);
+
+    // Send is unlocked and carries exactly the imported set.
     await userEvent.type(screen.getByLabelText(/chat message/i), "How does checkpointing work?");
     await userEvent.click(screen.getByRole("button", { name: /send/i }));
 
     expect(await screen.findByText("Checkpoints persist on disk.")).toBeInTheDocument();
-    expect(screen.getByText("How does checkpointing work?")).toBeInTheDocument();
-
     const post = captures.find((c) => c.method === "POST");
-    expect(post?.url).toContain(`/api/tasks/${webResult.task_id}/chat`);
-    expect(post?.body?.message).toBe("How does checkpointing work?");
     expect(post?.body?.selected_sources).toEqual(["src_1"]);
+  });
+
+  it("supports adding more imports later, up to the cap of 50", async () => {
+    const captures: Captured[] = [];
+    stubChatFetch("reply", captures);
+
+    // 52 sources: importing everything at once must hit the cap.
+    const many: ResearchResult = {
+      ...webResult,
+      curator_output: {
+        ...webResult.curator_output!,
+        sources: Array.from({ length: 52 }, (_, i) => ({
+          source_id: `src_${i + 1}`,
+          title: `Ref ${i + 1}`,
+          url: `https://example.com/${i + 1}`,
+          fetched_at: "now",
+        })),
+      },
+    };
+    render(<ChatPanel result={many} />);
+    await screen.findByText("Ref 1");
+
+    // Import the first batch of 50.
+    for (const box of (screen.getAllByRole("checkbox") as HTMLInputElement[]).slice(0, 50)) {
+      await userEvent.click(box);
+    }
+    await userEvent.click(screen.getByRole("button", { name: /import 50 selected/i }));
+    expect(await screen.findAllByText("Imported")).toHaveLength(50);
+
+    // Trying to select more than the remaining 0 slots is impossible — the
+    // button reports the cap and stays disabled.
+    await userEvent.click((screen.getAllByRole("checkbox") as HTMLInputElement[])[50]);
+    expect(screen.getByRole("button", { name: /import limit/i })).toBeDisabled();
   });
 
   it("reloads persisted conversation history on mount", async () => {

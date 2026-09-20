@@ -109,6 +109,49 @@ def test_chat_message_returns_grounded_reply_and_persists_history(tmp_path):
     assert messages[1]["content"] == "Grounded answer."
 
 
+def test_chat_empty_selection_means_no_source_grounding(tmp_path):
+    """R-283: explicit [] imports nothing — sources/findings stay out of the
+    prompt (only summary + sections remain). Absent field keeps full grounding
+    (backward compat with the old select-all semantics)."""
+    chat_model = _RecordingChatModel()
+    client, workspace = _chat_client(tmp_path, chat_model)
+    task_id = _write_completed_web_task(workspace)
+
+    client.post(f"/api/tasks/{task_id}/chat", json={"message": "q", "selected_sources": []})
+    client.post(f"/api/tasks/{task_id}/chat", json={"message": "q"})
+
+    empty_prompt = chat_model.prompts[0]
+    assert "Sources:" not in empty_prompt
+    assert "LangGraph models agents as state machines." not in empty_prompt
+    full_prompt = chat_model.prompts[1]
+    assert "LangGraph models agents as state machines." in full_prompt
+
+
+def test_chat_import_cap_fifty_sources(tmp_path):
+    """R-283: more than 50 imported sources is rejected with config_invalid."""
+    chat_model = _RecordingChatModel()
+    client, workspace = _chat_client(tmp_path, chat_model)
+    task_id = _write_completed_web_task(workspace)
+    # Widen the stored source list beyond the cap.
+    result_path = workspace / "tasks" / task_id / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    base = result["curator_output"]["sources"][0]
+    result["curator_output"]["sources"] = [
+        {**base, "source_id": f"src_{i}"} for i in range(60)
+    ]
+    result_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+
+    rejected = client.post(
+        f"/api/tasks/{task_id}/chat",
+        json={"message": "q", "selected_sources": [f"src_{i}" for i in range(51)]},
+    )
+
+    assert rejected.status_code == 400
+    assert rejected.json()["error"]["code"] == "config_invalid"
+    assert "50" in rejected.json()["error"]["message"]
+    assert chat_model.prompts == []
+
+
 def test_chat_grounds_on_report_sections_when_present(tmp_path):
     """R-277: sectioned report chapters are part of the chat grounding context."""
     chat_model = _RecordingChatModel()

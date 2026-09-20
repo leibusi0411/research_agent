@@ -152,8 +152,13 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
 
   // Grounded chat over the finished research (ADR-0050): references card on
   // the right, conversation in the middle, input bar at the bottom.
+  // R-283: references must be explicitly imported before chatting.
   await expect(page.getByRole("heading", { name: "Chat with this research" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "References" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
+  await page.locator(".chat-sources input[type=checkbox]").first().check();
+  await page.getByRole("button", { name: /import 1 selected/i }).click();
+  await expect(page.getByText("Imported").first()).toBeVisible();
   await page.getByRole("textbox", { name: "Chat message" }).fill("What did you find?");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Chat answer about the research.")).toBeVisible();

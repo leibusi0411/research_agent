@@ -39,6 +39,9 @@ _SYSTEM_PROMPT = (
 # and report sections are each capped separately (additive in the worst
 # case); findings drop oldest-subtask-first beyond their budget.
 _MAX_CONTEXT_CHARS = 24_000
+# R-283: the References card imports sources explicitly (NotebookLM-style);
+# 50 is the per-conversation import ceiling, enforced front and back.
+_MAX_IMPORTED_SOURCES = 50
 
 
 class TaskChatService:
@@ -74,6 +77,11 @@ class TaskChatService:
         """Answer *message*, append the turn to history, return the reply."""
         if self.chat_model is None:
             raise ResearchError(code="config_missing", message="Chat model is not configured.")
+        if selected_source_ids is not None and len(selected_source_ids) > _MAX_IMPORTED_SOURCES:
+            raise ResearchError(
+                code="config_invalid",
+                message=f"Too many imported sources: {len(selected_source_ids)} (max {_MAX_IMPORTED_SOURCES}).",
+            )
         result = self._load_result()
         prompt = self._build_prompt(message, result, selected_source_ids=selected_source_ids)
         try:
@@ -144,16 +152,17 @@ def _render_research_context(
 ) -> str:
     """Render the static grounding block from a task result.
 
-    ``selected_source_ids`` narrows the block NotebookLM-style: only the
-    selected sources and the findings that cite them stay in. ``None``
-    (or an empty selection) keeps everything.
+    ``selected_source_ids`` is the imported set (NotebookLM-style): a non-None
+    value narrows the block to those sources and the findings citing them —
+    an explicit empty list imports nothing. ``None`` keeps everything
+    (backward compat with the old select-all default).
     """
     curator = result.get("curator_output") or {}
     sources = [s for s in curator.get("sources", []) if isinstance(s, dict)]
     findings = [f for f in curator.get("findings", []) if isinstance(f, dict)]
     sections = [s for s in curator.get("sections", []) if isinstance(s, dict)]
 
-    if selected_source_ids:
+    if selected_source_ids is not None:
         wanted = set(selected_source_ids)
         sources = [s for s in sources if s.get("source_id") in wanted]
         findings = [f for f in findings if wanted.intersection(f.get("source_ids") or [])]

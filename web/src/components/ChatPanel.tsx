@@ -11,14 +11,22 @@ import { api, type ChatMessage, type ResearchResult } from "../api";
  * the grounding context server-side. History persists in the task folder,
  * so opening the chat again reloads the conversation.
  */
+const MAX_IMPORTED_SOURCES = 50;
+
 export function ChatPanel({ result }: { result: ResearchResult }) {
   const sources = result.curator_output?.sources ?? [];
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(sources.map((s) => s.source_id)));
+  // R-283: references enter the grounding context only via explicit import —
+  // nothing is grounded until the user picks sources and clicks Import.
+  const [imported, setImported] = useState<Set<string>>(() => new Set());
+  const [checked, setChecked] = useState<Set<string>>(() => new Set());
   const streamRef = useRef<HTMLDivElement>(null);
+
+  const importable = checked.size + imported.size <= MAX_IMPORTED_SOURCES;
+  const canSend = imported.size > 0;
 
   // Best-effort history reload: a failed fetch just starts a fresh chat.
   useEffect(() => {
@@ -39,8 +47,8 @@ export function ChatPanel({ result }: { result: ResearchResult }) {
     streamRef.current?.scrollTo?.({ top: streamRef.current.scrollHeight });
   }, [messages, sending]);
 
-  function toggleSource(sourceId: string) {
-    setSelected((current) => {
+  function toggleChecked(sourceId: string) {
+    setChecked((current) => {
       const next = new Set(current);
       if (next.has(sourceId)) next.delete(sourceId);
       else next.add(sourceId);
@@ -48,15 +56,21 @@ export function ChatPanel({ result }: { result: ResearchResult }) {
     });
   }
 
+  function importChecked() {
+    if (!importable || checked.size === 0) return;
+    setImported((current) => new Set([...current, ...checked]));
+    setChecked(new Set());
+  }
+
   async function send(event: FormEvent) {
     event.preventDefault();
     const message = input.trim();
-    if (!message || sending) return;
+    if (!message || sending || !canSend) return;
     setSending(true);
     setError(null);
     setInput("");
     try {
-      const response = await api.sendChat(result.task_id, message, [...selected]);
+      const response = await api.sendChat(result.task_id, message, [...imported]);
       setMessages((current) => [
         ...current,
         { role: "user", content: message },
@@ -81,7 +95,9 @@ export function ChatPanel({ result }: { result: ResearchResult }) {
           <div className="chat-stream" ref={streamRef}>
             {messages.length === 0 && !sending && (
               <p className="chat-empty">
-                Ask a follow-up question about this research — answers are grounded in its findings and sources.
+                {canSend
+                  ? "Ask a follow-up question about this research — answers are grounded in the imported references."
+                  : "Import references on the right first — answers are grounded only in what you import."}
               </p>
             )}
             {messages.map((message, index) => (
@@ -97,10 +113,10 @@ export function ChatPanel({ result }: { result: ResearchResult }) {
               aria-label="Chat message"
               value={input}
               onChange={(event) => setInput(event.target.value)}
-              placeholder="Ask about this research…"
+              placeholder={canSend ? "Ask about this research…" : "Import references first…"}
               disabled={sending}
             />
-            <button type="submit" disabled={sending || !input.trim()}>
+            <button type="submit" disabled={sending || !input.trim() || !canSend}>
               <Send size={15} aria-hidden="true" />
               {sending ? "Thinking…" : "Send"}
             </button>
@@ -109,23 +125,42 @@ export function ChatPanel({ result }: { result: ResearchResult }) {
         {sources.length > 0 && (
           <aside className="card chat-sources">
             <h2>References</h2>
-            <p className="card-note">Checked references ground the chat. Uncheck to narrow; leave all checked (or none) for the full set.</p>
+            <p className="card-note">
+              Select references and import them — the chat is grounded only in imported ones ({imported.size}/{MAX_IMPORTED_SOURCES} imported).
+            </p>
+            <button
+              type="button"
+              className="chat-import-btn"
+              onClick={importChecked}
+              disabled={checked.size === 0 || !importable}
+            >
+              {checked.size === 0
+                ? "Import selected"
+                : !importable
+                  ? `Import limit (${MAX_IMPORTED_SOURCES - imported.size} left)`
+                  : `Import ${checked.size} selected`}
+            </button>
             <ul>
-              {sources.map((source) => (
-                <li key={source.source_id}>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={selected.has(source.source_id)}
-                      onChange={() => toggleSource(source.source_id)}
-                    />
-                    <span>{source.title}</span>
-                  </label>
-                  <a href={source.url} target="_blank" rel="noopener noreferrer">
-                    {source.url}
-                  </a>
-                </li>
-              ))}
+              {sources.map((source) => {
+                const isImported = imported.has(source.source_id);
+                return (
+                  <li key={source.source_id} className={isImported ? "imported" : ""}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={isImported || checked.has(source.source_id)}
+                        disabled={isImported}
+                        onChange={() => toggleChecked(source.source_id)}
+                      />
+                      <span>{source.title}</span>
+                    </label>
+                    <a href={source.url} target="_blank" rel="noopener noreferrer">
+                      {source.url}
+                    </a>
+                    {isImported && <span className="imported-badge">Imported</span>}
+                  </li>
+                );
+              })}
             </ul>
           </aside>
         )}
