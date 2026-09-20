@@ -61,3 +61,10 @@ Curator 原先只产出一段 `summary`（"Create a concise title and summary"�
   从图状态全量合并（模型仍回声时兼容采用）。语义变化：curator 不再
   "筛选最相关 findings"，改为全量保留——对 deposit 与对话接地反而更有
   用，且把输出预算全部留给报告正文。
+- 2026-09-20（R-279）：章节正文升级为**富 Markdown**（NotebookLM 形态）：
+  空行分段、`**加粗**`、无序/有序列表、行内 code；`[f_x]`/`[src_x]` 引用
+  在 Web Report 卡片渲染为引用芯片。提示词明确"No headings inside
+  section text"；报告文件侧 `_sanitize_section_markdown` 白名单放行
+  格式记号、降级注入的标题行、把正文 `---` 换为 `***`（防伪造
+  frontmatter 围栏）；前端 `ReportRichText` 手写白名单渲染器
+  （React 文本节点天然防 HTML 注入，不引入 markdown 依赖）。

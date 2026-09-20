@@ -140,3 +140,42 @@ def test_render_web_report_without_sections_keeps_legacy_shape():
     assert "## Overview" not in markdown
     assert "## Summary" in markdown
     assert "## Findings" in markdown
+
+
+def test_render_web_report_keeps_section_markdown_but_blocks_structure_injection():
+    """R-279: section bodies are rich Markdown (NotebookLM-style) — formatting
+    survives, but injected headings/hr that would break the chapter structure
+    are neutralized."""
+    output = curator_output()
+    output = CuratorOutput(
+        title=output.title,
+        summary=output.summary,
+        findings=output.findings,
+        sources=output.sources,
+        sections=[
+            ReportSection(
+                heading="Mechanisms",
+                text=(
+                    "The **Agent Card** is discovered at well-known URLs.\n\n"
+                    "- task model\n- JSON-RPC 2.0 transport\n\n"
+                    "## Injected heading\n\n"
+                    "---\n\n"
+                    "Uses `artifact` identifiers [f_st_1]."
+                ),
+            ),
+        ],
+    )
+
+    markdown = render_web_report(
+        task_id="task_20260623_103000_a1b2c3",
+        created_at="2026-06-23T10:30:00Z",
+        output=output,
+    )
+
+    # Rich formatting survives...
+    assert "**Agent Card**" in markdown
+    assert "- task model" in markdown
+    assert "`artifact`" in markdown
+    # ...but headings and hr inside section text cannot break the structure.
+    assert "## Injected heading" not in markdown
+    assert markdown.count("---") == 2  # only the frontmatter fences remain

@@ -2002,3 +2002,52 @@ label span {
   color: var(--text);
   line-height: 1.65;
 }
+
+/* ---------- Rich report body (R-279) ---------- */
+
+.report-rich {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.report-rich p {
+  margin: 0;
+  line-height: 1.65;
+}
+
+.report-rich ul,
+.report-rich ol {
+  margin: 0;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.report-rich li {
+  line-height: 1.55;
+}
+
+.report-rich code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.cite-chip {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: var(--accent-wash);
+  border: 1px solid rgba(168, 199, 250, 0.32);
+  color: var(--accent-strong);
+  vertical-align: 2px;
+  white-space: nowrap;
+}

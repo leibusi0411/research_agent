@@ -1,8 +1,71 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { api, ApiError, type ProgressEvent, type ResearchResult } from "../api";
 import { groupEvents, ProcessView } from "./ProcessView";
 import { ConnectionBadge } from "./ConnectionBadge";
 import { PhaseIndicator } from "./PhaseIndicator";
+
+// Inline tokens of a section body: **bold**, `code`, and [f_x]/[src_x]
+// citation chips. React text nodes keep any HTML inert.
+const _INLINE_TOKEN = /(\*\*[^*\n]+\*\*|`[^`\n]+`|\[(?:f|src|s)_?[A-Za-z0-9_]+\])/g;
+
+function renderInline(text: string, keyPrefix: string): ReactNode[] {
+  return text.split(_INLINE_TOKEN).filter(Boolean).map((token, index) => {
+    const key = `${keyPrefix}-${index}`;
+    if (token.startsWith("**") && token.endsWith("**")) {
+      return <strong key={key}>{token.slice(2, -2)}</strong>;
+    }
+    if (token.startsWith("`") && token.endsWith("`")) {
+      return <code key={key}>{token.slice(1, -1)}</code>;
+    }
+    if (token.startsWith("[")) {
+      return (
+        <span className="cite-chip" key={key}>
+          {token.slice(1, -1)}
+        </span>
+      );
+    }
+    return <Fragment key={key}>{token}</Fragment>;
+  });
+}
+
+/**
+ * NotebookLM-style section body renderer (R-279): blank-line paragraphs,
+ * consecutive `- `/`n. ` lines as lists, inline bold/code, and resolvable
+ * citation ids as chips. Headings inside bodies are not rendered as
+ * structure — the backend sanitizer already strips them from report files.
+ */
+export function ReportRichText({ text }: { text: string }) {
+  const blocks = text.split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean);
+  return (
+    <div className="report-rich">
+      {blocks.map((block, blockIndex) => {
+        const lines = block.split("\n");
+        const isBullet = lines.every((line) => /^\s*[-*]\s+/.test(line));
+        const isOrdered = lines.every((line) => /^\s*\d+\.\s+/.test(line));
+        if (isBullet) {
+          return (
+            <ul key={blockIndex}>
+              {lines.map((line, i) => (
+                <li key={i}>{renderInline(line.replace(/^\s*[-*]\s+/, ""), `${blockIndex}-${i}`)}</li>
+              ))}
+            </ul>
+          );
+        }
+        if (isOrdered) {
+          return (
+            <ol key={blockIndex}>
+              {lines.map((line, i) => (
+                <li key={i}>{renderInline(line.replace(/^\s*\d+\.\s+/, ""), `${blockIndex}-${i}`)}</li>
+              ))}
+            </ol>
+          );
+        }
+        return <p key={blockIndex}>{renderInline(block.replace(/\n/g, " "), String(blockIndex))}</p>;
+      })}
+    </div>
+  );
+}
 
 function useGroupedEvents(events: ProgressEvent[]) {
   const groupedEvents = useMemo(() => groupEvents(events), [events]);
@@ -143,7 +206,7 @@ export function ResultCards({ result, events }: { result: ResearchResult; events
             {(result.curator_output.sections ?? []).map((section, index) => (
               <div className="report-section" key={`${section.heading}-${index}`}>
                 <h3>{section.heading}</h3>
-                <p>{section.text}</p>
+                <ReportRichText text={section.text} />
               </div>
             ))}
             <h3>Findings</h3>

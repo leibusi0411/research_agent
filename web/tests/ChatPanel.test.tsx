@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatPanel } from "../src/components/ChatPanel";
@@ -204,6 +204,40 @@ describe("ResultCards sectioned report", () => {
     expect(screen.getByText("RAG retrieves then generates.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Indexing" })).toBeInTheDocument();
     expect(screen.getByText("Chunking quality drives recall.")).toBeInTheDocument();
+  });
+
+  it("renders rich Markdown section bodies NotebookLM-style (R-279)", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ messages: [] }) }))
+    );
+    const rich: ResearchResult = {
+      ...sectionedResult,
+      curator_output: {
+        ...sectionedResult.curator_output!,
+        sections: [
+          {
+            heading: "Mechanisms",
+            text: "The **Agent Card** is discovered at well-known URLs.\n\n- task model\n- JSON-RPC 2.0 transport\n\nUses `artifact` identifiers [f_st_1] and [src_st_1].",
+          },
+        ],
+      },
+    };
+    render(<ResultCards result={rich} events={[]} />);
+
+    // Paragraphs split on blank lines; bold renders as emphasis (text nodes
+    // around the <strong>), not literal asterisks.
+    expect(screen.getByText("Agent Card")).toBeInTheDocument();
+    expect(screen.getByText(/discovered at well-known URLs/)).toBeInTheDocument();
+    // Inline code + citation chips.
+    expect(screen.getByText("artifact")).toBeInTheDocument();
+    expect(screen.getByText("f_st_1")).toBeInTheDocument();
+    expect(screen.getByText("src_st_1")).toBeInTheDocument();
+    // The list assertions are scoped to the rich body (Findings also renders a ul).
+    const richBody = document.querySelector(".report-rich") as HTMLElement;
+    const items = within(richBody).getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    expect(items[0].textContent).toBe("task model");
   });
 
   it("keeps the legacy summary+findings shape when sections are absent", () => {

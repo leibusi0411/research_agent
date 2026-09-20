@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-18 | 线上调整：功能开关取消、配置即开关（ADR-0052/0053 演进）+ Settings 页查询改写槽位卡片 + 本地前置检索 per-run 开关（R-276）+ Curator 按子任务分章结构化报告（ADR-0054，R-277） |  测试：Python 278 passed（离线，另有 6 个真实 API e2e 无配置自动 skip）+ 前端 35 passed + Playwright 1 passed | 第十一轮实现+审查：Multi-Query 查询改写（ADR-0052）+ Cross-Encoder rerank（ADR-0053）+ Settings 页 rerank 卡片，审查 12 项（R-264~R-275）11 修复、1 接受 ✅ | 第十轮实现：调研后接地对话 TaskChatService（ADR-0050，R-262）+ Web 工具面扩展（ADR-0051，R-263） | 第九轮实现：local_kb_search + 索引自动增量更新（ADR-0048，R-257）+ Chunking v2（ADR-0049，R-258）+ KB 页独立 Local RAG 入口（R-259）
+> 最后更新：2026-09-18 | 线上调整：功能开关取消、配置即开关（ADR-0052/0053 演进）+ Settings 页查询改写槽位卡片 + 本地前置检索 per-run 开关（R-276）+ Curator 按子任务分章结构化报告（ADR-0054，R-277） |  测试：Python 277 passed（离线，另有 6 个真实 API e2e 无配置自动 skip）+ 前端 36 passed + Playwright 1 passed | 第十一轮实现+审查：Multi-Query 查询改写（ADR-0052）+ Cross-Encoder rerank（ADR-0053）+ Settings 页 rerank 卡片，审查 12 项（R-264~R-275）11 修复、1 接受 ✅ | 第十轮实现：调研后接地对话 TaskChatService（ADR-0050，R-262）+ Web 工具面扩展（ADR-0051，R-263） | 第九轮实现：local_kb_search + 索引自动增量更新（ADR-0048，R-257）+ Chunking v2（ADR-0049，R-258）+ KB 页独立 Local RAG 入口（R-259）
 
 ---
 
@@ -156,6 +156,7 @@
 | R-276 | 用户需求：把 Web 调研之前的 local RAG（Prior Knowledge 注入 + Planner survey）做成开关 | ✅ ADR-0048 演进注记：per-run 开关——Research 页 "Check my notes first" 勾选（默认开）+ `POST /api/research/web` 接受 `local_context` 布尔（缺省 true，响应回显）+ CLI `web --no-local`；`WebResearchStateDict.local_context_enabled` 贯穿 graph：关闭时跳过 web_local_context 检索、Planner survey（含 plan_revision）与 survey 前的索引增量更新（钩子本为 survey 专属）；配置级 `research.inject_local_context` 全局关语义不变；注意 R-264~R-275 已由并行第十一轮审查占用，本行编号顺延 |
 | R-277 | 用户需求：调研报告只有一段 Summary，要求生成完整结构化报告（NotebookLM 式），按调研子任务分章节 | ✅ ADR-0054：CuratorOutput 新增 sections（heading+text，按子任务一节、计划顺序、成文论述+行内引用，无 findings 子任务并入 Gaps 章）；CuratorInput.subtasks 注入提示词（含每子任务 findings 计数）+ "one section per subtask" 指引 + 显式反幻觉规则；报告文件/Web Report 卡片/对话接地三端消费（有 sections 用、无则回退旧形态；chat 接地 sections 预算 12k 且不随来源勾选裁剪）；schema+validator 校验形状；测试 +8（graph 往返/report 两态/前端两态/prompt 指引与计数/chat 接地；复审 9 项发现全处置——ADR-0020 冲突声明+演进注记、[f_x]/[src_x] 引用全链路可解析（report findings 带 id、chat Sources/Findings 附 id、提示词示例对齐真实格式）、chat 预算 additive 注记、validator 可选键容错、heading 清洗防注入、CONTEXT 三词条、CLI 章节打印、React key 防撞） |
 | R-278 | 用户实测：分章报告调研失败——curator 输出超预算被截断（invalid JSON → llm_call_failed，重试同样截断） | ✅ 根因：初版要求 curator 复述 findings/sources 数组，回声+章节正文超出 16384 token（reasoning/content 共享）；修复：schema 移除 findings/sources、提示词禁止复述、_parse_curator_output 从图状态全量合并（兼容旧回声）；语义变化（curator 不再筛选 findings，全量保留）记入 ADR-0054 演进注记；复验：同一问题真实重跑通过 |
+| R-279 | 用户需求：报告正文像 NotebookLM 一样支持富格式（此前纯文本散文、卡片换行折叠） | ✅ 提示词放开富 Markdown 指引（分段/**加粗**/列表/行内 code，章节内禁标题）；report.py `_sanitize_section_markdown` 白名单清洗（注入标题降级、--- 换 *** 防 frontmatter 伪造，格式记号放行）；前端 `ReportRichText` 手写渲染器（空行分块、连续 -/n. 行成列表、行内加粗/代码、[f_x]/[src_x] 引用芯片 .cite-chip，React 文本节点防注入，零新依赖）；CLI/chat 接地不变（模型可读原文）；测试 +2（prompt 指引、report 清洗）+1 前端渲染；视觉截图自查通过 |
 
 ### 第九轮实现（2026-09-09，Chunking v2 / ADR-0049，R-258）
 

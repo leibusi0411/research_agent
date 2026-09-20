@@ -121,8 +121,12 @@ def test_build_curator_prompt_requests_a_sectioned_report_per_subtask():
     assert "(1 findings)" in prompt
     # ...and chapters map one-to-one onto subtasks, in plan order.
     assert "one section per subtask" in prompt.lower()
-    # Sections must be synthesized prose grounded in the findings, not lists.
-    assert "paragraph" in prompt.lower()
+    # Sections are rich Markdown: paragraphs, bold, lists, inline code.
+    assert "markdown" in prompt.lower()
+    assert "**bold**" in prompt
+    assert "blank lines" in prompt.lower()
+    # Chapter structure stays fixed: no headings inside section text.
+    assert "no headings" in prompt.lower()
     # Anti-hallucination guard: every claim traces to a finding/source.
     assert "do not invent" in prompt.lower()
 

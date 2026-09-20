@@ -48,8 +48,10 @@ def render_web_report(task_id: str, created_at: str, output: CuratorOutput) -> s
     ]
     # R-277: sectioned report body (NotebookLM-style chapters); legacy
     # outputs without sections keep the previous Summary+Findings shape.
+    # R-279: section bodies are rich Markdown — formatting survives, but
+    # structure-breaking lines are neutralized by _sanitize_section_markdown.
     for section in output.sections:
-        lines.extend([f"## {_clean_heading(section.heading)}", "", _escape_markdown_text(section.text), ""])
+        lines.extend([f"## {_clean_heading(section.heading)}", "", _sanitize_section_markdown(section.text), ""])
     lines.extend(["## Findings", ""])
     for finding in output.findings:
         refs = " ".join(f"[{source_numbers[source_id]}]" for source_id in finding.source_ids if source_id in source_numbers)
@@ -97,6 +99,27 @@ def _clean_heading(heading: str) -> str:
     """Collapse whitespace and strip leading markdown markers from a chapter heading."""
     cleaned = re.sub(r"\s+", " ", heading).strip()
     return cleaned.lstrip("#*-> ").strip()
+
+
+def _sanitize_section_markdown(text: str) -> str:
+    """Pass through rich Markdown formatting, but neutralize structure-breaking lines.
+
+    Chapter bodies may use bold, lists, inline code, links — the NotebookLM-style
+    report surface. They may NOT inject their own ``#``/``##`` headings (chapters
+    own the heading level) or ``---`` rules that would forge a frontmatter fence
+    or split the file layout.
+    """
+    sanitized_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if re.match(r"#{1,6}\s", stripped):
+            # Demote an injected heading to an emphasized line.
+            sanitized_lines.append(stripped.lstrip("#").strip())
+        elif stripped == "---":
+            sanitized_lines.append("***")
+        else:
+            sanitized_lines.append(line)
+    return "\n".join(sanitized_lines).strip()
 
 
 def _escape_frontmatter(value: str) -> str:
