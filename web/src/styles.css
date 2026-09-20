@@ -2149,3 +2149,11 @@ label span {
 .card-fold-head:hover .card-fold-chev {
   color: var(--accent);
 }
+
+/* Collapsed bars: symmetric padding so the title sits vertically centered
+   (expanded heads keep the top-heavy rhythm because the body owns the bottom). */
+.report-card > .card-fold-head[aria-expanded="false"],
+.notes-card > .card-fold-head[aria-expanded="false"],
+.sources-card > .card-fold-head[aria-expanded="false"] {
+  padding: 19px 24px;
+}

@@ -159,6 +159,7 @@
 | R-279 | 用户需求：报告正文像 NotebookLM 一样支持富格式（此前纯文本散文、卡片换行折叠） | ✅ 提示词放开富 Markdown 指引（分段/**加粗**/列表/行内 code，章节内禁标题）；report.py `_sanitize_section_markdown` 白名单清洗（注入标题降级、--- 换 *** 防 frontmatter 伪造，格式记号放行）；前端 `ReportRichText` 手写渲染器（空行分块、连续 -/n. 行成列表、行内加粗/代码、[f_x]/[src_x] 引用芯片 .cite-chip，React 文本节点防注入，零新依赖）；CLI/chat 接地不变（模型可读原文）；测试 +2（prompt 指引、report 清洗）+1 前端渲染；视觉截图自查通过 |
 | R-280 | 用户实测：调研失败（5 子任务全 0 findings）——诊断：Tavily 免费配额耗尽（432 usage limit）+ 同期出口 SSL 波动；arXiv 持续 406 限流 | ✅ 非代码缺陷（配额/网络环境）；可诊断性修复：ToolRunner 的 HTTPStatusError 消息透传响应体 detail 前 200 字符（Tavily 432 的 "exceeds your plan's set usage limit" 直接进事件流，不再裸 status code）；429 保持 transient、432 归 permanent 正确；测试 +1 |
 | R-281 | 用户反馈：完成后各卡片应可折叠；Chat 与 References 卡应等高，References 超长内部滚动（此前尾部拖长一大截） | ✅ FoldCard 折叠组件（head=原 h2+chevron 旋转，body 可隐藏；Trace/Report/Notes/Sources 四卡接入，卡片 padding 迁至 head/body，result-panel 不受影响）；Chat 卡定高 560px（stream flex 填充、输入栏贴底），References 同高 flex column、ul 内部滚动（grid stretch 不能反向约束行高——初版 max-height:100% 无效，改双卡定高）；920px 以下恢复自适应；测试 +1 折叠交互；几何断言等高 <2px、截图自查通过 |
+| R-282 | 用户反馈：折叠后的卡片标题不居中 | ✅ 根因：fold head 展开态 padding 为 22px 24px 0（下边距让位给 body），折叠后无 body 补位导致标题偏移；修复：折叠态（aria-expanded=false）改用对称 padding 19px 24px；几何断言上下间距差 <2px、截图确认 |
 
 ### 第九轮实现（2026-09-09，Chunking v2 / ADR-0049，R-258）
 
