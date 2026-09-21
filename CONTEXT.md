@@ -37,7 +37,7 @@ The independent flow that finds and presents relevant existing content from the 
 _Avoid_: local-first research, local search mode
 
 **Web Research Workflow**:
-The independent workflow that researches a question using network search, fetch, and extraction. Its only Knowledge Base touchpoints are Planner-side and read-only: the one-time Prior Knowledge retrieval before the graph starts (ADR-0046) and the Planner's bounded local knowledge survey (`local_kb_search`: up to three targeted queries before planning and before each plan revision, ADR-0048). Both are switchable per run through the notes toggle (Research Page checkbox / `local_context` request flag / CLI `--no-local`, default on; ADR-0048 evolution R-264) and globally through `research.inject_local_context`. The Executor's tool loop never touches the Knowledge Base.
+The independent workflow that researches a question using network search, fetch, and extraction. Its only Knowledge Base touchpoints are Planner-side and read-only: the one-time Prior Knowledge retrieval before the graph starts (ADR-0046) and the Planner's bounded local knowledge survey (`local_kb_search`: up to three targeted queries before planning and before each plan revision, ADR-0048). Both are switchable per run through the notes toggle (Research Page checkbox / `local_context` request flag, default on; ADR-0048 evolution R-264) and globally through `research.inject_local_context`. The Executor's tool loop never touches the Knowledge Base.
 _Avoid_: online mode, web search mode
 
 **Research Workflow Boundary**:
@@ -144,7 +144,7 @@ A missing-information note identified and maintained by the Supervisor during a 
 _Avoid_: open question, uncertainty
 
 **Task History**:
-The persisted record of finished Research Tasks. It can later support memory-like context, but it is not the Knowledge Base and does not replace saved notes; v1 task management lists tasks after they reach `completed` or `failed`. The Web UI Tasks Page expands an inline detail card when a task row is clicked, rendering the result from `GET /api/tasks/{task_id}/result` in place rather than navigating to a separate route; the CLI `task list` remains a summary-only view without detail navigation. Finished tasks can be deleted through `DELETE /api/tasks/{task_id}` and the Web UI Tasks Page Delete button (running tasks are refused); the CLI has no delete command. The list view displays all finished records with `task_id`, `mode`, `status`, `title_or_question`, and `created_at`, mixing `local` and `web` tasks in one list sorted by `created_at` descending without pagination or a default limit. Task modes are only `local` and `web`; `both` is a CLI convenience command that creates separate `local` and `web` task records rather than a parent task.
+The persisted record of finished Research Tasks. It can later support memory-like context, but it is not the Knowledge Base and does not replace saved notes; v1 task management lists tasks after they reach `completed` or `failed`. The Web UI Tasks Page expands an inline detail card when a task row is clicked, rendering the result from `GET /api/tasks/{task_id}/result` in place rather than navigating to a separate route; Finished tasks can be deleted through `DELETE /api/tasks/{task_id}` and the Web UI Tasks Page Delete button (running tasks are refused). The list view displays all finished records with `task_id`, `mode`, `status`, `title_or_question`, and `created_at`, mixing `local` and `web` tasks in one list sorted by `created_at` descending without pagination or a default limit. Task modes are only `local` and `web`; There is no parent `both` task: dual-family runs create separate `local` and `web` task records.
 _Avoid_: memory, archive
 
 **Tasks Table**:
@@ -156,7 +156,7 @@ The local `tasks/{task_id}/result.json` file that stores the display result for 
 _Avoid_: state file, checkpoint, report file
 
 **Research Error**:
-The unified user-facing error object used by CLI, Web API, and `result.json`. V1 stores only `code` and `message`, with codes such as `config_missing`, `busy`, `kb_index_stale`, `model_error`, `tool_error`, `schema_validation_failed`, `llm_call_failed`, `kb_rebuild_error`, `task_not_found`, `already_deposited`, `runtime_error`, and `file_write_error`; richer exception details belong in logs or Debug Trace.
+The unified user-facing error object used by the Web API and `result.json` (rendered as `[code] message` in logs). V1 stores only `code` and `message`, with codes such as `config_missing`, `busy`, `kb_index_stale`, `model_error`, `tool_error`, `schema_validation_failed`, `llm_call_failed`, `kb_rebuild_error`, `task_not_found`, `already_deposited`, `runtime_error`, and `file_write_error`; richer exception details belong in logs or Debug Trace.
 _Avoid_: stack trace, exception dump
 
 **Default Workspace**:
@@ -168,7 +168,7 @@ The user-level TOML configuration file at `%APPDATA%/research_agent/config.toml`
 _Avoid_: project config, example config
 
 **Initialization**:
-The explicit setup flow that creates User Config before research commands can run. CLI uses `research-agent init`, and Web UI shows setup when User Config is missing. V1 initialization only collects settings, validates required fields, creates the Default Workspace if needed, and writes `%APPDATA%/research_agent/config.toml`; it does not scan the Knowledge Base, build indexes, start services, call providers, or run research.
+The explicit setup flow that creates User Config before research commands can run. The resident Settings Page owns initialization (ADR-0047): the Web UI works without User Config, and starting research reports `config_missing` pointing at Settings. V1 initialization only collects settings, validates required fields, creates the Default Workspace if needed, and writes `%APPDATA%/research_agent/config.toml`; it does not scan the Knowledge Base, build indexes, start services, call providers, or run research.
 _Avoid_: implicit defaults, auto setup
 
 **Task Progress**:
@@ -176,15 +176,15 @@ The real-time product progress view of a currently running Research Task. It is 
 _Avoid_: graph status, node status
 
 **Research Progress Stream**:
-The real-time product progress stream emitted while a Research Task runs. It is phase-based: each streamed record is anchored by `phase`, with `event_type` recording that phase's progress state (`started`, `progress`, `completed`, or `failed`), plus `task_result` for pushing the finished result directly to subscribers; `stream_timeout` is a transient SSE-layer value and is never persisted. Each `events.jsonl` line stores one append-only progress display record with top-level `task_id`, `mode`, `phase`, `event_type`, optional `event_subtype`, `created_at`, `message`, `seq`, and `details`; v1 does not add `event_id` or an outer `subtask_id`. Local-mode and API-layer-originated events are appended without `_emit` and therefore carry no `seq` field. Web UI consumes it through SSE, and CLI uses it to display live progress until completion without requiring a v1 daemon concept.
+The real-time product progress stream emitted while a Research Task runs. It is phase-based: each streamed record is anchored by `phase`, with `event_type` recording that phase's progress state (`started`, `progress`, `completed`, or `failed`), plus `task_result` for pushing the finished result directly to subscribers; `stream_timeout` is a transient SSE-layer value and is never persisted. Each `events.jsonl` line stores one append-only progress display record with top-level `task_id`, `mode`, `phase`, `event_type`, optional `event_subtype`, `created_at`, `message`, `seq`, and `details`; v1 does not add `event_id` or an outer `subtask_id`. Local-mode and API-layer-originated events are appended without `_emit` and therefore carry no `seq` field. The Web UI consumes it through SSE until completion; no daemon concept exists in v1.
 _Avoid_: daemon, raw logs
 
 **EventStream**:
-The shared in-process event channel that transports Research Progress Stream records from the runner to consumers (SSE endpoint and CLI). The transport layer is the asyncio `Bus` in `core/bus.py`: each subscriber gets its own `asyncio.Queue` (default capacity 1024; when a subscriber queue is full, incoming events are dropped with a warning), and publishers may deliver from worker threads across event loops. The runner pushes events via `_emit` to both the bus and `events.jsonl`; consumers read from their subscriber queue via `async for`. Events carry a monotonically increasing `seq` integer for deduplication when the consumer first replays missed events from `events.jsonl` before switching to live queue consumption. `events.jsonl` remains the persistence and replay layer—it is no longer the transport layer.
+The shared in-process event channel that transports Research Progress Stream records from the runner to the SSE endpoint. The transport layer is the asyncio `Bus` in `core/bus.py`: each subscriber gets its own `asyncio.Queue` (default capacity 1024; when a subscriber queue is full, incoming events are dropped with a warning), and publishers may deliver from worker threads across event loops. The runner pushes events via `_emit` to both the bus and `events.jsonl`; consumers read from their subscriber queue via `async for`. Events carry a monotonically increasing `seq` integer for deduplication when the consumer first replays missed events from `events.jsonl` before switching to live queue consumption. `events.jsonl` remains the persistence and replay layer—it is no longer the transport layer.
 _Avoid_: callback, polling, file-watcher
 
 **Progress Event Subtype**:
-An optional `event_subtype` field on Research Progress Stream records that classifies progress-scoped events for direct UI rendering without digging into `details.items`. Values include `tool_call`, `finding`, `source`, `subtask_started`, `subtask_completed`, `subtask_failed`, and `research_gap`. Phase-boundary events (`started`, `completed`, `failed`) omit `event_subtype`. CLI uses `event_subtype` to select output format; Web UI uses it to pick the appropriate detail card without branching on `details.items[].kind`.
+An optional `event_subtype` field on Research Progress Stream records that classifies progress-scoped events for direct UI rendering without digging into `details.items`. Values include `tool_call`, `finding`, `source`, `subtask_started`, `subtask_completed`, `subtask_failed`, and `research_gap`. Phase-boundary events (`started`, `completed`, `failed`) omit `event_subtype`. The Web UI uses `event_subtype` to pick the appropriate detail card without branching on `details.items[].kind`.
 _Avoid_: nested discrimination, item kind parsing
 
 **Event Sequence**:
@@ -336,7 +336,7 @@ The user-facing Markdown filename for a Web Research report. V1 uses `{topic_slu
 _Avoid_: task id filename, random filename
 
 **Process View**:
-The UI/CLI view of Web Research execution details such as planner subquestions, search queries, fetched URLs, retrieval rounds, and status. It is separate from the Web Report File and does not appear as a full tool log in the report body.
+The UI view of Web Research execution details such as planner subquestions, search queries, fetched URLs, retrieval rounds, and status. It is separate from the Web Report File and does not appear as a full tool log in the report body.
 _Avoid_: report section, debug trace
 
 **Report Template**:
@@ -344,11 +344,11 @@ The Markdown structure used by the Web Report File. Local RAG uses a Local Resul
 _Avoid_: local report format, draft note format
 
 **Knowledge Base Index**:
-The user-facing index maintenance surface for the configured Markdown Vault. It shows vault path, index status, file and chunk counts, last indexed time, and supports rebuild actions. V1 CLI exposes only `research-agent kb status` and `research-agent kb rebuild`.
+The user-facing index maintenance surface for the configured Markdown Vault. It shows vault path, index status, file and chunk counts, last indexed time, and supports refresh and rebuild actions (`POST /api/kb/status`, `POST /api/kb/rebuild`).
 _Avoid_: knowledge base management, note management
 
 **Knowledge Base Index Status**:
-The user-facing state returned by `kb status`: `missing`, `ready`, `stale`, `building`, or `failed`. Local RAG queries are allowed when status is `ready` or `stale` (FTS5 keyword index is available even if ChromaDB vectors are outdated); `missing`, `building`, and `failed` make Local RAG fail before retrieval and instruct the user to run `research-agent kb rebuild`. If the vector index file (`indexes/chroma/chroma.sqlite3`) is missing, status is `failed`—even when FTS5 is usable, Local RAG refuses queries until a full rebuild succeeds (ADR-0022 evolution note). V1 stale checks compare indexed file path, mtime, and file size, not hashes.
+The user-facing state returned by `kb status`: `missing`, `ready`, `stale`, `building`, or `failed`. Local RAG queries are allowed when status is `ready` or `stale` (FTS5 keyword index is available even if ChromaDB vectors are outdated); `missing`, `building`, and `failed` make Local RAG fail before retrieval and instruct the user to rebuild from the Knowledge Base page. If the vector index file (`indexes/chroma/chroma.sqlite3`) is missing, status is `failed`—even when FTS5 is usable, Local RAG refuses queries until a full rebuild succeeds (ADR-0022 evolution note). V1 stale checks compare indexed file path, mtime, and file size, not hashes.
 _Avoid_: partial_success, completed_with_warning
 
 **Knowledge Deposit**:

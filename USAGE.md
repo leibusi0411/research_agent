@@ -5,7 +5,6 @@
 - [1. 环境准备](#1-环境准备)
 - [2. 初始化配置](#2-初始化配置)
 - [3. 配置文件说明](#3-配置文件说明)
-- [4. CLI 命令行使用](#4-cli-命令行使用)
 - [5. Web UI 使用](#5-web-ui-使用)
 - [6. 开发模式](#6-开发模式)
 - [7. 常见问题](#7-常见问题)
@@ -42,26 +41,11 @@ cd web && npm install && cd ..
 
 ## 2. 初始化配置
 
-### 方式 A：CLI 命令行
-
-```bash
-uv run research-agent init \
-  --default-workspace "C:\\Users\\xxx\\research_agent_data" \
-  --knowledge-base-path "F:\\MyVault" \
-  --chat-base-url "https://api.deepseek.com" \
-  --chat-api-key "sk-xxx" \
-  --chat-model "deepseek-chat" \
-  --embedding-base-url "https://api.siliconflow.cn/v1" \
-  --embedding-api-key "sk-xxx" \
-  --embedding-model "Qwen/Qwen3-VL-Embedding-8B" \
-  --search-api-key "tvly-xxx"
-```
-
 ### 方式 B：Web UI
 
 启动后浏览器访问；未配置时落在 Research 页（照常可浏览与输入），启动调研时才同步报 `config_missing`，可随时从侧边栏进入 Settings 页面完成配置。
 
-### 方式 C：手动创建配置文件
+### 方式 B：手动创建配置文件
 
 配置文件路径：
 - **Windows**: `%APPDATA%\research_agent\config.toml`
@@ -163,143 +147,7 @@ tool_retries = 2
 
 ---
 
-## 4. CLI 命令行使用
-
-### 查看帮助
-
-```bash
-uv run research-agent --help
-```
-
-### 本地知识库检索（Local RAG）
-
-从知识库 vault 中检索信息，并用 LLM 生成总结：
-
-```bash
-# 基础用法
-uv run research-agent local "你的问题"
-
-# 示例
-uv run research-agent local "Agent 三大范式分别是什么"
-uv run research-agent local "什么是 RAG 系统"
-```
-
-输出格式：
-
-```
-Summary
-根据参考资料，LLM Agent 的三种基础推理范式是：
-1. ReAct — 推理与行动交替 [2]
-2. Plan-and-Solve — 先计划再执行 [1]
-3. Reflection — 执行后自我检查并修正 [1]
-...
-
-Sources
-1. [chunk 文本内容]
-   source_path: F:\MyVault\Agent\Agent Fundamentals.md
-   heading_path: Agent 三大范式
-2. ...
-```
-
-工作流程：
-
-```
-用户问题 → FTS5关键词 + ChromaDB语义检索 → RRF融合排序 → LLM总结 → 输出
-```
-
-### 网络调研（Web Research）
-
-启动多角色流水线进行网络调研：
-
-```bash
-# 基础用法
-uv run research-agent web "你的问题"
-
-# 示例
-uv run research-agent web "Latest developments in AI agents 2026"
-uv run research-agent web "Compare LangGraph, CrewAI, and AutoGen"
-```
-
-执行流程：
-
-```
-Planner → Executor → Supervisor → Curator
-  ↓         ↓           ↓           ↓
-制定计划   搜索/抓取   评估进度    生成报告
-```
-
-产物保存路径：`<workspace>/tasks/<task_id>/`
-
-| 文件 | 说明 |
-|------|------|
-| `result.json` | 结构化结果 |
-| `events.jsonl` | 进度事件日志 |
-| `report.md` | 最终 Markdown 报告 |
-| `execution_trace.md` | 执行追踪（含 Mermaid 流程图） |
-
-### 同时运行本地和网络检索
-
-```bash
-uv run research-agent both "你的问题"
-```
-
-并行启动 Local RAG 和 Web Research，各自独立执行，互不干扰。
-
-### 知识库索引管理
-
-```bash
-# 查看索引状态
-uv run research-agent kb status
-
-# 输出示例
-# status: ready
-# vault_path: F:\MyVault
-# file_count: 94
-# chunk_count: 2788
-# last_indexed_at: 2026-07-03T12:00:00Z
-
-# 重建索引
-uv run research-agent kb rebuild
-```
-
-索引状态说明：
-
-| 状态 | 含义 | Local RAG 可用？ |
-|------|------|:---:|
-| `ready` | FTS5 + ChromaDB 均正常 | ✅ |
-| `stale` | FTS5 可用，ChromaDB 过期或失败 | ✅ (降级为关键词) |
-| `missing` | 从未构建过索引 | ❌ |
-| `building` | 正在构建中 | ❌ |
-| `failed` | 构建失败且无可用索引 | ❌ |
-
-### 查看任务历史
-
-```bash
-uv run research-agent task list
-
-# 输出示例
-# task_id                          mode    status      title_or_question          created_at
-# task_20260703_120000_abc123      local   completed   什么是RAG系统              2026-07-03T12:00:00Z
-# task_20260703_120500_def456      web     completed   Latest AI news            2026-07-03T12:05:00Z
-```
-
-### 沉淀 Web 报告到知识库
-
-```bash
-uv run research-agent task deposit task_20260703_120500_def456
-
-# 输出示例
-# Deposited: F:\MyVault\web-research\latest-ai-news-2026-07-03.md
-# Run research-agent kb rebuild to index the deposited report.
-```
-
-将已完成 Web Research 任务的报告文件复制到知识库 vault 的 `web-research/` 子目录（只新增笔记，不修改已有内容）。同一任务重复沉淀会报 `already_deposited`。沉淀后运行 `uv run research-agent kb rebuild` 重建索引，新笔记即可被 Local RAG 检索到。
-
-Web UI 中也有相同能力：在已完成的 Web Report 视图（Research 页或 Tasks 页打开）点击 **Deposit to Knowledge Base**，成功后可继续点击 **Rebuild Index** 一键重建索引。
-
----
-
-## 5. Web UI 使用
+## 4. Web UI 使用
 
 ### 启动 Web 应用
 
@@ -317,7 +165,7 @@ npm run dev:all
 
 | 页面 | 路由 | 功能 |
 |------|------|------|
-| **Research** | `/` | 输入问题启动 Web Research，实时查看进度和结果（Local RAG 请到 Knowledge Base 页，或用 CLI / API） |
+| **Research** | `/` | 输入问题启动 Web Research，实时查看进度和结果（Local RAG 请到 Knowledge Base 页，或用 API） |
 | **Tasks** | `/tasks` | 查看历史任务列表，点击行内展开详情，可删除已完成任务 |
 | **Knowledge Base** | `/kb` | 查看/重建索引，直接提问 Local RAG |
 | **Settings** | `/settings` | 随时查看和修改全部配置（已保存的 API key 留空即保持不变） |
@@ -353,7 +201,7 @@ uv run uvicorn research_agent.api.app:create_app --factory --host 127.0.0.1 --po
 
 ---
 
-## 6. 开发模式
+## 5. 开发模式
 
 ### 后端测试
 
@@ -399,12 +247,12 @@ npm run build
 
 ---
 
-## 7. 常见问题
+## 6. 常见问题
 
 ### Q: Local RAG 检索不到内容？
 
-1. 确认知识库已索引：`uv run research-agent kb status` 检查 `file_count > 0`
-2. 如未索引：`uv run research-agent kb rebuild`
+1. 确认知识库已索引：Knowledge Base 页检查 `file_count > 0`
+2. 如未索引：Knowledge Base 页点 Rebuild
 3. 确认 `knowledge_base_path` 目录包含 `.md`/`.txt`/`.pdf`/`.html` 文件
 4. 尝试更短的关键词或自然语言问题（支持 FTS5 关键词 + ChromaDB 语义混合检索）
 

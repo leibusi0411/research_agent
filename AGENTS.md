@@ -9,7 +9,7 @@
 1. **Local RAG（本地知识库检索）** — 对用户指定的 Markdown vault 目录建立索引（SQLite FTS5 关键词 + ChromaDB 语义向量 + RRF 融合排序），可选启用 Multi-Query 查询改写与 Cross-Encoder 精排（ADR-0052/0053），检索后可选地用 LLM 生成自然语言总结（`local_summarizer` 角色）。索引构建是**只读**的，不修改源文件。支持 `.md`、`.txt`、`.pdf`、`.html`。
 2. **Web Research（网络调研）** — 基于 LangGraph StateGraph 的多角色流水线：Planner → Executor → Supervisor → Curator。通过 ToolGateway 执行真实工具调用（Tavily 搜索、arXiv 学术搜索、trafilatura 网页提取（浏览器 UA）、pypdf PDF 解析、本地 Python 沙箱），最终生成 Markdown 报告文件。
 
-双界面：CLI（argparse，`research-agent` 命令）+ Web UI（React + Vite），两者通过统一的 FastAPI 后端和 CoreService 应用层暴露相同的能力面。
+交互界面为 Web UI（React + Vite），通过 FastAPI 后端和 CoreService 应用层暴露能力面（CLI 已移除，见 ADR-0055）。
 
 ### 技术栈
 
@@ -35,7 +35,6 @@
 research_agent/
 ├── src/research_agent/
 │   ├── __init__.py               # __version__
-│   ├── cli.py                    # argparse CLI 入口（init/local/web/both/task list/task deposit/kb status/kb rebuild）
 │   ├── api/
 │   │   └── app.py                # FastAPI 工厂 create_app()，SSE 端点（仅 API，不服务前端静态文件）
 │   ├── core/                     # 领域逻辑（所有界面共享）
@@ -93,16 +92,6 @@ research_agent/
 # 安装 Python 依赖（含 dev 依赖组：pytest、pytest-asyncio）
 uv sync
 
-# CLI（入口：research-agent = research_agent.cli:main）
-uv run research-agent init              # 交互式初始化配置
-uv run research-agent local "问题"       # Local RAG 检索
-uv run research-agent web "问题"         # Web Research 调研
-uv run research-agent both "问题"        # 同时启动两个独立任务
-uv run research-agent task list         # 已完成任务列表
-uv run research-agent task deposit <id> # 沉淀 Web 报告到知识库 vault
-uv run research-agent kb status         # 知识库索引状态
-uv run research-agent kb rebuild        # 重建知识库索引
-
 # 后端 API（仅 API，不服务前端静态文件；端口可自定，与 Vite 代理端口保持一致）
 uv run uvicorn research_agent.api.app:create_app --factory --host 127.0.0.1 --port 8001
 
@@ -134,7 +123,6 @@ cd web && npm run test:e2e             # Playwright E2E（自动起 5174 端口 
 
 - **离线且确定性**：默认测试不依赖网络或真实 API key。
 - 使用确定性 fake 实现：各测试文件内定义的 `_FixedChatModelClient` / `_FixedChatModel`（固定 LLM 响应）与 `_FixedEmbeddingClient`（固定向量）、`RecordingEmbeddingClient`（记录 embedding 请求）、`FakeSearchProvider`（模拟搜索）、`_TestWebRuntime`（API 测试的确定性 Web 运行时）。
-- CLI 测试以子进程方式运行。
 - pytest 配置在 `pyproject.toml`：`testpaths = ["tests"]`，`pythonpath = [".", "src"]`。
 
 目前没有配置 linter、formatter 或 type-checker。
@@ -146,7 +134,7 @@ cd web && npm run test:e2e             # Playwright E2E（自动起 5174 端口 
 - **ADR 冲突规则**：若改动与 `docs/adr/` 中已有决策冲突，必须显式提出冲突，而不是静默推翻决策。ADR 共 54 个，顺序编号。
 - **类型注解**：方法签名使用显式类型参数，不用 `*args, **kwargs`；运行时抽象用 `WebResearchRuntime` Protocol 而非 `object`。
 - **简单优先**：用最少代码解决问题，不做未要求的抽象或功能；精准修改，不顺手重构相邻代码；自己改动产生的孤立 import/变量/函数必须清理。
-- **错误模型**：用户可见错误统一为 `ResearchError`（`code` + `message`），CLI 渲染为 `[code] message` 并以非零码退出。
+- **错误模型**：用户可见错误统一为 `ResearchError`（`code` + `message`），API 以 `{error: {code, message}}` 返回。
 - **Schema 校验**：角色经原生 function calling 调用；LLM 调用/解析失败盲重试一次（共 2 次），耗尽报 `llm_call_failed`；schema 校验失败立即以 `schema_validation_failed` 终止工作流（无修复调用，原 schema repair 机制已随 function-calling 迁移移除）。
 - **时间戳**：持久化时间一律 UTC ISO 8601 带 `Z` 后缀。
 - **任务并发边界**：同一 family（local / web）同时只允许一个活跃任务，由 CoreService 强制。

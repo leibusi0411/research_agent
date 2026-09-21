@@ -157,9 +157,9 @@ def test_task_store_deletes_finished_task_record(tmp_path):
 
 
 def test_research_error_is_user_facing_code_and_message_only():
-    error = ResearchError(code="config_missing", message="Run research-agent init first.")
+    error = ResearchError(code="config_missing", message="Configure in the Settings page first.")
 
-    assert error.to_dict() == {"code": "config_missing", "message": "Run research-agent init first."}
+    assert error.to_dict() == {"code": "config_missing", "message": "Configure in the Settings page first."}
 
     with pytest.raises(ValueError, match="unknown error code"):
         ResearchError(code="not_a_code", message="bad")
@@ -173,27 +173,11 @@ def test_core_service_exposes_v1_use_case_shells(tmp_path):
         "init_config",
         "run_local_research",
         "run_web_research",
-        "run_both",
         "list_finished_tasks",
         "get_kb_status",
         "rebuild_kb_index",
     ]:
         assert callable(getattr(service, method_name))
-
-
-def test_cli_entrypoint_has_command_skeleton():
-    result = subprocess.run(
-        [sys.executable, "-m", "research_agent.cli", "--help"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 0
-    assert "research-agent" in result.stdout
-    assert "local" in result.stdout
-    assert "web" in result.stdout
-    assert "kb" in result.stdout
 
 
 def test_research_error_propagates_through_context_manager():

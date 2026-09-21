@@ -173,43 +173,6 @@ def test_deposit_twice_fails_with_already_deposited(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def run_cli(config_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    env = os.environ.copy()
-    env["RESEARCH_AGENT_CONFIG_PATH"] = str(config_path)
-    src_path = str(Path(__file__).resolve().parents[1] / "src")
-    existing_pythonpath = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = src_path if not existing_pythonpath else os.pathsep.join([src_path, existing_pythonpath])
-    return subprocess.run(
-        [sys.executable, "-m", "research_agent.cli", *args],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-
-
-def test_task_deposit_cli_copies_report_into_vault(tmp_path):
-    config_path, workspace, vault = write_config(tmp_path)
-    service = CoreService(default_workspace=workspace, config_path=config_path)
-    add_finished_web_task(service, workspace, "task_20260624_100000_bbbbbb")
-
-    result = run_cli(config_path, "task", "deposit", "task_20260624_100000_bbbbbb")
-
-    assert result.returncode == 0
-    deposited = vault / "web-research" / "langgraph-notes-2026-06-24.md"
-    assert deposited.exists()
-    assert str(deposited) in result.stdout
-
-
-def test_task_deposit_cli_unknown_task_exits_nonzero(tmp_path):
-    config_path, workspace, vault = write_config(tmp_path)
-
-    result = run_cli(config_path, "task", "deposit", "task_20260624_100000_aaaaaa")
-
-    assert result.returncode != 0
-    assert "[task_not_found]" in result.stdout
-
-
 # ---------------------------------------------------------------------------
 # API seam
 # ---------------------------------------------------------------------------
@@ -324,15 +287,6 @@ def test_task_deposit_api_already_deposited_returns_409(tmp_path):
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "already_deposited"
-
-
-def test_task_deposit_cli_invalid_task_id_exits_with_config_invalid(tmp_path):
-    config_path, workspace, vault = write_config(tmp_path)
-
-    result = run_cli(config_path, "task", "deposit", "garbage")
-
-    assert result.returncode != 0
-    assert "[config_invalid]" in result.stdout
 
 
 def test_delete_unknown_task_api_returns_404_task_not_found(tmp_path):

@@ -5,7 +5,7 @@ import logging
 import os
 import time
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor
+
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Protocol
@@ -253,26 +253,6 @@ class CoreService:
     def run_web_research_unlocked(self, question: str, *, runtime: WebResearchRuntime, task_id: str, local_context: bool = True) -> dict:
         return runtime.run(question, task_id=task_id, local_context=local_context)
 
-    def run_both(self, question: str, *, web_runtime: WebResearchRuntime | None = None, on_event: Callable[[dict[str, Any]], None] | None = None) -> dict:
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            local_future = executor.submit(self._run_family_result, "local", question, None, None)
-            web_future = executor.submit(self._run_family_result, "web", question, web_runtime, on_event)
-            local_result = _safe_future_result(local_future, "local")
-            web_result = _safe_future_result(web_future, "web")
-        local_ok = local_result.get("status") == "completed"
-        web_ok = web_result.get("status") == "completed"
-        if local_ok and web_ok:
-            overall = "completed"
-        elif local_ok or web_ok:
-            overall = "partial"
-        else:
-            overall = "failed"
-        return {
-            "status": overall,
-            "local": local_result,
-            "web": web_result,
-        }
-
     def list_finished_tasks(self) -> list[TaskRecord]:
         self.task_store.initialize()
         return self.task_store.list_finished_tasks()
@@ -407,16 +387,6 @@ class CoreService:
             embedding_client = OpenAICompatibleEmbeddingModel.from_config(config.embedding_model)
         return KnowledgeBaseIndex(self.workspace, self.config_path, embedding_client=embedding_client).rebuild()
 
-    def _run_family_result(self, family: str, question: str, web_runtime: WebResearchRuntime | None, on_event: Callable[[dict[str, Any]], None] | None) -> dict:
-        try:
-            if family == "local":
-                return self.run_local_research(question)
-            if family == "web":
-                return self.run_web_research(question, runtime=web_runtime, on_event=on_event)
-        except ResearchError as error:
-            return {"mode": family, "status": "failed", "error": error.to_dict()}
-        raise ValueError(f"unknown task family: {family}")
-
     @contextmanager
     def _active_family_lock(self, family: str, task_id: str) -> Iterator[None]:
         lock_dir = self.workspace.root / "locks"
@@ -444,13 +414,6 @@ class CoreService:
 
     def acquire_family_lock(self, family: str, task_id: str):
         return self._active_family_lock(family, task_id)
-
-
-def _safe_future_result(future: Future, family: str) -> dict[str, Any]:
-    try:
-        return future.result()
-    except Exception as exc:
-        return {"mode": family, "status": "failed", "error": {"code": "runtime_error", "message": str(exc)}}
 
 
 def _is_lock_stale(path: Path, timeout_seconds: int = 3600) -> bool:

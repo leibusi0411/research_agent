@@ -9,7 +9,6 @@ uv sync                          # install dependencies
 uv run pytest                    # run all tests (207 offline/deterministic; 9 real-API tests auto-skip without user config)
 uv run pytest tests/test_foo.py  # single test file
 uv run pytest -k keyword         # filter tests by keyword
-uv run research-agent <command>  # run CLI
 ```
 
 There is no linter, formatter, or type-checker configured yet.
@@ -24,7 +23,7 @@ There is no linter, formatter, or type-checker configured yet.
 ### Layers
 
 ```
-CLI (cli.py)              Web UI (React/Vite, web/)
+Web UI (React/Vite, web/)
         \                   /
          \                 /
         FastAPI (api/app.py)          ← API layer
@@ -39,12 +38,11 @@ CLI (cli.py)              Web UI (React/Vite, web/)
 - **`core/`** — domain logic shared by all interfaces: config (TOML), KB indexing (FTS5+Chroma), local research retrieval, task storage (SQLite), workspace directories, chat/embedding model clients (OpenAI-compatible protocol).
 - **`web/`** — Web Research runtime. `schemas.py` owns the blackboard state and role output dataclasses. `context.py`/`prompt_builders.py` build per-role context slices and prompts (code constants). `tools.py` is the ToolGateway (search/fetch/extract/PDF). `executor.py` runs the per-subtask tool loop; `graph.py`/`state_graph.py` are the LangGraph nodes and runner (SqliteSaver checkpoints). `report.py` renders the final Markdown report. `provider_runtime.py` is the real LLM-backed path (the default).
 - **`api/`** — FastAPI app factory with SSE streaming for task progress events. API-only; does not serve `web/dist/`.
-- **`cli.py`** — argparse CLI; uses the provider-backed runtime for `web`/`both` commands.
 
 ### Key patterns
 
-- **Tests are offline and deterministic**: per-file `_FixedChatModelClient`/`_FixedEmbeddingClient` stubs, `RecordingEmbeddingClient`, and `FakeSearchProvider` replace real model/search calls; CLI tests run as subprocesses. Real-API tests (9) skip automatically when no user config is present.
-- **Config**: TOML at `%APPDATA%/research_agent/config.toml` (or `~/.config/research_agent/config.toml`), overridable via `RESEARCH_AGENT_CONFIG_PATH`. Init with `research-agent init`.
+- **Tests are offline and deterministic**: per-file `_FixedChatModelClient`/`_FixedEmbeddingClient` stubs, `RecordingEmbeddingClient`, and `FakeSearchProvider` replace real model/search calls; Real-API tests (9) skip automatically when no user config is present.
+- **Config**: TOML at `%APPDATA%/research_agent/config.toml` (or `~/.config/research_agent/config.toml`), overridable via `RESEARCH_AGENT_CONFIG_PATH`. Initialize via the web Settings page.
 - **Worktree-based dev**: main repo at `../research_agent`; this worktree is on branch `deepseek_dev`.
 - **Domain glossary** in `CONTEXT.md` — read it before naming anything.
 - **49 ADRs** in `docs/adr/` — decisions on stack, patterns, and boundaries. Numbered sequentially.

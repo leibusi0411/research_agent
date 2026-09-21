@@ -18,9 +18,8 @@
 - [详细使用教程](#详细使用教程)
   - [1. 环境准备](#1-环境准备)
   - [2. 初始化配置](#2-初始化配置)
-  - [3. CLI 命令行使用](#3-cli-命令行使用)
-  - [4. Web UI 使用](#4-web-ui-使用)
-  - [5. 前端开发模式](#5-前端开发模式)
+  - [3. Web UI 使用](#3-web-ui-使用)
+  - [4. 前端开发模式](#4-前端开发模式)
 - [工作流说明](#工作流说明)
   - [Local RAG（本地知识库检索）](#local-rag本地知识库检索)
   - [Web Research（网络调研）](#web-research网络调研)
@@ -60,7 +59,7 @@
 ### 通用特性
 
 - **离线测试**：Python 216 个测试中 207 个离线确定性运行（其余 9 个为真实 API 链路，无配置自动 skip），另有前端 27 个 Vitest 单元测试，均无需网络或 API key
-- **双界面**：CLI（argparse）+ Web UI（React + Vite），通过统一 FastAPI 接入
+- **Web UI**：React + Vite 单界面，通过统一 FastAPI 接入（CLI 已移除，ADR-0055）
 - **任务锁**：同一 family（local/web）同时只允许一个活跃任务，防止资源冲突
 - **SSE 流式推送**：实时推送任务进度事件，支持 30 分钟超时
 - **TOML 配置**：支持全局和 per-role 模型配置，配置路径可环境变量覆盖
@@ -71,7 +70,7 @@
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│                    CLI (cli.py)                       │
+│                    Web UI / API                       │
 │                  Web UI (React/Vite)                  │
 └──────────────┬───────────────────────────────────────┘
                │
@@ -109,7 +108,6 @@
 
 | 层级 | 路径 | 职责 |
 |------|------|------|
-| **CLI** | `cli.py` | argparse 命令行入口；默认使用 provider-backed runtime |
 | **Web UI** | `web/` | React + Vite 前端，通过 API 交互 |
 | **API** | `api/app.py` | FastAPI 工厂函数，SSE 流式推送任务进度（仅 API，不服务前端静态文件） |
 | **Core** | `core/` | 领域逻辑：配置、知识库索引（FTS5+ChromaDB）、本地检索、知识沉淀（deposit）、事件总线（bus）、任务存储、工作区 |
@@ -145,7 +143,6 @@ cd web && npm install && cd ..
 
 ```bash
 # 交互式初始化
-uv run research-agent init
 ```
 
 这会引导你配置：
@@ -192,110 +189,15 @@ mkdir ~/my_knowledge_vault
 
 有三种方式完成初始化配置：
 
-#### 方式 A：CLI 交互式初始化（推荐）
-
-```bash
-uv run research-agent init
-```
-
-按提示依次输入各项配置。已有配置文件时会显示当前值，直接回车保留不变。
-
-#### 方式 B：通过 Web UI 初始化
+#### 方式 A：通过 Web UI 初始化（推荐）
 
 启动服务后（`cd web && npm run dev:all`，见下方），浏览器打开 `http://localhost:5173`，从侧边栏进入 Settings 页面填写表单提交即可（未配置时落在 Research 页，可正常浏览，启动调研时才同步报 `config_missing`）。
 
-#### 方式 C：手动创建配置文件
+#### 方式 B：手动创建配置文件
 
 在配置路径创建 `config.toml`（完整示例见[配置说明](#配置说明)）。
 
-### 3. CLI 命令行使用
-
-#### 基本命令
-
-```bash
-# 查看帮助
-uv run research-agent --help
-
-# 查看版本
-uv run research-agent --version
-```
-
-#### 本地知识库检索（Local RAG）
-
-从你的 Markdown vault 中检索信息，并用 LLM 生成总结：
-
-```bash
-# 基础检索（自动输出 LLM 总结 + 原始来源）
-uv run research-agent local "Agent 三大范式分别是什么"
-
-# 中文检索
-uv run research-agent local "什么是 RAG 系统？"
-
-# 检索多个关键词（FTS5 MATCH 语法）
-uv run research-agent local "machine learning OR deep learning"
-```
-
-输出包含：
-- **Summary**：LLM 基于检索结果生成的综合答案（带引用编号）
-- **Sources**：匹配的文本片段、来源文件路径、标题路径
-
-#### 网络调研（Web Research）
-
-启动多角色流水线进行网络调研：
-
-```bash
-# 基础调研
-uv run research-agent web "Latest developments in AI agents 2025"
-
-# 深度调研（自动搜索、抓取、分析、合成报告）
-uv run research-agent web "Compare LangGraph, CrewAI, and AutoGen frameworks"
-
-# 技术调研
-uv run research-agent web "Best practices for RAG systems in production"
-```
-
-Web Research 执行流程：
-0. **Prior Knowledge**（默认开启）：启动前先在本地知识库检索一次，Planner 据此避开本地已覆盖的内容（可用 `inject_local_context = false` 关闭）
-1. **Planner** 分析问题，制定调研计划（拆分为若干子任务）
-2. **Executor** 逐个执行子任务：规划工具调用 → 搜索/抓取 → 合成发现
-3. **Supervisor** 评估进度，决定继续/修订/完成
-4. **Curator** 整合所有发现，生成最终 Markdown 报告
-
-执行完成后，报告文件保存在工作区的 `reports/web/` 下，任务结果与中间产物在 `tasks/<task_id>/` 下。
-
-#### 沉淀报告到知识库（Knowledge Deposit）
-
-把已完成的 Web Research 报告显式保存进知识库 vault，让后续 Local RAG 检索能命中：
-
-```bash
-uv run research-agent task deposit <task_id>
-
-# 之后重建索引即可检索到
-uv run research-agent kb rebuild
-```
-
-报告会复制到 vault 的 `web-research/` 子目录（只新增笔记，不修改已有内容；同一任务重复沉淀会提示 `already_deposited`）。详见 [USAGE.md](USAGE.md)。
-
-Web UI 中，已完成的 Web Report 页面（Research 页或 Tasks 页打开的报告视图）提供 **Deposit to Knowledge Base** 按钮，沉淀成功后可直接点 **Rebuild Index** 重建索引。
-
-#### 同时运行两种检索
-
-```bash
-uv run research-agent both "AI agent frameworks comparison"
-```
-
-这将并行启动 Local RAG 和 Web Research，同时获得本地知识和网络信息。
-
-#### 查看结果
-
-CLI 会在终端直接输出结果。完整的 Markdown 报告保存在：
-```
-<workspace>/tasks/<task_id>/report.md       # Web Research 报告
-<workspace>/tasks/<task_id>/result.json     # 结构化结果
-<workspace>/tasks/<task_id>/events.jsonl    # 进度事件日志
-```
-
-### 4. Web UI 使用
+### 3. Web UI 使用
 
 Web UI 提供可视化的研究界面，支持任务管理、实时进度查看和结果浏览。
 
@@ -315,7 +217,7 @@ Web UI 有三个页面：
 
 | 页面 | 功能 |
 |------|------|
-| **Research** | 主界面 — 输入问题启动 Web Research，实时查看进度和结果（Local RAG 在 Knowledge Base 页提问，或用 CLI / API） |
+| **Research** | 主界面 — 输入问题启动 Web Research，实时查看进度和结果（Local RAG 在 Knowledge Base 页提问，或用 API） |
 | **Tasks** | 查看历史任务列表，点击可查看详情（结果 + 进度事件） |
 | **Knowledge Base** | 查看/重建知识库索引，直接提问 Local RAG |
 | **Settings** | 随时查看和修改全部配置（已保存的 API key 留空即保持不变） |
@@ -338,7 +240,7 @@ Web UI 有三个页面：
 
 提交后自动保存配置并跳转到 Research 页面。
 
-### 5. 前端开发模式
+### 4. 前端开发模式
 
 如果你需要修改前端代码并进行实时测试，使用 Vite 开发服务器：
 
@@ -418,7 +320,7 @@ cd web && npm run test:e2e
 
 **流程**：扫描 vault 目录 → 解析文件 → 分段 → 构建 FTS5 + ChromaDB 向量索引 → 混合检索（FTS5 + 语义 + RRF） → LLM 总结
 
-1. **索引构建**：运行 `research-agent kb rebuild` 或调用 `POST /api/kb/rebuild`
+1. **索引构建**：调用 `POST /api/kb/rebuild`（Knowledge Base 页的 Rebuild 按钮）
 2. **混合检索**：FTS5 关键词 + ChromaDB 语义向量 + RRF 融合排序，返回 top-10 结果
 3. **LLM 总结**：将检索结果作为参考材料注入 prompt，调用 `local_summarizer` 角色模型生成综合答案（无 chat_model 时回退到纯检索模式）
 
@@ -600,9 +502,8 @@ research_agent/
 ├── src/research_agent/
 │   ├── api/
 │   │   └── app.py              # FastAPI 应用工厂 + SSE 端点（仅 API，不服务前端静态文件）
-│   ├── cli.py                  # argparse CLI
 │   ├── core/
-│   │   ├── bus.py              # EventStream 事件总线（asyncio Bus，SSE/CLI 共用）
+│   │   ├── bus.py              # EventStream 事件总线（asyncio Bus，SSE）
 │   │   ├── chroma_store.py     # ChromaDB 向量存储封装
 │   │   ├── config.py           # TOML 配置解析（全局 + per-role 覆盖）
 │   │   ├── deposit.py          # Knowledge Deposit（Web 报告沉淀进 vault）
@@ -619,7 +520,7 @@ research_agent/
 │       ├── executor.py          # ResearchExecutor（工具规划/执行/综合）
 │       ├── graph.py             # LangGraph 节点函数 + 图构建
 │       ├── prompt_builders.py   # Per-role Prompt 构建
-│       ├── provider_runtime.py  # Provider-backed Runtime（CLI/API 默认）
+│       ├── provider_runtime.py  # Provider-backed Runtime（API 默认）
 │       ├── report.py            # Markdown 报告生成
 │       ├── role_invocation.py   # LLM 角色调用 + 输出校验与重试
 │       ├── schemas.py           # 数据模型与 Blackboard 状态
@@ -725,8 +626,7 @@ cd web && npm run test:e2e             # Playwright E2E 测试
 
 **Q: 如何查看当前配置？**
 ```bash
-# CLI 初始化时会显示当前值
-uv run research-agent init
+# 初始化后会写入当前值
 
 # 或直接查看配置文件
 cat ~/.config/research_agent/config.toml  # Linux/macOS
@@ -756,7 +656,7 @@ Web Research 涉及多轮 LLM 调用 + 网络搜索/抓取，通常需要 2-10 �
 
 **Q: Local RAG 检索不到内容？**
 1. 确认知识库已索引：`curl http://localhost:8001/api/kb/status` 检查 `file_count > 0`
-2. 如未索引，运行 `uv run research-agent kb rebuild` 或调用 `POST /api/kb/rebuild`
+2. 如未索引，调用 `POST /api/kb/rebuild`（Knowledge Base 页 Rebuild）
 3. 尝试更具体的关键词或使用自然语言描述（支持 FTS5 关键词 + ChromaDB 语义混合检索）
 
 **Q: 如何清理旧任务数据？**
@@ -812,7 +712,7 @@ ADR 合规状态与待解决问题见 [`REVIEW_TRACKER.md`](REVIEW_TRACKER.md)�
 
 | 阶段 | 目标 | 内容 |
 |------|------|------|
-| 阶段 8 | 功能全部实现 | CLI `task show <id>`、Source 快照查看器（Web UI）、`execution_trace.md` 生成与持久化、工厂重构 + 死代码清理 |
+| 阶段 8 | 功能全部实现 | Source 快照查看器（Web UI）、`execution_trace.md` 生成与持久化、工厂重构 + 死代码清理 |
 | 阶段 9 | 健壮性优化 | LLM 调用重试、结构化日志 + 耗时记录、mypy/pyright 类型检查、ruff lint、API rate limit、SIGINT 优雅退出 |
 
 近期待观察项：`local_kb_search` 是否注册为 Web 工具（触发条件与中间档记录于 TODO.md）。

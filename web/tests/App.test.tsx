@@ -118,7 +118,7 @@ describe("App", () => {
         if (url.endsWith("/api/setup/status")) return jsonResponse({ configured: false });
         if (url.endsWith("/api/research/web") && init?.method === "POST") {
           return jsonResponse(
-            { error: { code: "config_missing", message: "User config is missing. Run research-agent init first." } },
+            { error: { code: "config_missing", message: "User config is missing. Configure in the Settings page first." } },
             false,
             404
           );

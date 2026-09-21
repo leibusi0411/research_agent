@@ -1,6 +1,4 @@
 import os
-import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
@@ -126,7 +124,7 @@ def test_missing_config_returns_config_missing(tmp_path):
 
     assert exc_info.value.to_dict() == {
         "code": "config_missing",
-        "message": "User config is missing. Run research-agent init first.",
+        "message": "User config is missing. Configure in the Settings page first.",
     }
 
 
@@ -139,110 +137,6 @@ def test_malformed_existing_config_returns_config_invalid(tmp_path):
 
     assert exc_info.value.code == "config_invalid"
     assert "Missing config field" in exc_info.value.message
-
-
-def test_non_init_cli_commands_require_existing_config(tmp_path):
-    env = os.environ.copy()
-    env["RESEARCH_AGENT_CONFIG_PATH"] = str(tmp_path / "missing.toml")
-
-    result = subprocess.run(
-        [sys.executable, "-m", "research_agent.cli", "task", "list"],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-
-    assert result.returncode == 1
-    assert "[config_missing] User config is missing. Run research-agent init first." in result.stdout
-
-
-def test_cli_init_writes_config_without_provider_calls(tmp_path):
-    config_path = tmp_path / "config.toml"
-    workspace = tmp_path / "runtime"
-    vault = tmp_path / "vault"
-    vault.mkdir()
-    env = os.environ.copy()
-    env["RESEARCH_AGENT_CONFIG_PATH"] = str(config_path)
-    env["RESEARCH_AGENT_PROVIDER_CALL_SENTINEL"] = "fail-if-read"
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "research_agent.cli",
-            "init",
-            "--default-workspace",
-            str(workspace),
-            "--knowledge-base-path",
-            str(vault),
-            "--chat-base-url",
-            "https://models.example/v1",
-            "--chat-api-key",
-            "chat-key",
-            "--chat-model",
-            "chat-model",
-            "--embedding-base-url",
-            "https://embeddings.example/v1",
-            "--embedding-api-key",
-            "embedding-key",
-            "--embedding-model",
-            "embedding-model",
-            "--search-api-key",
-            "search-key",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-
-    assert result.returncode == 0
-    assert "Config written:" in result.stdout
-    assert config_path.exists()
-    assert workspace.is_dir()
-
-
-def test_cli_init_invalid_config_prints_research_error(tmp_path):
-    config_path = tmp_path / "config.toml"
-    workspace = tmp_path / "runtime"
-    env = os.environ.copy()
-    env["RESEARCH_AGENT_CONFIG_PATH"] = str(config_path)
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "research_agent.cli",
-            "init",
-            "--default-workspace",
-            str(workspace),
-            "--knowledge-base-path",
-            str(tmp_path / "missing-vault"),
-            "--chat-base-url",
-            "https://models.example/v1",
-            "--chat-api-key",
-            "chat-key",
-            "--chat-model",
-            "chat-model",
-            "--embedding-base-url",
-            "https://embeddings.example/v1",
-            "--embedding-api-key",
-            "embedding-key",
-            "--embedding-model",
-            "embedding-model",
-            "--search-api-key",
-            "search-key",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-
-    assert result.returncode == 1
-    assert "[config_invalid] Knowledge Base path must be an existing directory." in result.stdout
-    assert not config_path.exists()
 
 
 def test_research_config_inject_local_context_defaults_true(tmp_path):

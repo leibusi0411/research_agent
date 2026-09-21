@@ -16,9 +16,6 @@ dependencies = [
     "uvicorn>=0.30.0",
 ]
 
-[project.scripts]
-research-agent = "research_agent.cli:main"
-
 [dependency-groups]
 dev = [
     "pytest>=8.0",

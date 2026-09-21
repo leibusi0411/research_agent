@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-18 | 线上调整：功能开关取消、配置即开关（ADR-0052/0053 演进）+ Settings 页查询改写槽位卡片 + 本地前置检索 per-run 开关（R-276）+ Curator 按子任务分章结构化报告（ADR-0054，R-277） + 报告富 Markdown（R-279）+ 卡片折叠/等高布局（R-281） |  测试：Python 277 passed（离线，另有 6 个真实 API e2e 无配置自动 skip）+ 前端 37 passed + Playwright 1 passed | 第十一轮实现+审查：Multi-Query 查询改写（ADR-0052）+ Cross-Encoder rerank（ADR-0053）+ Settings 页 rerank 卡片，审查 12 项（R-264~R-275）11 修复、1 接受 ✅ | 第十轮实现：调研后接地对话 TaskChatService（ADR-0050，R-262）+ Web 工具面扩展（ADR-0051，R-263） | 第九轮实现：local_kb_search + 索引自动增量更新（ADR-0048，R-257）+ Chunking v2（ADR-0049，R-258）+ KB 页独立 Local RAG 入口（R-259）
+> 最后更新：2026-09-18 | 线上调整：功能开关取消、配置即开关（ADR-0052/0053 演进）+ Settings 页查询改写槽位卡片 + 本地前置检索 per-run 开关（R-276）+ Curator 按子任务分章结构化报告（ADR-0054，R-277） + 报告富 Markdown（R-279）+ 卡片折叠/等高布局（R-281）+ References 显式导入（R-283）+ CLI 移除（ADR-0055，R-284） |  测试：Python 277 passed（离线，另有 6 个真实 API e2e 无配置自动 skip）+ 前端 37 passed + Playwright 1 passed | 第十一轮实现+审查：Multi-Query 查询改写（ADR-0052）+ Cross-Encoder rerank（ADR-0053）+ Settings 页 rerank 卡片，审查 12 项（R-264~R-275）11 修复、1 接受 ✅ | 第十轮实现：调研后接地对话 TaskChatService（ADR-0050，R-262）+ Web 工具面扩展（ADR-0051，R-263） | 第九轮实现：local_kb_search + 索引自动增量更新（ADR-0048，R-257）+ Chunking v2（ADR-0049，R-258）+ KB 页独立 Local RAG 入口（R-259）
 
 ---
 
@@ -160,6 +160,8 @@
 | R-280 | 用户实测：调研失败（5 子任务全 0 findings）——诊断：Tavily 免费配额耗尽（432 usage limit）+ 同期出口 SSL 波动；arXiv 持续 406 限流 | ✅ 非代码缺陷（配额/网络环境）；可诊断性修复：ToolRunner 的 HTTPStatusError 消息透传响应体 detail 前 200 字符（Tavily 432 的 "exceeds your plan's set usage limit" 直接进事件流，不再裸 status code）；429 保持 transient、432 归 permanent 正确；测试 +1 |
 | R-281 | 用户反馈：完成后各卡片应可折叠；Chat 与 References 卡应等高，References 超长内部滚动（此前尾部拖长一大截） | ✅ FoldCard 折叠组件（head=原 h2+chevron 旋转，body 可隐藏；Trace/Report/Notes/Sources 四卡接入，卡片 padding 迁至 head/body，result-panel 不受影响）；Chat 卡定高 560px（stream flex 填充、输入栏贴底），References 同高 flex column、ul 内部滚动（grid stretch 不能反向约束行高——初版 max-height:100% 无效，改双卡定高）；920px 以下恢复自适应；测试 +1 折叠交互；几何断言等高 <2px、截图自查通过 |
 | R-282 | 用户反馈：折叠后的卡片标题不居中 | ✅ 根因：fold head 展开态 padding 为 22px 24px 0（下边距让位给 body），折叠后无 body 补位导致标题偏移；修复：折叠态（aria-expanded=false）改用对称 padding 19px 24px；几何断言上下间距差 <2px、截图确认 |
+| R-283 | 用户需求：问答参考资料改为显式导入——选好后点导入才生效（默认不导入），支持追加导入，上限 50 | ✅ 前端 References 卡重做（勾选=暂存、Import selected 按钮入集合、Imported 徽章+checkbox 禁用、追加分批、N/50 计数、超限按钮禁用提示剩余配额、未导入时 Send 禁用+空态引导）；后端 selected_sources 语义拆分：显式 [] = 无来源接地（仅 summary+sections）、缺省 = 全量（兼容）；>50 报 config_invalid；测试 +6 |
+| R-284 | 用户需求：删除 CLI 模式 | ✅ ADR-0055：删 `research_agent.cli` + `research-agent` 入口点（pyproject scripts）；service 孤儿清理（run_both/_run_family_result/_safe_future_result；run_web_research/run_local_research 保留为测试与脚本复用入口）；config_missing 文案改 Web Settings 引导；测试清理（CLI 子进程用例、TestPrintWebEvent、use_case_shells 的 run_both）；ADR-0011 演进注记；AGENTS/README/USAGE/CONTEXT/CLAUDE 全面同步（结构图/命令/双界面表述/8 词条）；离线全量 257 绿 |
 
 ### 第九轮实现（2026-09-09，Chunking v2 / ADR-0049，R-258）
 

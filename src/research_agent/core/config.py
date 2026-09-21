@@ -173,7 +173,7 @@ def load_user_config(config_path: Path | None = None) -> UserConfig:
     if not target_config_path.exists():
         raise ResearchError(
             code="config_missing",
-            message="User config is missing. Run research-agent init first.",
+            message="User config is missing. Configure in the Settings page first.",
         )
 
     try:

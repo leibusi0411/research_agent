@@ -5,3 +5,8 @@ The v1 CLI does not require a permanently running local service, but `research-a
 > 演进注记（2026-09-09，R-238）：进度流式展示只在 Web Research 侧兑现——`research-agent web` 通过 `on_event=_print_web_event` 实时打印进度（src/research_agent/cli.py:189）；`research-agent local` 是同步调用（cli.py:150），`CoreService.run_local_research` 签名没有 on_event 参数（core/service.py:134），`both` 的 local 分支同样静默（service.py:189-190）。Local RAG 的进度事件仍写入 events.jsonl，只是 CLI 不读取展示。本 ADR 其余部分仍然成立：无需常驻 daemon、复用 Core Service 与 phase 语义、family 级并发与 busy 错误、both 分区段与退出码语义。
 
 `research-agent both` prints separate final statuses for the Local RAG task and Web Research task. The command exits `0` only when both tasks complete successfully. If either task fails, including Web Research failing with `file_write_error` because its Web Report File could not be written, `both` exits non-zero while still showing any successful task's result.
+
+> 演进注记（2026-09-21，R-284，ADR-0055）：CLI 界面已整体移除（`research-agent`
+> 入口点与 `research_agent.cli` 模块删除），本 ADR 描述的 CLI 进度流式能力随之
+> 消失；事件流的唯一消费界面是 Web UI SSE。"无需常驻 daemon、复用 Core Service
+> 与 phase 进度语义"的原则仍然成立。

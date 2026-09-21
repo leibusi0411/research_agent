@@ -1,7 +1,6 @@
 import json
 import os
 import sqlite3
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -102,45 +101,6 @@ def test_local_research_fails_before_retrieval_when_index_missing_or_stale(tmp_p
     with sqlite3.connect(workspace / "tasks.sqlite") as connection:
         statuses = connection.execute("SELECT status FROM tasks ORDER BY created_at").fetchall()
     assert [s[0] for s in statuses] == ["failed", "completed"]
-
-
-def test_local_research_cli_success_and_failure_outputs(tmp_path):
-    service, config_path, _workspace, vault = configured_service(tmp_path)
-    (vault / "note.md").write_text("# CLI\n\nLocal CLI research content about graph planning.", encoding="utf-8")
-    service.rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
-    env = os.environ.copy()
-    env["RESEARCH_AGENT_CONFIG_PATH"] = str(config_path)
-    env["RESEARCH_AGENT_PROVIDER_CALL_SENTINEL"] = "fail-if-read"
-    env["RESEARCH_AGENT_OFFLINE"] = "1"
-
-    success = subprocess.run(
-        [sys.executable, "-m", "research_agent.cli", "local", "graph planning"],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    outdated = subprocess.run(
-        [sys.executable, "-m", "research_agent.cli", "local", "changed"],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-
-    assert success.returncode == 0
-    assert "Sources" in success.stdout
-    assert "source_path:" in success.stdout
-    assert "Local CLI research content" in success.stdout
-    # With RESEARCH_AGENT_OFFLINE=1 and "stale" status allowing FTS5 retrieval,
-    # the CLI query for new content against a stale index still completes
-    # (potentially with empty results since indexed text differs from query).
-    assert outdated.returncode == 0
-
-
-# ---------------------------------------------------------------------------
-# FTS5 + Chroma hybrid retrieval tests (R-13 / ChromaDB integration)
-# ---------------------------------------------------------------------------
 
 
 def test_fts5_keyword_retrieval_finds_relevant_chunks(tmp_path):
