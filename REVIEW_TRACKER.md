@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-18 | 线上调整：功能开关取消、配置即开关（ADR-0052/0053 演进）+ Settings 页查询改写槽位卡片 + 本地前置检索 per-run 开关（R-276）+ Curator 按子任务分章结构化报告（ADR-0054，R-277） + 报告富 Markdown（R-279）+ 卡片折叠/等高布局（R-281）+ References 显式导入（R-283）+ CLI 移除（ADR-0055，R-284） |  测试：Python 277 passed（离线，另有 6 个真实 API e2e 无配置自动 skip）+ 前端 37 passed + Playwright 1 passed | 第十一轮实现+审查：Multi-Query 查询改写（ADR-0052）+ Cross-Encoder rerank（ADR-0053）+ Settings 页 rerank 卡片，审查 12 项（R-264~R-275）11 修复、1 接受 ✅ | 第十轮实现：调研后接地对话 TaskChatService（ADR-0050，R-262）+ Web 工具面扩展（ADR-0051，R-263） | 第九轮实现：local_kb_search + 索引自动增量更新（ADR-0048，R-257）+ Chunking v2（ADR-0049，R-258）+ KB 页独立 Local RAG 入口（R-259）
+> 最后更新：2026-09-25 | 测试：Python 离线 265 个（264 通过；test_search_api 因用户 Tavily 配额耗尽 HTTP 432 暂失败，与本仓库代码无关）+ 前端 Vitest 38 + Playwright e2e 全绿 | 第十三轮实现+审查：Executor Output Log 子任务级持久化与重入跳过（ADR-0056，审查 R-285~R-294：9 修复 1 随提交处理） | 第十二轮（2026-09-18，R-276~R-284）：本地前置检索 per-run 开关、Curator 分章报告（ADR-0054）、References 显式导入、CLI 移除（ADR-0055） | 线上调整（2026-09-16）：功能开关取消、配置即开关（ADR-0052/0053 演进）| 第十一轮：Multi-Query 改写 + Cross-Encoder rerank（ADR-0052/0053）
 
 ---
 
@@ -72,6 +72,32 @@
 - Settings 页新增"查询改写模型"槽位卡片（summarizer_base_url / summarizer_api_key / summarizer_model，空字段省略并**继承全局 `[chat_model]` 对应值**；key 空白 = 保留已存槽位 key，无已存则省略继承全局）
 - 配置解析对旧 TOML 中残留的开关键静默忽略（向后兼容）；设置保存不再渲染开关行
 - 测试：后端离线 266 passed / Vitest 32 passed / Playwright 1 passed；ADR-0052/0053 加演进注记，CONTEXT/AGENTS/USAGE/TODO 同步
+
+### 第十三轮实现+审查（2026-09-25，Executor Output Log / ADR-0056）
+
+**动机**：LangGraph checkpoint 是节点级，execute 节点中途崩溃会丢掉批内已完成子任务的结果，恢复/重跑需整批重来。本加固把持久化粒度提前到"每个子任务完成即落盘"，且不依赖完整恢复功能——任何未来的重入机制（checkpoint 恢复、任务重跑按钮）直接受益。
+
+**改动**：
+- `web/executor.py` 新增 `ExecutorOutputLog`（`artifacts/executor_outputs.jsonl` 追加式 JSONL；读写失败仅 warning 不抛出；坏行容错；同 subtask_id 最后一条生效）
+- `execute()` 重入语义：结果未进 Blackboard 且 log 有记录 → 复用跳过；已在 `state.executor_outputs` → 照常重跑（Supervisor 重新指派是新决策，不是崩溃恢复）；复用输出照常发 `subtask_completed` 事件
+- `GraphContext` 新增必填 `workspace: str` 字段；`_execute_node` 接线
+
+**测试**：`tests/test_executor_recovery.py` 8 个（落盘即时性用 on_progress 回调在慢子任务仍在跑时断言快子任务已上盘、重入复用、已合并重跑、坏行容错、追加失败不抛、无 log 回退、图级重入 `_execute_node` 二次调用不重跑）+ 全流程集成断言（2 子任务 2 行记录）。
+
+**subagent 审查（R-285~R-294，PASS with findings，全部处理）**：
+
+| 编号 | 级别 | 描述 | 修复 |
+|------|------|------|------|
+| R-285 | P2 | uv.lock 被本机清华镜像环境全量重写（URL 换源），与改动无关 | ✅ 提交前 `git checkout -- uv.lock` 剔离 |
+| R-286 | P2 | 页头把 ADR-0056 误记为 R-276（已被 2026-09-18 占用）且轮次号与既有第十二轮冲突 | ✅ 本轮改记第十三轮、删除 R-276 误引 |
+| R-287 | P2 | 仓库根目录未跟踪的 `简历项目介绍.md` 有误提交风险 | ✅ 加入 .gitignore |
+| R-288 | P3 | 新页头丢测试计数并抹掉历史轮次链 | ✅ 恢复计数与十~十二轮摘要 |
+| R-289 | P3 | ADR-0056 称复用时不补写来源快照，与实现不符（`_saved_source_ids` 是进程内存态，恢复进程会照常写快照，方向有利） | ✅ ADR 措辞修正 |
+| R-290 | P3 | append 位于成功分支 try 内，非 OSError 异常会把成功子任务扭曲成 failed | ✅ append 移出 try/except + append 内部捕获放宽到 Exception |
+| R-291 | P3 | 测试 5 处直接摸 `log._path` 私有属性 | ✅ ExecutorOutputLog 暴露公开 `path` property，测试改用 |
+| R-292 | P3 | 重入语义只有 executor 层测试，缺 `_execute_node` 图级重入测试 | ✅ +1 图级测试（二次调用不重跑、log 仍 1 行） |
+| R-293 | P3 | AGENTS.md 测试/ADR 计数过时 | ✅ 更新（离线 264、ADR 56） |
+| R-294 | nit | 复用/正常路径手写重复的 subtask_completed 事件 dict | ✅ 提取 `_notify_subtask_completed` 共用 |
 
 ### 第八轮审查存档（2026-09-09，历史 ADR 对照最新代码）
 

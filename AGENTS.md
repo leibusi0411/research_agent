@@ -61,7 +61,7 @@ research_agent/
 │       ├── graph.py              # LangGraph 节点函数与图构建
 │       ├── provider_runtime.py   # Provider-backed 真实运行时
 │       └── report.py             # Markdown 报告生成
-├── tests/                        # pytest，21 个测试文件，266 个离线测试 + 6 个真实 API 测试（无配置自动 skip）
+├── tests/                        # pytest，20 个测试文件，264 个离线测试 + 6 个真实 API 测试（无配置自动 skip）
 ├── web/                          # React + Vite 前端
 │   ├── src/
 │   │   ├── App.tsx               # 主应用（Research / Tasks / KB / Settings 页面路由；未配置时 Research 照常可用，启动调研同步报 config_missing）
@@ -76,7 +76,7 @@ research_agent/
 │   ├── playwright.config.ts      # E2E 配置（自动起 5174 端口的 dev server）
 │   └── package.json
 ├── docs/
-│   ├── adr/                      # 54 个架构决策记录（0001~0054，顺序编号）
+│   ├── adr/                      # 56 个架构决策记录（0001~0056，顺序编号）
 │   └── agents/                   # agent 协作约定（issue tracker、triage labels、domain docs）
 ├── CONTEXT.md                    # 领域术语表（命名前必读）
 ├── TODO.md                       # v1 有意延期的功能清单
@@ -131,7 +131,7 @@ cd web && npm run test:e2e             # Playwright E2E（自动起 5174 端口 
 
 - **中文优先**：Review 生成的文件（代码审查报告、ADR 审查等）一律用中文编写，中文翻译版作为主文件（不加 `-zh` 后缀），不保留英文原版。文档（README/USAGE）也是中文。
 - **命名遵守术语表**：`CONTEXT.md` 定义了领域语言（Local RAG、Web Research、Blackboard、Tool Gateway 等）。命名领域概念时使用其中的术语，避免使用被明确否决的同义词（每个词条下有 `_Avoid_` 列表）。
-- **ADR 冲突规则**：若改动与 `docs/adr/` 中已有决策冲突，必须显式提出冲突，而不是静默推翻决策。ADR 共 54 个，顺序编号。
+- **ADR 冲突规则**：若改动与 `docs/adr/` 中已有决策冲突，必须显式提出冲突，而不是静默推翻决策。ADR 共 56 个，顺序编号。
 - **类型注解**：方法签名使用显式类型参数，不用 `*args, **kwargs`；运行时抽象用 `WebResearchRuntime` Protocol 而非 `object`。
 - **简单优先**：用最少代码解决问题，不做未要求的抽象或功能；精准修改，不顺手重构相邻代码；自己改动产生的孤立 import/变量/函数必须清理。
 - **错误模型**：用户可见错误统一为 `ResearchError`（`code` + `message`），API 以 `{error: {code, message}}` 返回。
@@ -161,7 +161,7 @@ cd web && npm run test:e2e             # Playwright E2E（自动起 5174 端口 
 - 配置包含 **API keys**（chat model、embedding model、Tavily search）：**绝不提交到仓库**，不在日志、报告或测试中打印真实 key。测试用 fake key（如 `"test-key"`）。
 - 支持 per-role 模型覆盖：`[chat_model.planner|executor|supervisor|curator|local_summarizer]`，未配置时回退到全局 `[chat_model]`；`local_summarizer` 槽位服务 Local RAG 总结与 Multi-Query 查询改写（ADR-0052）。检索质量层**配置即开关**：配 `[chat_model.local_summarizer]` 节启用改写、配 `[rerank_model]` 节启用 Cross-Encoder /rerank API 精排（ADR-0053），不配自动回退，失败自动降级。
 - 本项目是单用户本地优先应用：Web UI 只绑定 localhost；Web Research 不包含认证浏览、浏览器自动化或反爬绕过；知识库索引对用户 vault 是只读的。
-- 工作区目录（`default_workspace`）存放运行态：`tasks/<task_id>/`（result.json、events.jsonl、checkpoints.sqlite、artifacts/web_sources/）、`indexes/`、`reports/web/`、`logs/`。这些是用户数据，不属于仓库。
+- 工作区目录（`default_workspace`）存放运行态：`tasks/<task_id>/`（result.json、events.jsonl、checkpoints.sqlite、artifacts/web_sources/、artifacts/executor_outputs.jsonl）、`indexes/`、`reports/web/`、`logs/`。这些是用户数据，不属于仓库。
 
 ## API 面（最小化 FastAPI + SSE，ADR-0038）
 

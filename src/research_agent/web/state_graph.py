@@ -323,6 +323,7 @@ class StateGraphRunner:
                 executor=self.executor,
                 max_retrieval_rounds=self.max_retrieval_rounds,
                 task_id=task_id,
+                workspace=str(self.workspace.root),
                 _emit=self._emit,
                 _save_llm_call_artifact=self._save_llm_call_artifact,
                 _save_source_snapshots=self._save_source_snapshots,

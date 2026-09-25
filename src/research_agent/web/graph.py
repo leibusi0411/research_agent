@@ -9,7 +9,7 @@ from typing import Any, Callable
 from langgraph.graph import END, START, StateGraph
 
 from research_agent.core.providers import ChatModelClient
-from research_agent.web.executor import ResearchExecutor
+from research_agent.web.executor import ExecutorOutputLog, ResearchExecutor
 from research_agent.web.prompt_builders import (
     build_curator_prompt,
     build_planner_prompt,
@@ -145,6 +145,8 @@ class GraphContext:
     executor: ResearchExecutor
     max_retrieval_rounds: int
     task_id: str
+    # Workspace root (str) for per-task artifact paths (ADR-0056 output log).
+    workspace: str
     _emit: Callable[..., None] = field(repr=False)
     _save_llm_call_artifact: Callable[..., None] = field(repr=False)
     _save_source_snapshots: Callable[..., None] = field(repr=False)
@@ -300,7 +302,10 @@ def _execute_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[str, A
 
     pending_ids = [s.subtask_id for s in pending]
     ctx._emit(task_id, "web_execution", "started", f"Executing {len(pending_ids)} subtasks.")
-    executor_outputs = ctx.executor.execute(state, pending_ids, ctx.chat_models["executor"])
+    # ADR-0056: per-subtask durable log — results survive a crash mid-node and
+    # a re-entered execute skips subtasks already finished but never merged.
+    output_log = ExecutorOutputLog.for_task(ctx.workspace, task_id)
+    executor_outputs = ctx.executor.execute(state, pending_ids, ctx.chat_models["executor"], output_log=output_log)
 
     all_findings: list[Finding] = []
     all_sources: list[WebSource] = []

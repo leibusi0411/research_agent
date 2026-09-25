@@ -228,6 +228,10 @@ def test_state_graph_runner_executes_full_flow(tmp_path):
     assert result["status"] == "completed"
     assert result["curator_output"]["title"] == "LangGraph Research"
     assert "report_path" in result
+    # ADR-0056: every executed subtask leaves a durable record behind.
+    output_log = workspace / "tasks" / result["task_id"] / "artifacts" / "executor_outputs.jsonl"
+    assert output_log.exists()
+    assert len([line for line in output_log.read_text(encoding="utf-8").splitlines() if line.strip()]) == 2
 
 
 # ── R-107: execution_trace.md generation ────────────────────────────────────

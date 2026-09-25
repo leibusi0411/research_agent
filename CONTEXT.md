@@ -275,6 +275,10 @@ _Avoid_: retrieval round, graph loop
 The temporary ResearchExecutor context used inside one Executor Tool Loop. Each concurrently executed subtask has an isolated scratchpad; scratchpads do not read or mutate each other. Scratchpad content is not fully persisted; only structured tool call records, sources, findings, status, and failure reasons are written to Blackboard or Task History.
 _Avoid_: task history, blackboard
 
+**Executor Output Log**:
+The append-only per-task JSONL file (`tasks/<task_id>/artifacts/executor_outputs.jsonl`) that records one ExecutorOutput the moment its subtask completes — before the execute node returns (ADR-0056). It exists because LangGraph checkpoints are node-level: a crash mid-node would otherwise lose every already-finished subtask in the batch. A re-entered execute reuses persisted results that never reached the Blackboard, and re-runs subtasks whose results are already merged (a fresh assignment is a Supervisor decision, not crash recovery). Write or read failures degrade to "no durable record" and never fail the task.
+_Avoid_: executor checkpoint, result cache
+
 **Subtask Failure**:
 A structured ResearchExecutor result indicating that an assigned subtask could not be completed after reasonable tool attempts or source failures. The Supervisor owns the follow-up route.
 _Avoid_: tool error, task failure

@@ -52,6 +52,7 @@ def _ctx(model, retriever=None, index_updater=None) -> GraphContext:
         executor=None,
         max_retrieval_rounds=3,
         task_id="task_20260909_000000_survey",
+        workspace="",  # plan-node tests never reach the execute output log
         _emit=lambda *args, **kwargs: None,
         _save_llm_call_artifact=lambda *args, **kwargs: None,
         _save_source_snapshots=lambda *args, **kwargs: None,

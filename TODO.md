@@ -36,3 +36,14 @@
 **明确不做**：本地 torch 部署（bge-reranker 权重 + HF 镜像下载链路）、ColBERT 晚期交互（换向量索引范式，非外挂精排）、LLM listwise 重排（RankGPT 式；曾为"零新增基础设施"备选，选定 API 路线后弃用——若 rerank API 供应商不可用可重评作应急方案）、pairwise/pointwise LLM 打分。
 
 **触发条件与重评时机**：与 Query 改写条目同源——deposit 使 vault 增长或 RRF 顺序精度不足的反馈；若三家 API 形态实测差异过大，重评是否拆分 per-provider 适配层。
+
+## 任务恢复（Task Recovery）路线
+
+**已完成的地基（2026-09-25，ADR-0056）**：Executor Output Log——子任务完成即持久化（`artifacts/executor_outputs.jsonl`），execute 重入时复用未进 Blackboard 的结果、跳过已完成的子任务。不依赖恢复入口，任何未来的重入机制（checkpoint 恢复 / 任务重跑按钮）直接受益。
+
+**完整恢复（从 LangGraph checkpoint 续跑）的触发条件**（满足其一再立项）：
+1. 任务时长涨到十分钟级，整任务重跑的等待/成本不可接受
+2. 用户使用高价模型跑深度调研，重复计费痛感明显
+3. 出现"中断后想接着跑"的真实使用诉求
+
+**立项时的工作清单**：启动扫描把孤儿任务标 `interrupted` 而非 `failed` + 任务列表"重新运行"入口；节点函数重放安全性审计（LLM 重调、来源重抓的幂等性）；resume API 端点与错误模型；ADR 显式演进 ADR-0005。
