@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 _CHUNK_SIZE = 1200
 _CHUNK_OVERLAP = 200
 _RETRIEVE_TOP_K = 6
+_EMBED_BATCH = 64
 
 
 class TaskChatIndex:
@@ -102,7 +103,11 @@ class TaskChatIndex:
     def _index_source(self, source_id: str, url: str, title: str, text: str) -> None:
         self.index_dir.mkdir(parents=True, exist_ok=True)
         chunks = self._chunk(text)
-        vectors = self.embedding_client.embed(chunks)
+        vectors: list[list[float]] = []
+        # Batch the embedding calls: a very long source yields hundreds of
+        # chunks and one request would blow the API body limit.
+        for i in range(0, len(chunks), _EMBED_BATCH):
+            vectors.extend(self.embedding_client.embed(chunks[i : i + _EMBED_BATCH]))
         ids = [f"{source_id}::{i}" for i in range(len(chunks))]
         self._fts_insert(ids, source_id, url, title, chunks)
         self._chroma_upsert(ids, source_id, url, title, chunks, vectors)
@@ -111,6 +116,12 @@ class TaskChatIndex:
         with sqlite3.connect(self._fts_path) as conn:
             conn.execute(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(chunk_id UNINDEXED, source_id UNINDEXED, url UNINDEXED, title UNINDEXED, text)"
+            )
+            # Idempotent under the build race: clear any rows these chunk ids
+            # already own, then insert fresh (FTS5 has no unique constraint).
+            conn.executemany(
+                "DELETE FROM chunks WHERE chunk_id = ?",
+                [(cid,) for cid in ids],
             )
             conn.executemany(
                 "INSERT INTO chunks (chunk_id, source_id, url, title, text) VALUES (?, ?, ?, ?, ?)",

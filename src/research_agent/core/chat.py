@@ -20,6 +20,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from research_agent.core.chat_index import TaskChatIndex
 from research_agent.core.errors import ResearchError
 from research_agent.core.ids import utc_now_iso
 from research_agent.core.providers import ChatModelClient
@@ -94,8 +95,6 @@ class TaskChatService:
         if selected_source_ids and self.embedding_client is not None:
             # R-285: imported sources' original text is retrieved from the
             # task-local index (built idempotently, never the global KB).
-            from research_agent.core.chat_index import TaskChatIndex
-
             index = TaskChatIndex(self.task_dir, self.embedding_client)
             index.build_imports(result, selected_source_ids)
             excerpts = index.retrieve(message, selected_source_ids)

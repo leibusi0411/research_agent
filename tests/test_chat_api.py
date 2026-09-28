@@ -29,7 +29,8 @@ class _KeyedEmbeddingClient:
         for text in texts:
             vec = [0.0] * 8
             for word in text.lower().split():
-                vec[hash(word) % 8] += 1.0
+                # Deterministic across processes (hash() is salted).
+                vec[sum(ord(c) for c in word) % 8] += 1.0
             vectors.append(vec)
         return vectors
 
