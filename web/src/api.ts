@@ -153,6 +153,8 @@ export const api = {
   runLocal: (question: string) =>
     request<ResearchResult>("/api/research/local", { method: "POST", body: JSON.stringify({ question }) }),
   finishedTasks: () => request<{ tasks: TaskSummary[] }>("/api/tasks/finished"),
+  cancelTask: (taskId: string) =>
+    request<{ task_id: string; status: string }>(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: "POST" }),
   deleteTask: (taskId: string) => request<{ task_id: string; deleted: boolean }>(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" }),
   depositTask: (taskId: string) => request<DepositResult>(`/api/tasks/${encodeURIComponent(taskId)}/deposit`, { method: "POST" }),
   taskResult: (taskId: string) => request<ResearchResult>(`/api/tasks/${encodeURIComponent(taskId)}/result`),

@@ -180,6 +180,7 @@ cd web && npm run test:e2e             # Playwright E2E（自动起 5174 端口 
 | POST | `/api/tasks/{task_id}/deposit` | 沉淀 Web 报告到知识库 vault |
 | GET | `/api/tasks/{task_id}/chat` | 任务对话历史（chat.jsonl） |
 | POST | `/api/tasks/{task_id}/chat` | 就已完成任务发消息（接地回复，`selected_sources` 勾选过滤） |
+| POST | `/api/tasks/{task_id}/cancel` | 协作式取消运行中的 Web 调研（节点边界生效） |
 | GET | `/api/kb/status` | 知识库索引状态 |
 | POST | `/api/kb/rebuild` | 重建索引 |
 

@@ -34,6 +34,7 @@ export function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [deletingTaskIds, setDeletingTaskIds] = useState<string[]>([]);
   const [phase, setPhase] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   // Knowledge Base page: standalone Local RAG query (separate state from the
   // web research flow so both task families can run without crosstalk).
   const [kbQuestion, setKbQuestion] = useState("");
@@ -220,6 +221,7 @@ export function App() {
     setEvents([]);
     setPhase(null);
     setResult(null);
+    setCancelling(false);
     setBusy("web");
     try {
       const started = await api.runWeb(question, localContext);
@@ -282,6 +284,23 @@ export function App() {
       setKbRunning(false);
       kbCleanup.current?.();
       kbCleanup.current = null;
+    }
+  }
+
+  async function cancelTask() {
+    if (!result && events.length > 0) {
+      // The live task id rides the events; fall back to the selected result.
+    }
+    const taskId = result?.task_id ?? events[0]?.task_id;
+    if (!taskId) return;
+    setCancelling(true);
+    try {
+      await api.cancelTask(taskId);
+      // The SSE stream delivers the terminal task_result (cancelled) —
+      // finishTask picks it up from there.
+    } catch (error) {
+      setMessage(String(error));
+      setCancelling(false);
     }
   }
 
@@ -376,6 +395,8 @@ export function App() {
                 phase={phase}
                 localContext={localContext}
                 setLocalContext={setLocalContext}
+                onCancel={cancelTask}
+                cancelling={cancelling}
               />
             }
           />

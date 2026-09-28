@@ -160,10 +160,14 @@ export function TraceCard({
   events,
   phase,
   running,
+  onCancel,
+  cancelling,
 }: {
   events: ProgressEvent[];
   phase: string | null;
   running: boolean;
+  onCancel?: () => void;
+  cancelling?: boolean;
 }) {
   const { groupedEvents, newestSeq } = useGroupedEvents(events);
   const stats = useMemo(() => traceStats(events), [events]);
@@ -180,6 +184,11 @@ export function TraceCard({
           <span className="trace-stats">
             {plural(stats.notes, "note")} · {plural(stats.searches, "search")} · {plural(stats.sources, "source")} · {plural(stats.findings, "finding")}
           </span>
+          {running && onCancel && (
+            <button type="button" className="cancel-btn" onClick={onCancel} disabled={cancelling}>
+              {cancelling ? "Cancelling…" : "Cancel"}
+            </button>
+          )}
         </>
       }
     >

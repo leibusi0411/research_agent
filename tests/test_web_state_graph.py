@@ -1014,3 +1014,34 @@ def test_curator_output_inherits_state_findings_when_model_omits_them(tmp_path):
     # Findings/sources inherited from the executed subtasks, not the model.
     assert curator["findings"][0]["text"] == "A2A lets agents interoperate."
     assert curator["sources"][0]["url"] == "https://example.com/a2a"
+
+
+def test_runner_cancel_persists_failed_with_cancelled_code(tmp_path):
+    """R-286: request_cancel() between node boundaries ends the run as
+    `failed` with error.code=`cancelled` — user-visible, not a crash."""
+    _service, _config_path, workspace = configured_service(tmp_path)
+
+    # A planner that keeps working; cancel fires while it runs.
+    slow_chat = MagicMock()
+    slow_chat.complete_tool.return_value = ToolCallResult(
+        name="plan_output",
+        arguments={"research_title": "T", "subtasks": [{"question": "q1"}]},
+    )
+
+    runner = StateGraphRunner(
+        config=RunnerConfig(
+            workspace=str(workspace),
+            chat_models=_make_chat_models(slow_chat),
+            tool_gateway=_ok_gateway(),
+            max_concurrent_subtasks=1,
+        ),
+    )
+    runner.request_cancel()
+
+    result = runner.run("What is A2A?")
+
+    assert result["status"] == "failed"
+    assert result["error"]["code"] == "cancelled"
+    assert "Cancelled" in result["error"]["message"]
+    # The family lock is released (a new run can start immediately).
+    assert not (workspace / "locks" / "web.lock").exists()

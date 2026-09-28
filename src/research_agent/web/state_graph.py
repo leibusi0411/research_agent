@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -213,6 +214,7 @@ class StateGraphRunner:
             except Exception:
                 logger.warning("Source text persist failed for %s; continuing", url, exc_info=True)
 
+        self._cancel_event = threading.Event()
         self.executor = ResearchExecutor(
             tool_gateway=config.tool_gateway,
             max_concurrent_subtasks=config.max_concurrent_subtasks,
@@ -227,7 +229,15 @@ class StateGraphRunner:
         """The task this runner is bound to, or None before ``run()`` starts."""
         return self._task_id
 
+    def request_cancel(self) -> None:
+        """Cooperatively cancel the running graph at the next node boundary (R-286)."""
+        self._cancel_event.set()
+
     def run(self, question: str, task_id: str | None = None, *, local_context: bool = True) -> dict[str, Any]:
+        # NOTE: _cancel_event is created once in __init__ and deliberately NOT
+        # reset here — request_cancel() must stay effective when it fires
+        # before run() reaches the first node boundary. A runner instance
+        # executes exactly one task.
         self.workspace.ensure()
         task_id = task_id or generate_task_id()
         self._task_id = task_id
@@ -344,6 +354,7 @@ class StateGraphRunner:
                 _save_source_snapshots=self._save_source_snapshots,
                 local_retriever=self.local_retriever,
                 index_updater=self.index_updater,
+                cancel_event=self._cancel_event,
             )
             graph = build_web_research_graph(graph_ctx).compile(checkpointer=checkpointer)
 
@@ -355,6 +366,12 @@ class StateGraphRunner:
 
             try:
                 final_state = graph.invoke(state, config)
+            except ResearchError as error:
+                if error.code == "cancelled":
+                    logger.warning("Web research cancelled by user for task %s", task_id)
+                    self._close_event_queue()
+                    return self._persist_failed(task_id, question, created_at, error)
+                raise
             except GraphRecursionError:
                 logger.warning("Web research hit recursion limit for task %s", task_id)
                 return self._persist_failed(task_id, question, created_at, ResearchError(

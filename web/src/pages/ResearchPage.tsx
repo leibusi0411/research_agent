@@ -14,6 +14,8 @@ export function ResearchPage({
   phase,
   localContext,
   setLocalContext,
+  onCancel,
+  cancelling,
 }: {
   question: string;
   setQuestion: (value: string) => void;
@@ -24,6 +26,8 @@ export function ResearchPage({
   phase: string | null;
   localContext: boolean;
   setLocalContext: (value: boolean) => void;
+  onCancel?: () => void;
+  cancelling?: boolean;
 }) {
   // Running = request in flight, or events streaming in with no result yet.
   const running = busy === "web" || (events.length > 0 && !result);
@@ -66,7 +70,7 @@ export function ResearchPage({
           <span className="toggle-knob" />
         </span>
       </label>
-      {events.length > 0 && <TraceCard events={events} phase={phase} running={running} />}
+      {events.length > 0 && <TraceCard events={events} phase={phase} running={running} onCancel={onCancel} cancelling={cancelling} />}
       {result && <ResultCards result={result} events={events} />}
       {chatReady && <ChatPanel key={result.task_id} result={result} />}
     </section>

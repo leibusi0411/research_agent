@@ -23,6 +23,7 @@ VALID_ERROR_CODES = {
     "invalid_task_mode",
     "report_missing",
     "already_deposited",
+    "cancelled",
 }
 
 

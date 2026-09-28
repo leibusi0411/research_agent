@@ -17,6 +17,7 @@ from research_agent.web.prompt_builders import (
     build_supervisor_prompt,
 )
 from research_agent.web.role_invocation import invoke_role_json
+from research_agent.core.errors import ResearchError
 from research_agent.web.schemas import (
     CuratorOutput,
     Finding,
@@ -156,6 +157,9 @@ class GraphContext:
     # the local knowledge base is unavailable (degrades to a web-only plan).
     local_retriever: Callable[[str], list[PriorKnowledgeChunk]] | None = None
     index_updater: Callable[[], dict[str, Any]] | None = None
+    # R-286: cooperative cancellation — set by request_cancel(), checked at
+    # every node boundary so a cancel takes effect within one node.
+    cancel_event: threading.Event | None = None
 
 
 # ── route guard ───────────────────────────────────────────────────────
@@ -246,7 +250,13 @@ _CURATOR_SCHEMA: dict[str, Any] = {
 # testable and the graph builder stays focused on wiring (R-100).
 
 
+def _check_cancelled(ctx: GraphContext) -> None:
+    if ctx.cancel_event is not None and ctx.cancel_event.is_set():
+        raise ResearchError(code="cancelled", message="Cancelled by user.")
+
+
 def _plan_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[str, Any]:
+    _check_cancelled(ctx)
     task_id = ctx.task_id
     ctx._emit(task_id, "web_planning", "started", "Planning web research.")
     local_survey = _run_local_survey(state, ctx, phase="web_planning")
@@ -279,6 +289,7 @@ def _plan_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[str, Any]
 
 
 def _execute_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[str, Any]:
+    _check_cancelled(ctx)
     task_id = ctx.task_id
     last_sup = state.get("last_supervisor_output")
     pending = [s for s in state["subtasks"] if s.status == "pending"]
@@ -346,6 +357,7 @@ def _execute_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[str, A
 
 
 def _supervise_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[str, Any]:
+    _check_cancelled(ctx)
     task_id = ctx.task_id
     ctx._emit(task_id, "web_supervision", "started", "Evaluating research progress.")
     supervisor_prompt = build_supervisor_prompt(state)
@@ -513,6 +525,7 @@ def _run_local_survey(
 
 
 def _plan_revision_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[str, Any]:
+    _check_cancelled(ctx)
     task_id = ctx.task_id
     ctx._emit(task_id, "web_revision", "started", "Revising plan.")
     local_survey = _run_local_survey(state, ctx, phase="web_revision")
@@ -551,6 +564,7 @@ def _plan_revision_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[
 
 
 def _curate_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[str, Any]:
+    _check_cancelled(ctx)
     task_id = ctx.task_id
     ctx._emit(task_id, "web_curation", "started", "Curating findings.")
     curator_prompt = build_curator_prompt(state)

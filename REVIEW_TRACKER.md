@@ -89,6 +89,7 @@
 | 编号 | 级别 | 描述 | 修复 |
 |------|------|------|------|
 | R-285 | P2 | uv.lock 被本机清华镜像环境全量重写（URL 换源），与改动无关 | ✅ 提交前 `git checkout -- uv.lock` 剔离 |
+| R-286 | 用户需求：调研任务运行中提供中断按钮 | ✅ ADR-0058：协作式取消——runner.request_cancel() 设 Event，GraphContext 传入图，5 节点开头 _check_cancelled 抛 code=cancelled；_run_graph 捕获 → _persist_failed（status=failed + error.code=cancelled，不引入独立状态）+ task_result 终止事件 + 锁经既有路径释放；POST /api/tasks/{id}/cancel（无活跃 runtime 404）；前端 Trace 卡 Cancel 按钮（Cancelling… 反馈），SSE 驱动 finishTask；踩坑：run() 重建 Event 覆盖了 run 前的取消请求（改 __init__ 一次创建不复位）；Local RAG 单次同步调用不可取消（说明即不做）；测试 +1 图层 +1 API |
 | R-286 | P2 | 页头把 ADR-0056 误记为 R-276（已被 2026-09-18 占用）且轮次号与既有第十二轮冲突 | ✅ 本轮改记第十三轮、删除 R-276 误引 |
 | R-287 | P2 | 仓库根目录未跟踪的 `简历项目介绍.md` 有误提交风险 | ✅ 加入 .gitignore |
 | R-288 | P3 | 新页头丢测试计数并抹掉历史轮次链 | ✅ 恢复计数与十~十二轮摘要 |

@@ -2205,3 +2205,30 @@ label span {
   border-radius: 999px;
   padding: 2px 7px;
 }
+
+
+/* ---------- Cancel button (R-286) ---------- */
+
+.cancel-btn {
+  flex: none;
+  padding: 5px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--t-micro), color var(--t-micro);
+}
+
+.cancel-btn:hover:not(:disabled) {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.cancel-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

@@ -156,7 +156,7 @@ The local `tasks/{task_id}/result.json` file that stores the display result for 
 _Avoid_: state file, checkpoint, report file
 
 **Research Error**:
-The unified user-facing error object used by the Web API and `result.json` (rendered as `[code] message` in logs). V1 stores only `code` and `message`, with codes such as `config_missing`, `busy`, `kb_index_stale`, `model_error`, `tool_error`, `schema_validation_failed`, `llm_call_failed`, `kb_rebuild_error`, `task_not_found`, `already_deposited`, `runtime_error`, and `file_write_error`; richer exception details belong in logs or Debug Trace.
+The unified user-facing error object used by the Web API and `result.json` (rendered as `[code] message` in logs). V1 stores only `code` and `message`, with codes such as `config_missing`, `busy`, `kb_index_stale`, `model_error`, `tool_error`, `schema_validation_failed`, `llm_call_failed`, `kb_rebuild_error`, `task_not_found`, `already_deposited`, `runtime_error`, `cancelled`, and `file_write_error`; richer exception details belong in logs or Debug Trace.
 _Avoid_: stack trace, exception dump
 
 **Default Workspace**:
@@ -402,6 +402,10 @@ _Avoid_: setup wizard, one-time setup, admin settings
 **Research Page**:
 The Web UI landing page with a single input area that starts only Web Research tasks; Local RAG is started from the Knowledge Base Index Page's question box (or via CLI / API). It does not provide a combined Run Both action. Local RAG and Web Research can run concurrently as separate tasks, but each task family allows only one active task at a time. The page no longer redirects when User Config is missing: Research is always the landing page, and starting research without configuration reports `config_missing` (ADR-0047 evolution). Web mode leads to a Web Report Page, and a completed web task additionally reveals the Research Chat panel.
 _Avoid_: chat page, dashboard
+
+**Cooperative Cancellation**:
+The per-run cancel mechanism for Web Research (R-286, ADR-0058): `request_cancel()` sets a runner-owned event; every graph node checks it at its start and raises `cancelled`, persisting `status=failed` with `error.code=cancelled` and releasing the family lock through the normal cleanup path. Cancel takes effect at the next node boundary (current LLM call may finish first). Exposed as `POST /api/tasks/{task_id}/cancel` and a Cancel button on the live trace card; Local RAG has no cancel (single synchronous retrieval).
+_Avoid_: force kill, abort thread, terminated state
 
 **Research Chat**:
 The NotebookLM-style Q&A panel revealed on the Research Page after a completed Web Research task (needs `curator_output`): a conversation card in the middle with the input bar at the bottom, and a References card on the right listing the task's sources as checkboxes (all checked by default). Each message is sent with the currently checked source ids, which narrow the grounding context server-side; replies cite sources as `[S#]`. Conversation history persists per task in `chat.jsonl` inside the task folder and reloads on mount. Not a separate page and not a LangGraph workflow — see TaskChatService (ADR-0050).

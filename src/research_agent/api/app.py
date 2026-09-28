@@ -418,6 +418,22 @@ def _register_task_routes(app: FastAPI, get_service: Callable[[], CoreService]) 
             status_code = 409 if error.code == "busy" else 404 if error.code == "task_not_found" else 400
             return _error_response(error, status_code=status_code)
 
+    @app.post("/api/tasks/{task_id}/cancel")
+    def cancel_task(task_id: str) -> JSONResponse:
+        """Cooperatively cancel a running task (R-286). The graph stops at the
+        next node boundary; the task persists as `failed` with code
+        `cancelled` and the family lock releases with the run."""
+        _validate_task_id_as_research_error(task_id)
+        runtime = _active_runtimes.get(task_id)
+        requester = getattr(runtime, "request_cancel", None)
+        if requester is None:
+            return _error_response(
+                ResearchError(code="task_not_found", message=f"No running task to cancel: {task_id}"),
+                status_code=404,
+            )
+        requester()
+        return JSONResponse({"task_id": task_id, "status": "cancelling"})
+
     @app.post("/api/tasks/{task_id}/deposit")
     def deposit_task(task_id: str) -> JSONResponse:
         _validate_task_id_as_research_error(task_id)

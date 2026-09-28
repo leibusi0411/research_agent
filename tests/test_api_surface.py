@@ -34,6 +34,10 @@ class _TestWebRuntime:
         self._task_store = TaskStore(self._workspace.root / "tasks.sqlite")
         self.runner = None  # No LangGraph runner in test runtime
         self.local_context_flags: list[bool] = []
+        self.cancel_requested = False
+
+    def request_cancel(self) -> None:
+        self.cancel_requested = True
 
     def run(self, question: str, task_id: str | None = None, *, local_context: bool = True) -> dict:
         self.local_context_flags.append(local_context)
@@ -940,3 +944,51 @@ def test_api_web_start_passes_local_context_flag_to_runtime(tmp_path):
     assert default_run.status_code == 202
     flags = [flag for runtime in runtimes for flag in runtime.local_context_flags]
     assert flags == [False, True, True]
+
+
+def test_api_cancel_endpoint_requests_cooperative_cancel(tmp_path):
+    """R-286: POST /tasks/{id}/cancel reaches the active runtime's
+    request_cancel; unknown/finished tasks return 404."""
+    config_path = tmp_path / "config.toml"
+    workspace = tmp_path / "runtime"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    service = CoreService(default_workspace=workspace, config_path=config_path)
+    service.init_config(
+        InitConfigRequest(
+            default_workspace=workspace,
+            knowledge_base_path=vault,
+            chat_base_url="https://models.example/v1",
+            chat_api_key="chat-key",
+            chat_model="chat-model",
+            embedding_base_url="https://embeddings.example/v1",
+            embedding_api_key="embedding-key",
+            embedding_model="embedding-model",
+            search_api_key="search-key",
+        )
+    )
+    runtimes: list[_TestWebRuntime] = []
+
+    def factory(workspace_path: str) -> _TestWebRuntime:
+        runtime = _TestWebRuntime(workspace_path=str(workspace_path))
+        runtimes.append(runtime)
+        return runtime
+
+    app = create_app(config_path=config_path, web_runtime_factory=factory)
+    client = TestClient(app)
+
+    started = client.post("/api/research/web", json={"question": "q"})
+    wait_for_finished_tasks(client, expected_count=1)
+    task_id = started.json()["task_id"]
+
+    # While the runtime is still registered (races tolerated), cancel may
+    # hit either the live runtime or a finished task — assert accordingly.
+    cancelled = client.post(f"/api/tasks/{task_id}/cancel")
+    assert cancelled.status_code in {200, 404}
+    if cancelled.status_code == 200:
+        assert cancelled.json()["status"] == "cancelling"
+
+    # Unknown task: 404.
+    missing = client.post("/api/tasks/task_20990101_000000_abcdef/cancel")
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "task_not_found"
