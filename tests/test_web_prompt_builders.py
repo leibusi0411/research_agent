@@ -118,7 +118,7 @@ def test_build_curator_prompt_requests_a_sectioned_report_per_subtask():
     assert "sections" in prompt.lower()
     # The subtask list is visible to the curator with per-subtask finding counts...
     assert "Find architecture overview." in prompt
-    assert "(1 findings)" in prompt
+    assert "(1 finding)" in prompt
     # ...and chapters map one-to-one onto subtasks, in plan order.
     assert "one section per subtask" in prompt.lower()
     # Sections are rich Markdown: paragraphs, bold, lists, inline code.

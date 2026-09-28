@@ -305,7 +305,9 @@ def _render_curator_prompt(context: CuratorInput) -> str:
     subtask_lines = []
     for subtask in context.subtasks:
         findings_for_subtask = [f for f in context.findings if f.subtask_id == subtask.subtask_id]
-        subtask_lines.append(f"- [{subtask.subtask_id}] {subtask.question} ({len(findings_for_subtask)} findings)")
+        count = len(findings_for_subtask)
+        plural = "finding" if count == 1 else "findings"
+        subtask_lines.append(f"- [{subtask.subtask_id}] {subtask.question} ({count} {plural})")
     subtasks_text = "\n".join(subtask_lines) if subtask_lines else "(no subtasks)"
 
     return (
