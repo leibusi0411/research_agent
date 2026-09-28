@@ -407,6 +407,14 @@ _Avoid_: chat page, dashboard
 The NotebookLM-style Q&A panel revealed on the Research Page after a completed Web Research task (needs `curator_output`): a conversation card in the middle with the input bar at the bottom, and a References card on the right listing the task's sources as checkboxes (all checked by default). Each message is sent with the currently checked source ids, which narrow the grounding context server-side; replies cite sources as `[S#]`. Conversation history persists per task in `chat.jsonl` inside the task folder and reloads on mount. Not a separate page and not a LangGraph workflow — see TaskChatService (ADR-0050).
 _Avoid_: chat agent, notebook, assistant thread
 
+**Task Chat Index**:
+The per-task retrieval index under `tasks/{task_id}/chat_index/` (FTS5 + Chroma, physically isolated from the global Knowledge Base index) that grounds Research Chat in the **original fetched text** of imported sources (R-285, ADR-0057). Built incrementally and idempotently from `artifacts/source_texts/` when sources are imported (append-only, recorded in `imports.json`); retrieval is hybrid with the imported set as the candidate filter. Chunking is code, embeddings go to the embedding API — no chat-model calls in the index path. Deleted with the task; never written into `indexes/`.
+_Avoid_: global KB index, vault pollution, conversation vector store
+
+**Source Texts**:
+The original fetched page/PDF text persisted per task under `artifacts/source_texts/{sha1(url)[:16]}.txt` by the Executor's `source_text_sink` after successful `web.fetch_extract` / `web.download_pdf` (R-285). Written best-effort — a failing sink degrades to metadata-only grounding, never failing the run. Feeds the Task Chat Index; not part of the Knowledge Base.
+_Avoid_: source snapshot, web_sources copy
+
 **TaskChatService**:
 The single-role, tool-less chat service (`research_agent.core.chat`) that backs Research Chat. It composes a prompt from two context layers — the static grounding block rendered from the task's `result.json` (question, curator summary, findings, sources, narrowed by the selected source ids, findings budget 24k chars) and the rolling history replayed from `chat.jsonl` — then calls the standard `ChatModelClient.complete()` (role `"chat"`, falls back to the global chat model) and appends the turn to `chat.jsonl`. Exposed over HTTP as `POST/GET /api/tasks/{task_id}/chat`. It does not use LangGraph, tools, embeddings, or a vector store (ADR-0050).
 _Avoid_: conversation graph, chat pipeline, dialogue state machine

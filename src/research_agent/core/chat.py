@@ -47,9 +47,16 @@ _MAX_IMPORTED_SOURCES = 50
 class TaskChatService:
     """Answer follow-up questions against one finished task's artifacts."""
 
-    def __init__(self, *, task_dir: Path, chat_model: ChatModelClient | None) -> None:
+    def __init__(
+        self,
+        *,
+        task_dir: Path,
+        chat_model: ChatModelClient | None,
+        embedding_client: Any | None = None,
+    ) -> None:
         self.task_dir = Path(task_dir)
         self.chat_model = chat_model
+        self.embedding_client = embedding_client
 
     # ── history ─────────────────────────────────────────────────────────
 
@@ -83,7 +90,16 @@ class TaskChatService:
                 message=f"Too many imported sources: {len(selected_source_ids)} (max {_MAX_IMPORTED_SOURCES}).",
             )
         result = self._load_result()
-        prompt = self._build_prompt(message, result, selected_source_ids=selected_source_ids)
+        excerpts: list[dict[str, Any]] = []
+        if selected_source_ids and self.embedding_client is not None:
+            # R-285: imported sources' original text is retrieved from the
+            # task-local index (built idempotently, never the global KB).
+            from research_agent.core.chat_index import TaskChatIndex
+
+            index = TaskChatIndex(self.task_dir, self.embedding_client)
+            index.build_imports(result, selected_source_ids)
+            excerpts = index.retrieve(message, selected_source_ids)
+        prompt = self._build_prompt(message, result, selected_source_ids=selected_source_ids, excerpts=excerpts)
         try:
             reply = self.chat_model.complete(prompt)
         except ResearchError:
@@ -131,8 +147,14 @@ class TaskChatService:
         result: dict[str, Any],
         *,
         selected_source_ids: list[str] | None,
+        excerpts: list[dict[str, Any]] | None = None,
     ) -> str:
         context = _render_research_context(result, selected_source_ids=selected_source_ids)
+        if excerpts:
+            blocks = ["[Imported sources — retrieved excerpts]"]
+            for chunk in excerpts:
+                blocks.append(f"[{chunk.get('source_id', '')}] {chunk.get('title', '')}: {chunk.get('text', '')}")
+            context = context + "\n\n" + "\n\n".join(blocks)
         parts = [_SYSTEM_PROMPT, "", context, ""]
         history = self.history()
         if history:

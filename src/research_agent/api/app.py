@@ -109,7 +109,7 @@ def create_app(
         chat_model_factory,
     )
     _register_task_routes(app, get_service)
-    _register_chat_routes(app, get_service, resolved_config_path, chat_model_factory)
+    _register_chat_routes(app, get_service, resolved_config_path, chat_model_factory, embedding_client_factory)
     _register_kb_routes(app, get_service, resolved_config_path, embedding_client_factory)
 
     return app
@@ -439,6 +439,7 @@ def _register_chat_routes(
     get_service: Callable[[], CoreService],
     resolved_config_path: Path,
     chat_model_factory: ChatModelFactory | None,
+    embedding_client_factory: EmbeddingClientFactory | None,
 ) -> None:
     """Register /api/tasks/{task_id}/chat — grounded Q&A over a finished task (ADR-0050)."""
 
@@ -460,7 +461,12 @@ def _register_chat_routes(
             if chat_model_factory is not None
             else OpenAICompatibleChatModel.from_config(build_role_chat_model_config(config, "chat"))
         )
-        return TaskChatService(task_dir=task_dir, chat_model=chat_model)
+        embedding_client = (
+            embedding_client_factory(config)
+            if embedding_client_factory is not None
+            else OpenAICompatibleEmbeddingModel.from_config(config.embedding_model)
+        )
+        return TaskChatService(task_dir=task_dir, chat_model=chat_model, embedding_client=embedding_client)
 
     @app.get("/api/tasks/{task_id}/chat")
     def chat_history(task_id: str) -> JSONResponse:

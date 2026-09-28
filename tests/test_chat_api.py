@@ -21,6 +21,19 @@ from research_agent.core.ids import generate_task_id, utc_now_iso
 from research_agent.core.service import CoreService
 
 
+class _KeyedEmbeddingClient:
+    """Deterministic embeddings: one-hot-ish vectors keyed by a token in the text."""
+
+    def embed(self, texts):
+        vectors = []
+        for text in texts:
+            vec = [0.0] * 8
+            for word in text.lower().split():
+                vec[hash(word) % 8] += 1.0
+            vectors.append(vec)
+        return vectors
+
+
 class _RecordingChatModel:
     """Fake chat model that records every prompt and echoes a fixed reply."""
 
@@ -54,8 +67,61 @@ def _chat_client(tmp_path: Path, chat_model: _RecordingChatModel) -> tuple[TestC
     app = create_app(
         config_path=config_path,
         chat_model_factory=lambda _config: chat_model,
+        embedding_client_factory=lambda _config: _KeyedEmbeddingClient(),
     )
     return TestClient(app), workspace
+
+
+def _write_task_with_source_text(workspace: Path) -> str:
+    """A completed task whose source has original fetched text on disk (R-285)."""
+    task_id = _write_completed_web_task(workspace)
+    task_dir = workspace / "tasks" / task_id
+    texts_dir = task_dir / "artifacts" / "source_texts"
+    texts_dir.mkdir(parents=True, exist_ok=True)
+    import hashlib
+
+    digest = hashlib.sha1("https://example.com/ckpt".encode("utf-8")).hexdigest()[:16]
+    (texts_dir / f"{digest}.txt").write_text(
+        "SqliteSaver writes every superstep to disk. " * 40, encoding="utf-8"
+    )
+    return task_id
+
+
+def test_chat_import_indexes_source_text_and_retrieves_it(tmp_path):
+    """R-285: importing a source with original fetched text builds a
+    task-local index and retrieved excerpts reach the chat prompt."""
+    chat_model = _RecordingChatModel()
+    client, workspace = _chat_client(tmp_path, chat_model)
+    task_id = _write_task_with_source_text(workspace)
+
+    sent = client.post(
+        f"/api/tasks/{task_id}/chat",
+        json={"message": "What does SqliteSaver write?", "selected_sources": ["src_2"]},
+    )
+
+    assert sent.status_code == 200
+    # Task-local index exists in the task dir (isolated from the global KB).
+    index_dir = workspace / "tasks" / task_id / "chat_index"
+    assert (index_dir / "fts.sqlite").exists()
+    assert (index_dir / "chroma").exists()
+    # The retrieved original text (not just metadata) reached the prompt.
+    assert "SqliteSaver writes every superstep to disk." in chat_model.prompts[0]
+    assert "[Imported sources" in chat_model.prompts[0]
+
+
+def test_chat_import_is_incremental_across_calls(tmp_path):
+    """R-285: re-importing the same source does not re-index it; a new source
+    adds its own entry (append-only)."""
+    chat_model = _RecordingChatModel()
+    client, workspace = _chat_client(tmp_path, chat_model)
+    task_id = _write_task_with_source_text(workspace)
+
+    client.post(f"/api/tasks/{task_id}/chat", json={"message": "q1", "selected_sources": ["src_2"]})
+    client.post(f"/api/tasks/{task_id}/chat", json={"message": "q2", "selected_sources": ["src_2"]})
+
+    imports_path = workspace / "tasks" / task_id / "chat_index" / "imports.json"
+    imports = json.loads(imports_path.read_text(encoding="utf-8"))
+    assert list(imports["sources"].keys()) == ["src_2"]  # built once, reused
 
 
 def _write_completed_web_task(workspace: Path) -> str:

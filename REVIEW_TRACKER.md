@@ -188,6 +188,7 @@
 | R-282 | 用户反馈：折叠后的卡片标题不居中 | ✅ 根因：fold head 展开态 padding 为 22px 24px 0（下边距让位给 body），折叠后无 body 补位导致标题偏移；修复：折叠态（aria-expanded=false）改用对称 padding 19px 24px；几何断言上下间距差 <2px、截图确认 |
 | R-283 | 用户需求：问答参考资料改为显式导入——选好后点导入才生效（默认不导入），支持追加导入，上限 50 | ✅ 前端 References 卡重做（勾选=暂存、Import selected 按钮入集合、Imported 徽章+checkbox 禁用、追加分批、N/50 计数、超限按钮禁用提示剩余配额、未导入时 Send 禁用+空态引导）；后端 selected_sources 语义拆分：显式 [] = 无来源接地（仅 summary+sections）、缺省 = 全量（兼容）；>50 报 config_invalid；测试 +6 |
 | R-284 | 用户需求：删除 CLI 模式 | ✅ ADR-0055：删 `research_agent.cli` + `research-agent` 入口点（pyproject scripts）；service 孤儿清理（run_both/_run_family_result/_safe_future_result；run_web_research/run_local_research 保留为测试与脚本复用入口）；config_missing 文案改 Web Settings 引导；测试清理（CLI 子进程用例、TestPrintWebEvent、use_case_shells 的 run_both）；ADR-0011 演进注记；AGENTS/README/USAGE/CONTEXT/CLAUDE 全面同步（结构图/命令/双界面表述/8 词条）；离线全量 257 绿 |
+| R-285 | 用户确认设计：导入来源 = 原文可对话（NotebookLM 式），任务级隔离索引、追加导入触发增量更新，关心是否增加模型调用 | ✅ ADR-0057：① Executor 原文落盘（source_text_sink → artifacts/source_texts/{sha1(url)[:16]}.txt，失败降级）；② TaskChatIndex（core/chat_index.py，tasks/{id}/chat_index/ FTS5+Chroma 物理隔离于 indexes/，imports.json 幂等增量，混合检索 RRF top-6，向量失败降级 FTS5）；③ chat.py 导入集合非空时建索引+检索，原文块注入 [Imported sources — retrieved excerpts]；成本：索引零 chat-model 调用（切块纯代码+embedding API 每来源一次），每问 +1 查询向量；测试 +2（索引隔离落位/增量幂等），executor 套件 34 绿 |
 
 ### 第九轮实现（2026-09-09，Chunking v2 / ADR-0049，R-258）
 

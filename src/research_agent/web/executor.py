@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import contextlib
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -257,10 +258,12 @@ class ResearchExecutor:
         tool_gateway: ToolGateway,
         max_concurrent_subtasks: int = 3,
         on_progress: Callable[[dict[str, Any]], None] | None = None,
+        source_text_sink: Callable[[str, str], None] | None = None,
     ) -> None:
         self.tool_gateway = tool_gateway
         self.max_concurrent_subtasks = max_concurrent_subtasks
         self.on_progress = on_progress
+        self.source_text_sink = source_text_sink
 
     def _build_tool_descriptions(self) -> str:
         """Build a human-readable tool list string from the registry (R-128)."""
@@ -366,7 +369,7 @@ class ResearchExecutor:
         chat_model: ChatModelClient,
     ) -> ExecutorOutput:
         try:
-            return self._execute_with_tools(state, subtask_id, chat_model)
+            return self._execute_with_tools(state, subtask_id, chat_model, source_text_sink=self.source_text_sink)
         except ResearchError as exc:
             return ExecutorOutput(
                 subtask_id=subtask_id,
@@ -399,6 +402,8 @@ class ResearchExecutor:
     def _execute_tool_calls(
         self,
         tool_plan: dict[str, Any],
+        *,
+        source_text_sink: Callable[[str, str], None] | None = None,
     ) -> list[dict[str, Any]]:
         """Execute the planned tool calls and collect results."""
         tool_results: list[dict[str, Any]] = []
@@ -406,6 +411,16 @@ class ResearchExecutor:
             tool_name = tc.get("name", "unknown")
             tool_input = tc.get("arguments", {})
             result = self.tool_gateway.call(WEB_RESEARCH_WORKFLOW, tc)
+            if (
+                source_text_sink is not None
+                and result.status == "ok"
+                and tool_name in {"web.fetch_extract", "web.download_pdf"}
+            ):
+                fetched_url = str(result.data.get("url", ""))
+                fetched_text = str(result.data.get("text", ""))
+                if fetched_url and fetched_text.strip():
+                    with contextlib.suppress(Exception):
+                        source_text_sink(fetched_url, fetched_text)  # noqa: B023 — loop var used synchronously
             tool_results.append({
                 "tool": tool_name,
                 "arguments": tool_input,
@@ -460,6 +475,8 @@ class ResearchExecutor:
         state: WebResearchStateDict,
         subtask_id: str,
         chat_model: ChatModelClient,
+        *,
+        source_text_sink: Callable[[str, str], None] | None = None,
     ) -> ExecutorOutput:
         tool_plan = self._plan_tool_calls(state, subtask_id, chat_model)
 
@@ -477,7 +494,7 @@ class ResearchExecutor:
                 failure_reason=f"Unknown tool(s) in plan: {', '.join(unknown_tools)}",
             )
 
-        tool_results = self._execute_tool_calls(tool_plan)
+        tool_results = self._execute_tool_calls(tool_plan, source_text_sink=source_text_sink)
 
         if not tool_results:
             return ExecutorOutput(

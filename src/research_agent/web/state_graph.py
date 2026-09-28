@@ -199,10 +199,25 @@ class StateGraphRunner:
         self._event_seq: int = 0
         self._saved_source_ids: set[str] = set()
         self._llm_call_count: int = 0
+        # R-285: persist fetched source original text for the task chat index.
+        # The sink must never kill a research run — same degrade-to-nothing
+        # contract as the executor output log.
+        def _sink_source_text(url: str, text: str) -> None:
+            import hashlib
+
+            try:
+                texts_dir = self.workspace.task_dir(self._task_id) / "artifacts" / "source_texts"
+                texts_dir.mkdir(parents=True, exist_ok=True)
+                digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
+                (texts_dir / f"{digest}.txt").write_text(text, encoding="utf-8")
+            except Exception:
+                logger.warning("Source text persist failed for %s; continuing", url, exc_info=True)
+
         self.executor = ResearchExecutor(
             tool_gateway=config.tool_gateway,
             max_concurrent_subtasks=config.max_concurrent_subtasks,
             on_progress=lambda item: self._emit_progress_item(item),
+            source_text_sink=_sink_source_text,
         )
 
     # ── public API ──────────────────────────────────────────────────────
