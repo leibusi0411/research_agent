@@ -4,6 +4,7 @@ import { ChevronDown } from "lucide-react";
 import { api, ApiError, type ProgressEvent, type ResearchResult } from "../api";
 import { groupEvents, ProcessView } from "./ProcessView";
 import { ConnectionBadge } from "./ConnectionBadge";
+import { FlowFeed } from "./FlowFeed";
 import { PhaseIndicator } from "./PhaseIndicator";
 
 /**
@@ -193,7 +194,11 @@ export function TraceCard({
       }
     >
       {phase && <PhaseIndicator currentPhase={phase} mode="web" running={running} />}
-      <ProcessView groupedEvents={groupedEvents} newestSeq={newestSeq} />
+      {running ? (
+        <FlowFeed events={events} running={running} />
+      ) : (
+        <ProcessView groupedEvents={groupedEvents} newestSeq={newestSeq} />
+      )}
     </FoldCard>
   );
 }

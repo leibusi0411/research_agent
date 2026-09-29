@@ -280,7 +280,11 @@ def _plan_node(state: WebResearchStateDict, ctx: GraphContext) -> dict[str, Any]
         for i, draft in enumerate(planner_output.subtasks)
     ]
     ctx._emit(task_id, "web_planning", "completed",
-              f"Plan created with {len(new_subtasks)} subtasks.")
+              f"Plan created with {len(new_subtasks)} subtasks.",
+              items=[
+                  {"kind": "subtask", "subtask_id": s.subtask_id, "question": s.question}
+                  for s in new_subtasks
+              ])
     return {
         "research_title": planner_output.research_title,
         "subtasks": new_subtasks,

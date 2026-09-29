@@ -2232,3 +2232,125 @@ label span {
   opacity: 0.5;
   cursor: default;
 }
+
+/* ---------- Flowing activity feed (R-287) ---------- */
+
+.flow-feed {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  height: 168px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: #141517;
+  scrollbar-width: thin;
+}
+
+.feed-row {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.feed-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  cursor: default;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.4;
+  animation: feed-in 240ms var(--ease) both;
+}
+
+.feed-row.clickable .feed-chip {
+  cursor: pointer;
+}
+
+.feed-row.clickable .feed-chip:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.feed-row.open .feed-chip {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+@keyframes feed-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.feed-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tone-subtask { color: var(--accent-strong); }
+.tone-tool { color: var(--warn); }
+.tone-finding { color: var(--ok); }
+.tone-source { color: var(--accent); }
+.tone-phase { color: var(--text-2); }
+
+.feed-link {
+  flex: none;
+  font-size: 10px;
+  color: var(--accent);
+  text-decoration: none;
+  padding: 1px 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+}
+
+.feed-link:hover {
+  border-color: var(--accent);
+}
+
+.feed-detail {
+  margin: 2px 0 4px 26px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--accent);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.feed-empty {
+  margin: auto;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.feed-pulse {
+  flex: none;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: trace-sweep 1.8s ease-in-out infinite;
+}
