@@ -168,16 +168,16 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Web Report" })).toBeVisible();
 
   // Knowledge Deposit: deposit the finished report, then rebuild the index.
-  await page.getByRole("button", { name: "Deposit to Knowledge Base" }).click();
-  await expect(page.getByText("Deposited to Knowledge Base.")).toBeVisible();
-  await expect(page.getByText("D:/vault/web-research/report.md")).toBeVisible();
-  await page.getByRole("button", { name: "Rebuild Index" }).click();
-  await expect(page.getByText(/Index rebuilt/)).toBeVisible();
+  // Inline deposit in the report card header (R-288).
+  await page.getByRole("button", { name: "Deposit", exact: true }).click();
+  await expect(page.getByText("✓ Deposited")).toBeVisible();
+  await page.getByRole("button", { name: "Rebuild", exact: true }).click();
+  await expect(page.getByText("✓ Indexed")).toBeVisible();
 
   await page.getByRole("button", { name: new RegExp(localTaskId) }).click();
   await expect(page.getByRole("heading", { name: "Local Result" })).toBeVisible();
   await expect(page.getByText("local_rag")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Deposit to Knowledge Base" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Deposit", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Delete task web question" }).click();
   await expect(page.getByText("web question")).toHaveCount(0);
 

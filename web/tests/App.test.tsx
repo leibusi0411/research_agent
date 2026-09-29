@@ -357,19 +357,18 @@ describe("App", () => {
     await userEvent.click(await screen.findByText("web question"));
     expect(await screen.findByText("Web Report")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Deposit to Knowledge Base" }));
+    await userEvent.click(screen.getByRole("button", { name: "Deposit", exact: true }));
 
-    expect(await screen.findByText("Deposited to Knowledge Base.")).toBeInTheDocument();
-    expect(screen.getByText("D:/vault/web-research/report.md")).toBeInTheDocument();
+    expect(await screen.findByText("✓ Deposited")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Rebuild Index" }));
+    await userEvent.click(screen.getByRole("button", { name: "Rebuild", exact: true }));
 
-    expect(await screen.findByText(/Index rebuilt/)).toBeInTheDocument();
+    expect(await screen.findByText("✓ Indexed")).toBeInTheDocument();
 
     // Local results have no deposit affordance.
     await userEvent.click(screen.getByText("local question"));
     expect(await screen.findByText("Local Result")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Deposit to Knowledge Base" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Deposit", exact: true })).not.toBeInTheDocument();
   });
 
   it("shows already-deposited state when the task was deposited before", async () => {
@@ -381,9 +380,9 @@ describe("App", () => {
     await userEvent.click(await screen.findByText("web question"));
     expect(await screen.findByText("Web Report")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Deposit to Knowledge Base" }));
+    await userEvent.click(screen.getByRole("button", { name: "Deposit", exact: true }));
 
-    expect(await screen.findByText("Already deposited to Knowledge Base.")).toBeInTheDocument();
+    expect(await screen.findByText("✓ Deposited")).toBeInTheDocument();
   });
 
   it("resets the deposit panel when switching between two web tasks", async () => {
@@ -395,14 +394,14 @@ describe("App", () => {
     await userEvent.click(await screen.findByText("web question"));
     expect(await screen.findByText("Web summary")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Deposit to Knowledge Base" }));
-    expect(await screen.findByText("Deposited to Knowledge Base.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Deposit", exact: true }));
+    expect(await screen.findByText("✓ Deposited")).toBeInTheDocument();
 
     await userEvent.click(screen.getByText("second web question"));
 
     expect(await screen.findByText("Second summary")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Deposit to Knowledge Base" })).toBeInTheDocument();
-    expect(screen.queryByText("Deposited to Knowledge Base.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Deposit", exact: true })).toBeInTheDocument();
+    expect(screen.queryByText("✓ Deposited")).not.toBeInTheDocument();
   });
 
   it("runs local RAG from the Knowledge Base page with trace and result", async () => {

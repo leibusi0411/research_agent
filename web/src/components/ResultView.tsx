@@ -17,12 +17,14 @@ function FoldCard({
   className,
   headClassName,
   head,
+  headExtra,
   children,
   defaultOpen = true,
 }: {
   className: string;
   headClassName?: string;
   head: ReactNode;
+  headExtra?: ReactNode;
   children: ReactNode;
   defaultOpen?: boolean;
 }) {
@@ -36,6 +38,11 @@ function FoldCard({
         onClick={() => setOpen((current) => !current)}
       >
         {head}
+        {headExtra && (
+          <span className="card-fold-extra" onClick={(event) => event.stopPropagation()}>
+            {headExtra}
+          </span>
+        )}
         <ChevronDown size={16} aria-hidden="true" className={open ? "card-fold-chev" : "card-fold-chev closed"} />
       </button>
       {open && <div className="card-fold-body">{children}</div>}
@@ -256,6 +263,11 @@ export function ResultCards({ result, events }: { result: ResearchResult; events
             Web Report
           </h2>
         }
+        headExtra={
+          result.status === "completed" && result.report_path ? (
+            <DepositPanel key={result.task_id} taskId={result.task_id} inline />
+          ) : undefined
+        }
       >
         <p className="report-question">{result.question}</p>
         <StatusLine result={result} />
@@ -269,18 +281,9 @@ export function ResultCards({ result, events }: { result: ResearchResult; events
                 <ReportRichText text={section.text} />
               </div>
             ))}
-            <h3>Findings</h3>
-            <ul>
-              {result.curator_output.findings.map((finding) => (
-                <li key={finding.finding_id}>{finding.text}</li>
-              ))}
-            </ul>
           </>
         )}
         {result.report_path && <code>{result.report_path}</code>}
-        {result.status === "completed" && result.report_path && (
-          <DepositPanel key={result.task_id} taskId={result.task_id} />
-        )}
       </FoldCard>
       {notePaths.length > 0 && (
         <FoldCard
@@ -337,7 +340,7 @@ type RebuildPhase = "idle" | "rebuilding" | "rebuilt" | "failed";
 
 // Knowledge Deposit: explicitly save the finished Web Report File into the
 // Markdown Vault, then offer to rebuild the index so the note is searchable.
-export function DepositPanel({ taskId }: { taskId: string }) {
+export function DepositPanel({ taskId, inline = false }: { taskId: string; inline?: boolean }) {
   const [phase, setPhase] = useState<DepositPhase>("idle");
   const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -374,6 +377,39 @@ export function DepositPanel({ taskId }: { taskId: string }) {
     }
   }
 
+  if (inline) {
+    // Compact header form (R-288): short label, deposited state as a quiet
+    // check chip; errors surface as the button title to keep the bar slim.
+    return (
+      <div className={`deposit-inline ${phase}`}>
+        {phase === "deposited" ? (
+          <span className="deposit-done">✓ Deposited</span>
+        ) : (
+          <button
+            type="button"
+            className="deposit-inline-btn"
+            onClick={deposit}
+            disabled={phase === "depositing"}
+            title={error ?? vaultPath ?? undefined}
+          >
+            {phase === "depositing" ? "Depositing…" : "Deposit"}
+          </button>
+        )}
+        {phase === "deposited" && rebuild !== "rebuilt" && (
+          <button
+            type="button"
+            className="deposit-inline-btn rebuild"
+            onClick={rebuildIndex}
+            disabled={rebuild === "rebuilding"}
+            title={rebuildError ?? undefined}
+          >
+            {rebuild === "rebuilding" ? "Rebuilding…" : "Rebuild"}
+          </button>
+        )}
+        {rebuild === "rebuilt" && <span className="deposit-done">✓ Indexed</span>}
+      </div>
+    );
+  }
   if (phase === "deposited") {
     return (
       <div className="deposit-panel">

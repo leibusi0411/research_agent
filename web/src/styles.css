@@ -2354,3 +2354,60 @@ label span {
   background: linear-gradient(90deg, transparent, var(--accent), transparent);
   animation: trace-sweep 1.8s ease-in-out infinite;
 }
+
+/* ---------- Inline deposit (R-288) ---------- */
+
+.card-fold-extra {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex: none;
+}
+
+.deposit-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.deposit-inline-btn {
+  padding: 5px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(168, 199, 250, 0.32);
+  background: var(--accent-wash);
+  color: var(--accent-strong);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--t-micro), color var(--t-micro);
+}
+
+.deposit-inline-btn:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.deposit-inline-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.deposit-inline-btn.rebuild {
+  background: var(--surface-2);
+  border-color: var(--line);
+  color: var(--text-2);
+}
+
+.deposit-inline-btn.rebuild:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.deposit-done {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ok);
+  white-space: nowrap;
+}
