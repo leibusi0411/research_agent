@@ -215,6 +215,11 @@ describe("ResearchPage chat entry", () => {
   });
 });
 
+async function expandReportCard() {
+  const head = document.querySelector(".report-card > .card-fold-head") as HTMLElement;
+  await userEvent.click(head);
+}
+
 describe("ResultCards sectioned report", () => {
   const sectionedResult: ResearchResult = {
     task_id: "task_20260624_000009_dddddd",
@@ -233,19 +238,20 @@ describe("ResultCards sectioned report", () => {
     }
   };
 
-  it("renders report chapters when sections exist (R-277)", () => {
+  it("renders report chapters when sections exist (R-277)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ messages: [] }) }))
     );
     render(<ResultCards result={sectionedResult} events={[]} />);
+    await expandReportCard();
     expect(screen.getByRole("heading", { name: "Overview" })).toBeInTheDocument();
     expect(screen.getByText("RAG retrieves then generates.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Indexing" })).toBeInTheDocument();
     expect(screen.getByText("Chunking quality drives recall.")).toBeInTheDocument();
   });
 
-  it("renders rich Markdown section bodies NotebookLM-style (R-279)", () => {
+  it("renders rich Markdown section bodies NotebookLM-style (R-279)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ messages: [] }) }))
@@ -263,6 +269,7 @@ describe("ResultCards sectioned report", () => {
       },
     };
     render(<ResultCards result={rich} events={[]} />);
+    await expandReportCard();
 
     // Paragraphs split on blank lines; bold renders as emphasis (text nodes
     // around the <strong>), not literal asterisks.
@@ -286,28 +293,33 @@ describe("ResultCards sectioned report", () => {
     );
     render(<ResultCards result={sectionedResult} events={[]} />);
 
+    // R-288: finished cards start collapsed — expand via the head button.
     const head = screen.getByRole("button", { name: /web report/i });
+    expect(head).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(head);
     expect(head).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Lead-in paragraph.")).toBeInTheDocument();
 
     await userEvent.click(head);
     expect(head).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Lead-in paragraph.")).not.toBeInTheDocument();
-    // Sources card stays open — cards fold independently.
-    expect(screen.getByRole("link", { name: "Source" })).toBeInTheDocument();
+    // Sources card folds independently — still collapsed, head intact.
+    const sourcesHead = document.querySelector(".sources-card > .card-fold-head") as HTMLElement;
+    expect(sourcesHead).toHaveAttribute("aria-expanded", "false");
 
     await userEvent.click(head);
     expect(head).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Lead-in paragraph.")).toBeInTheDocument();
   });
 
-  it("keeps the legacy summary+findings shape when sections are absent", () => {
+  it("keeps the legacy summary+findings shape when sections are absent", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ messages: [] }) }))
     );
     const legacy = { ...webResult }; // webResult has no sections
     render(<ResultCards result={legacy} events={[]} />);
+    await expandReportCard();
     expect(screen.getByText("Web summary")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Overview" })).not.toBeInTheDocument();
   });

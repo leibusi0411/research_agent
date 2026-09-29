@@ -104,6 +104,13 @@ describe("PhaseIndicator", () => {
   });
 });
 
+async function expandCard(cardClass: string) {
+  const head = document.querySelector(`${cardClass} > .card-fold-head`) as HTMLElement;
+  if (head && head.getAttribute("aria-expanded") === "false") {
+    await userEvent.click(head);
+  }
+}
+
 describe("App", () => {
   it("lets unconfigured users use the Research page; submitting reports the config error", async () => {
     stubEventSource();
@@ -232,8 +239,11 @@ describe("App", () => {
     await screen.findByRole("heading", { name: "Inkwell" });
     await userEvent.type(screen.getByRole("textbox", { name: "Research question" }), "web question");
     await userEvent.click(screen.getByRole("button", { name: "Research" }));
+    await expandCard(".trace-card");
     expect(await screen.findByText("web_planning")).toBeInTheDocument();
+    await expandCard(".report-card");
     await waitFor(() => expect(screen.getByText("Web summary")).toBeInTheDocument());
+    await expandCard(".trace-card");
     expect(screen.getByText("web_planning")).toBeInTheDocument();
     // After completion the animated underline marker is gone.
     expect(screen.getByText("curation")).not.toHaveClass("running");
@@ -251,6 +261,7 @@ describe("App", () => {
     await userEvent.click(toggle);
     await userEvent.type(screen.getByRole("textbox", { name: "Research question" }), "web question");
     await userEvent.click(screen.getByRole("button", { name: "Research" }));
+    await expandCard(".report-card");
     await waitFor(() => expect(screen.getByText("Web summary")).toBeInTheDocument());
 
     const fetchMock = fetch as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit | undefined]> } };
@@ -276,7 +287,9 @@ describe("App", () => {
     await userEvent.type(screen.getByRole("textbox", { name: "Research question" }), "web question");
     await userEvent.click(screen.getByRole("button", { name: "Research" }));
 
+    await expandCard(".report-card");
     await waitFor(() => expect(screen.getByText("Web summary")).toBeInTheDocument());
+    await expandCard(".trace-card");
     expect(screen.getByText("curation")).toHaveClass("active");
     expect(screen.getByText("curation")).not.toHaveClass("running");
     expect(screen.getByText("supervision")).not.toHaveClass("active");
@@ -314,6 +327,7 @@ describe("App", () => {
     await userEvent.click(await screen.findByText("web question"));
 
     expect(await screen.findByText("Web Report")).toBeInTheDocument();
+    await expandCard(".report-card");
     expect(screen.getByText("Web summary")).toBeInTheDocument();
 
     await userEvent.click(screen.getByText("local question"));
@@ -328,6 +342,7 @@ describe("App", () => {
 
     // No click: the running task's trace appears, then its result arrives.
     expect(await screen.findByText("Research Trace")).toBeInTheDocument();
+    await expandCard(".report-card");
     await waitFor(() => expect(screen.getByText("Web summary")).toBeInTheDocument());
     expect(screen.getByRole("textbox", { name: "Research question" })).toHaveValue("web question");
   });
@@ -392,6 +407,7 @@ describe("App", () => {
     await screen.findByRole("heading", { name: "Inkwell" });
     await userEvent.click(screen.getByRole("link", { name: "Tasks" }));
     await userEvent.click(await screen.findByText("web question"));
+    await expandCard(".report-card");
     expect(await screen.findByText("Web summary")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Deposit", exact: true }));
@@ -399,6 +415,7 @@ describe("App", () => {
 
     await userEvent.click(screen.getByText("second web question"));
 
+    await expandCard(".report-card");
     expect(await screen.findByText("Second summary")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Deposit", exact: true })).toBeInTheDocument();
     expect(screen.queryByText("✓ Deposited")).not.toBeInTheDocument();
@@ -476,6 +493,7 @@ describe("App", () => {
     // Start a research run — creates one EventSource
     await userEvent.type(screen.getByRole("textbox", { name: "Research question" }), "q1");
     await userEvent.click(screen.getByRole("button", { name: "Research" }));
+    await expandCard(".report-card");
     await waitFor(() => expect(screen.getByText("Web summary")).toBeInTheDocument());
 
     const firstEsCount = _esInstances.length;
@@ -507,6 +525,7 @@ describe("App", () => {
     await userEvent.type(screen.getByRole("textbox", { name: "Research question" }), "web question");
     await userEvent.click(screen.getByRole("button", { name: "Research" }));
 
+    await expandCard(".report-card");
     expect(await screen.findByText(/file_write_error/)).toBeInTheDocument();
     expect(screen.getByText(/Failed to write Web Report File/)).toBeInTheDocument();
   });

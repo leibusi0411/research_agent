@@ -183,7 +183,11 @@ export function TraceCard({
   const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
   return (
     <FoldCard
+      // key forces a remount on the running→done transition so the card
+      // re-reads defaultOpen and collapses with the rest (R-288).
+      key={running ? "trace-running" : "trace-done"}
       className={running ? "card trace-card running" : "card trace-card"}
+      defaultOpen={running}
       headClassName="trace-head"
       head={
         <>
@@ -257,6 +261,7 @@ export function ResultCards({ result, events }: { result: ResearchResult; events
     <div className="result-cards">
       <FoldCard
         className="card report-card"
+        defaultOpen={false}
         head={
           <h2>
             <span className="lane-glyph lane-web" aria-hidden="true" />
@@ -288,6 +293,7 @@ export function ResultCards({ result, events }: { result: ResearchResult; events
       {notePaths.length > 0 && (
         <FoldCard
           className="card notes-card"
+          defaultOpen={false}
           head={
             <h2>
               <span className="lane-glyph lane-local" aria-hidden="true" />
@@ -308,6 +314,7 @@ export function ResultCards({ result, events }: { result: ResearchResult; events
       {sources.length > 0 && (
         <FoldCard
           className="card sources-card"
+          defaultOpen={false}
           head={<h2>Sources</h2>}
         >
           <ul>

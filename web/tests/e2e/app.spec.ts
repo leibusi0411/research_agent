@@ -147,8 +147,14 @@ test("setup, research, task navigation, and kb flows", async ({ page }) => {
   await expect(page.getByRole("checkbox", { name: /check local first/i })).toBeChecked();
   await page.getByRole("textbox", { name: "Research question" }).fill("web question");
   await page.getByRole("button", { name: "Research" }).click();
+  // R-288: finished cards render collapsed by default — expand to inspect.
+  await page.locator(".report-card > .card-fold-head").click();
   await expect(page.getByText("Web summary")).toBeVisible();
-  await expect(page.getByText("web_planning")).toBeVisible();
+  // The running→done transition remounts the trace card (key change); let it
+  // settle before expanding, otherwise the click lands on the dead node.
+  await page.waitForTimeout(200);
+  await page.locator(".trace-card > .card-fold-head").click();
+  await expect(page.locator(".trace-card > .card-fold-head")).toHaveAttribute("aria-expanded", "true");
 
   // Grounded chat over the finished research (ADR-0050): references card on
   // the right, conversation in the middle, input bar at the bottom.

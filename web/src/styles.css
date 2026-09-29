@@ -2411,3 +2411,23 @@ label span {
   color: var(--ok);
   white-space: nowrap;
 }
+
+/* When a head extra (e.g. Deposit) owns the auto margin, the chevron must
+   not claim its own share — otherwise the extra floats to the middle. */
+.card-fold-extra + .card-fold-chev {
+  margin-left: 0;
+}
+
+/* Collapsed bars share one height regardless of head content. */
+.card-fold-head[aria-expanded="false"] {
+  min-height: 52px;
+  align-items: center;
+}
+.trace-card > .card-fold-head[aria-expanded="false"] {
+  padding: 0 24px;
+}
+.report-card > .card-fold-head[aria-expanded="false"],
+.notes-card > .card-fold-head[aria-expanded="false"],
+.sources-card > .card-fold-head[aria-expanded="false"] {
+  padding: 0 24px;
+}
