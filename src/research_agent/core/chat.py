@@ -16,6 +16,7 @@ the system already uses (``ChatModelClient`` protocol).
 from __future__ import annotations
 
 import json
+import re
 import logging
 from pathlib import Path
 from typing import Any
@@ -30,11 +31,20 @@ logger = logging.getLogger(__name__)
 _HISTORY_FILE = "chat.jsonl"
 
 _SYSTEM_PROMPT = (
-    "You are a research assistant answering questions about a completed research task. "
-    "Answer ONLY from the research context below (question, summary, findings, sources). "
-    "When you rely on a source, cite it by its [S1]-style number. "
-    "If the research context does not answer the question, say so plainly instead of guessing."
+    "You are a research assistant discussing a completed research task.\n"
+    "- Ground your answer in the research context below (question, summary, findings, sources, "
+    "imported excerpts) and cite sources by their [S1]-style numbers where you rely on them.\n"
+    "- You may also think for yourself and combine your own knowledge when the context is "
+    "incomplete — but say which parts come from the research and which are your own knowledge.\n"
+    "- If the imported excerpts are missing evidence you need, you may request more: reply with "
+    "a single first line `SEARCH: <query>` (at most two such requests) and the system will "
+    "retrieve further excerpts from the imported sources.\n"
+    "- Never invent research findings or sources; if neither the context nor your knowledge "
+    "suffices, say so plainly."
 )
+
+# 1 initial answer + up to 2 SEARCH-driven requery rounds (R-292).
+_MAX_CHAT_ROUNDS = 3
 
 # Hard caps so a huge report cannot blow the chat context window. Findings
 # and report sections are each capped separately (additive in the worst
@@ -92,19 +102,43 @@ class TaskChatService:
             )
         result = self._load_result()
         excerpts: list[dict[str, Any]] = []
+        index = None
+        seen_chunks: set[str] = set()
         if selected_source_ids and self.embedding_client is not None:
             # R-285: imported sources' original text is retrieved from the
             # task-local index (built idempotently, never the global KB).
             index = TaskChatIndex(self.task_dir, self.embedding_client)
             index.build_imports(result, selected_source_ids)
             excerpts = index.retrieve(message, selected_source_ids)
-        prompt = self._build_prompt(message, result, selected_source_ids=selected_source_ids, excerpts=excerpts)
-        try:
-            reply = self.chat_model.complete(prompt)
-        except ResearchError:
-            raise
-        except Exception as exc:
-            raise ResearchError(code="llm_call_failed", message=f"chat LLM call failed: {exc}") from exc
+            seen_chunks = {chunk["chunk_id"] for chunk in excerpts}
+        # R-292: grounded-but-combining loop — the model may request more
+        # evidence with a `SEARCH: <query>` first line (up to two requests).
+        reply = ""
+        for round_num in range(_MAX_CHAT_ROUNDS):
+            prompt = self._build_prompt(
+                message, result, selected_source_ids=selected_source_ids, excerpts=excerpts
+            )
+            try:
+                reply = self.chat_model.complete(prompt)
+            except ResearchError:
+                raise
+            except Exception as exc:
+                raise ResearchError(code="llm_call_failed", message=f"chat LLM call failed: {exc}") from exc
+            query = _parse_search_request(reply)
+            if query is None or index is None or round_num == _MAX_CHAT_ROUNDS - 1:
+                break
+            fresh = [
+                chunk
+                for chunk in index.retrieve(query, selected_source_ids)
+                if chunk["chunk_id"] not in seen_chunks
+            ]
+            if not fresh:
+                excerpts = excerpts + [
+                    {"chunk_id": "__no_more__", "source_id": "", "title": "No further excerpts", "text": "(No additional excerpts found for that query — answer with what you have.)"}
+                ]
+                continue
+            excerpts = excerpts + fresh
+            seen_chunks.update(chunk["chunk_id"] for chunk in fresh)
         now = utc_now_iso()
         self._append({"role": "user", "content": message, "created_at": now})
         self._append({"role": "assistant", "content": reply, "created_at": now})
@@ -164,6 +198,15 @@ class TaskChatService:
             parts.append("")
         parts.append(f"[New question]\n{message}")
         return "\n".join(parts)
+
+
+def _parse_search_request(reply: str) -> str | None:
+    """Return the query when the model's reply opens with `SEARCH: <query>`."""
+    if not reply.strip():
+        return None
+    first_line = reply.lstrip().splitlines()[0].strip()
+    match = re.match(r"(?i)^SEARCH:\s*(.+)$", first_line)
+    return match.group(1).strip() if match else None
 
 
 def _render_research_context(

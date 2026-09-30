@@ -35,6 +35,18 @@ class _KeyedEmbeddingClient:
         return vectors
 
 
+class _ScriptedChatModel:
+    """Returns queued replies in order; records every prompt."""
+
+    def __init__(self, replies: list[str]) -> None:
+        self.replies = list(replies)
+        self.prompts: list[str] = []
+
+    def complete(self, prompt: str, *, json_mode: bool = False) -> str:
+        self.prompts.append(prompt)
+        return self.replies.pop(0)
+
+
 class _RecordingChatModel:
     """Fake chat model that records every prompt and echoes a fixed reply."""
 
@@ -317,3 +329,63 @@ def test_chat_rejects_unfinished_tasks(tmp_path):
     # The model was never called and nothing was persisted.
     assert chat_model.prompts == []
     assert not (task_dir / "chat.jsonl").exists()
+
+
+def test_chat_system_prompt_allows_own_knowledge_and_search(tmp_path):
+    """R-292: grounded-but-combining — own knowledge allowed (separated),
+    SEARCH: requery protocol advertised."""
+    chat_model = _RecordingChatModel()
+    client, workspace = _chat_client(tmp_path, chat_model)
+    task_id = _write_completed_web_task(workspace)
+
+    client.post(f"/api/tasks/{task_id}/chat", json={"message": "q"})
+
+    prompt = chat_model.prompts[0]
+    assert "own knowledge" in prompt
+    assert "SEARCH:" in prompt
+
+
+def test_chat_search_loop_retrieves_more_excerpts(tmp_path):
+    """R-292: the model may request more evidence via SEARCH: — the next
+    prompt carries fresh excerpts and the final reply is persisted."""
+    chat_model = _ScriptedChatModel([
+        "SEARCH: checkpoint disk persistence",
+        "SqliteSaver writes every superstep to disk. [S1]",
+    ])
+    client, workspace = _chat_client(tmp_path, chat_model)
+    task_id = _write_task_with_source_text(workspace)
+
+    sent = client.post(
+        f"/api/tasks/{task_id}/chat",
+        json={"message": "How are checkpoints persisted?", "selected_sources": ["src_2"]},
+    )
+
+    assert sent.status_code == 200
+    assert sent.json()["reply"] == "SqliteSaver writes every superstep to disk. [S1]"
+    assert len(chat_model.prompts) == 2
+    # The requery round's prompt carries the retrieved original text.
+    assert "SqliteSaver writes every superstep" in chat_model.prompts[1]
+    # Intermediate SEARCH round is not persisted — only the final reply is.
+    history = client.get(f"/api/tasks/{task_id}/chat").json()["messages"]
+    assert [m["content"] for m in history][-1] == "SqliteSaver writes every superstep to disk. [S1]"
+
+
+def test_chat_search_loop_caps_at_two_requests(tmp_path):
+    """R-292: a model that keeps asking SEARCH forever gets cut off at the
+    third call and must answer with what it has."""
+    chat_model = _ScriptedChatModel([
+        "SEARCH: one",
+        "SEARCH: two",
+        "SEARCH: three",
+        "should never be reached",
+    ])
+    client, workspace = _chat_client(tmp_path, chat_model)
+    task_id = _write_task_with_source_text(workspace)
+
+    sent = client.post(
+        f"/api/tasks/{task_id}/chat", json={"message": "q", "selected_sources": ["src_2"]}
+    )
+
+    assert sent.status_code == 200
+    assert sent.json()["reply"].startswith("SEARCH: three")  # last model output returned as-is
+    assert len(chat_model.prompts) == 3  # 1 initial + 2 requery rounds
