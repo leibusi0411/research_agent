@@ -57,6 +57,23 @@
 
 ## 演进注记
 
+- 2026-10-08（R-294，终态）：对话取证从首行文本协议切换为**原生
+  function calling**——providers 新增 `ChatTurn`（tool_calls 或纯文本的
+  联合返回，**无 JSON fallback**：自然语言是对话的正常结局而非错误
+  路径）与 `OpenAICompatibleChatModel.complete_with_tools(prompt, tools)`
+  （多工具、finish_reason=length 显式截断报错）。chat.py 注册四个
+  证据工具（search_sources/web_search/read_page/local_search，动作
+  语义进 tool description，系统提示词只留预算与引用规则）；
+  `_parse_action` 首行协议退役。消除的弱点：协议格式容错（模型把
+  动作行写歪会泄漏给用户）。保留：预算守门（每类 ≤2/每问 ≤4/轮 ≤5）、
+  chat_evidence.jsonl 隔离落盘、引用芯片分色。Local RAG 的总结/改写
+  仍走 `complete`（无工具场景）。不支持 complete_with_tools 的模型
+  报 `config_missing`（chat 面能力要求）。
+
+- （历史注记见 git 历史：R-292 结合式指令 / R-293 四动作协议）
+
+## 演进注记
+
 - 2026-10-08（R-293）：对话取证从单一 SEARCH 扩展为**四动作协议**——
   `SEARCH`（导入原文内再挖）/ `WEB`（新网络检索，走与调研执行器同一个
   ToolGateway，继承全部工程边界）/ `READ`（读取单个网页或 PDF 全文，

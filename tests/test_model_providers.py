@@ -265,6 +265,67 @@ class RecordingEmbeddingClient:
         return [[0.3, 0.4, 0.5] for _text in texts]
 
 
+def test_complete_with_tools_returns_tool_call_turn():
+    """R-294: conversational tool calling — tool_calls channel parses into
+    ChatTurn.tool_calls (arguments JSON string coerced to dict)."""
+    from research_agent.core.providers import ChatTurn
+
+    client = OpenAICompatibleChatModel.from_config(
+        ModelConfig(provider="openai_compatible", base_url="https://api.example/v1", api_key="k", model="m"),
+        post_json=lambda _url, _headers, _payload: {
+            "choices": [{
+                "message": {
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "web_search", "arguments": "{\"query\": \"a2a protocol\"}"},
+                    }],
+                    "content": None,
+                },
+                "finish_reason": "tool_calls",
+            }]
+        },
+    )
+    turn = client.complete_with_tools(prompt="q", tools=[
+        {"type": "function", "function": {"name": "web_search", "parameters": {"type": "object"}}}
+    ])
+    assert isinstance(turn, ChatTurn)
+    assert turn.text == ""
+    assert turn.tool_calls == [("web_search", {"query": "a2a protocol"})]
+
+
+def test_complete_with_tools_returns_plain_text_turn_without_json_fallback():
+    """The whole point of the chat surface: plain-language answers come back
+    as text verbatim — never routed through JSON parsing."""
+    from research_agent.core.providers import ChatTurn
+
+    client = OpenAICompatibleChatModel.from_config(
+        ModelConfig(provider="openai_compatible", base_url="https://api.example/v1", api_key="k", model="m"),
+        post_json=lambda _url, _headers, _payload: {
+            "choices": [{
+                "message": {"content": "Google proposed the protocol in April 2025. [S1]"},
+                "finish_reason": "stop",
+            }]
+        },
+    )
+    turn = client.complete_with_tools(prompt="q", tools=[
+        {"type": "function", "function": {"name": "web_search", "parameters": {"type": "object"}}}
+    ])
+    assert turn.tool_calls == []
+    assert turn.text == "Google proposed the protocol in April 2025. [S1]"
+
+
+def test_complete_with_tools_reports_truncation():
+    client = OpenAICompatibleChatModel.from_config(
+        ModelConfig(provider="openai_compatible", base_url="https://api.example/v1", api_key="k", model="m"),
+        post_json=lambda _url, _headers, _payload: {
+            "choices": [{"message": {"content": "partial"}, "finish_reason": "length"}]
+        },
+    )
+    with pytest.raises(ValueError, match="finish_reason=length"):
+        client.complete_with_tools(prompt="q", tools=[])
+
+
 def test_complete_tool_reports_truncation_instead_of_json_error():
     """Reasoning models share the max_tokens budget between reasoning and
     content; a truncated answer must surface finish_reason=length instead of

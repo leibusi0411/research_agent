@@ -37,15 +37,66 @@ _SYSTEM_PROMPT = (
     "imported excerpts) and cite sources by their [S1]-style numbers where you rely on them.\n"
     "- You may also think for yourself and combine your own knowledge when the context is "
     "incomplete — but say which parts come from the research and which are your own knowledge.\n"
-    "- If you need more evidence, start your reply with ONE action line (each kind at most "
-    "twice per question, at most four actions total) and the system will run it and continue:\n"
-    "  `SEARCH: <query>` — dig further in the imported sources' original text;\n"
-    "  `WEB: <query>` — new web search (fresh evidence, cite as [W#]);\n"
-    "  `READ: <url>` — fetch one web page / PDF in full (cite as [R#]);\n"
-    "  `LOCAL: <query>` — search the user's local knowledge vault (cite as [L#]).\n"
+    "- Evidence tools are available when you need more: call one per turn (each at most twice "
+    "per question); after the system runs it you will see the results and can continue.\n"
     "- Never invent research findings or sources; if neither the context nor your knowledge "
     "suffices, say so plainly."
 )
+
+# R-294: native function calling for the chat evidence actions — the tool
+# descriptions carry the when-to-use guidance (no first-line protocol left).
+_CHAT_TOOLS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_sources",
+            "description": "Dig further in the original text of the user-imported sources for this task. Use when the imported excerpts miss a detail the sources likely contain.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "What to look for in the imported sources"}},
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Run a new web search for fresh evidence outside the task. Cite results as [W#].",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_page",
+            "description": "Fetch one web page or PDF in full by URL. Cite it as [R#].",
+            "parameters": {
+                "type": "object",
+                "properties": {"url": {"type": "string"}},
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "local_search",
+            "description": "Search the user's local knowledge vault (personal notes). Cite notes as [L#].",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        },
+    },
+]
+
+_TOOL_KINDS = {"search_sources": "SEARCH", "web_search": "WEB", "read_page": "READ", "local_search": "LOCAL"}
 
 # 1 initial answer + up to 4 evidence-action rounds (R-292/R-293).
 _MAX_CHAT_ROUNDS = 5
@@ -149,8 +200,15 @@ class TaskChatService:
             index.build_imports(result, selected_source_ids)
             excerpts = index.retrieve(message, selected_source_ids)
             seen_chunks = {chunk["chunk_id"] for chunk in excerpts}
-        # R-292/R-293: grounded-but-combining loop with evidence actions
-        # (SEARCH/WEB/READ/LOCAL). Action results live in chat evidence only.
+        # R-292/R-293/R-294: grounded-but-combining loop with evidence actions
+        # via native function calling (complete_with_tools). Action results
+        # live in chat evidence only.
+        caller = getattr(self.chat_model, "complete_with_tools", None)
+        if caller is None:
+            raise ResearchError(
+                code="config_missing",
+                message="Chat model does not support tool calling (complete_with_tools).",
+            )
         evidence_blocks: list[str] = []
         action_counts = {"SEARCH": 0, "WEB": 0, "READ": 0, "LOCAL": 0}
         earlier = self._load_evidence_summaries()
@@ -161,15 +219,24 @@ class TaskChatService:
                 excerpts=excerpts, evidence_blocks=evidence_blocks, earlier_evidence=earlier,
             )
             try:
-                reply = self.chat_model.complete(prompt)
+                turn = caller(prompt, tools=_CHAT_TOOLS)
             except ResearchError:
                 raise
             except Exception as exc:
                 raise ResearchError(code="llm_call_failed", message=f"chat LLM call failed: {exc}") from exc
-            action = _parse_action(reply)
-            if action is None or round_num == _MAX_CHAT_ROUNDS - 1:
+            if not turn.tool_calls:
+                reply = turn.text
                 break
-            kind, argument = action
+            name, arguments = turn.tool_calls[0]
+            kind = _TOOL_KINDS.get(name)
+            if kind is None or round_num == _MAX_CHAT_ROUNDS - 1:
+                # Unknown tool or last round: force a plain answer next turn.
+                evidence_blocks.append(f"[Unknown evidence tool {name!r} — answer in plain text.]")
+                reply = turn.text
+                if kind is None:
+                    continue
+                break
+            argument = str(arguments.get("query") or arguments.get("url") or "")
             if action_counts[kind] >= _MAX_ACTIONS_PER_KIND or sum(action_counts.values()) >= _MAX_ACTIONS_TOTAL:
                 evidence_blocks.append("[Evidence budget exhausted — answer with what you have.]")
                 continue
@@ -324,20 +391,6 @@ class TaskChatService:
             parts.append("")
         parts.append(f"[New question]\n{message}")
         return "\n".join(parts)
-
-
-_ACTION_RE = re.compile(r"(?i)^(SEARCH|WEB|READ|LOCAL):\s*(.+)$")
-
-
-def _parse_action(reply: str) -> tuple[str, str] | None:
-    """Return (kind, argument) when the reply opens with an action line."""
-    if not reply.strip():
-        return None
-    first_line = reply.lstrip().splitlines()[0].strip()
-    match = _ACTION_RE.match(first_line)
-    if not match:
-        return None
-    return match.group(1).upper(), match.group(2).strip()
 
 
 def _render_research_context(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
 import httpx
@@ -19,6 +19,16 @@ class ToolCallResult:
     """Result from a native function/tool calling request."""
     name: str
     arguments: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ChatTurn:
+    """One conversational model turn (R-294): tool calls OR plain text.
+
+    Unlike complete_tool there is NO JSON fallback — a plain-language answer
+    is the normal outcome for chat and must pass through verbatim."""
+    tool_calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    text: str = ""
 
 
 class ChatModelClient(Protocol):
@@ -127,6 +137,47 @@ def _coerce_tool_arguments(arguments: Any) -> dict[str, Any]:
 class OpenAICompatibleChatModel:
     config: ModelConfig
     post_json: PostJson | None = None
+
+    def complete_with_tools(
+        self, prompt: str, *, tools: list[dict[str, Any]]
+    ) -> "ChatTurn":
+        """Conversational multi-tool call (R-294).
+
+        Returns a ChatTurn: tool_calls when the model chose an action, text
+        verbatim otherwise — no JSON fallback, because plain prose is the
+        *normal* chat outcome, not an error path.
+        """
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+            "max_tokens": 16384,
+        }
+        if tools:
+            payload["tools"] = tools
+        response = _post_json_request(
+            _join_endpoint(self.config.base_url, "chat/completions"),
+            payload,
+            self.config.api_key,
+            self.post_json,
+        )
+        choice = response["choices"][0]
+        message = choice["message"]
+        if str(choice.get("finish_reason", "")) == "length":
+            raise ValueError(
+                "LLM output was truncated (finish_reason=length) before a complete reply was produced"
+            )
+        raw_calls = message.get("tool_calls") or []
+        calls: list[tuple[str, dict[str, Any]]] = []
+        for tc in raw_calls:
+            function = tc.get("function", {})
+            calls.append((
+                str(function.get("name", "")),
+                _coerce_tool_arguments(function.get("arguments", {})),
+            ))
+        if calls:
+            return ChatTurn(tool_calls=calls)
+        return ChatTurn(text=str(message.get("content", "")))
 
     @classmethod
     def from_config(cls, config: ModelConfig, *, post_json: PostJson | None = None) -> OpenAICompatibleChatModel:

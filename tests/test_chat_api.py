@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from research_agent.api.app import create_app
+from research_agent.core.providers import ChatTurn
 from research_agent.core.config import InitConfigRequest
 from research_agent.core.ids import generate_task_id, utc_now_iso
 from research_agent.core.service import CoreService
@@ -36,15 +37,21 @@ class _KeyedEmbeddingClient:
 
 
 class _ScriptedChatModel:
-    """Returns queued replies in order; records every prompt."""
+    """Returns queued turns (str or ChatTurn) in order; records every prompt."""
 
-    def __init__(self, replies: list[str]) -> None:
+    def __init__(self, replies: list) -> None:
         self.replies = list(replies)
         self.prompts: list[str] = []
 
     def complete(self, prompt: str, *, json_mode: bool = False) -> str:
         self.prompts.append(prompt)
-        return self.replies.pop(0)
+        item = self.replies.pop(0)
+        return item if isinstance(item, str) else item.text
+
+    def complete_with_tools(self, prompt: str, *, tools):
+        self.prompts.append(prompt)
+        item = self.replies.pop(0)
+        return item if isinstance(item, ChatTurn) else ChatTurn(text=item)
 
 
 class _RecordingChatModel:
@@ -56,6 +63,10 @@ class _RecordingChatModel:
     def complete(self, prompt: str, *, json_mode: bool = False) -> str:
         self.prompts.append(prompt)
         return "Grounded answer."
+
+    def complete_with_tools(self, prompt: str, *, tools):
+        self.prompts.append(prompt)
+        return ChatTurn(text="Grounded answer.")
 
 
 def _chat_client(tmp_path: Path, chat_model: _RecordingChatModel) -> tuple[TestClient, Path]:
@@ -342,15 +353,15 @@ def test_chat_system_prompt_allows_own_knowledge_and_search(tmp_path):
 
     prompt = chat_model.prompts[0]
     assert "own knowledge" in prompt
-    assert "SEARCH:" in prompt
+    assert "Evidence tools are available" in prompt
 
 
 def test_chat_search_loop_retrieves_more_excerpts(tmp_path):
     """R-292: the model may request more evidence via SEARCH: — the next
     prompt carries fresh excerpts and the final reply is persisted."""
     chat_model = _ScriptedChatModel([
-        "SEARCH: checkpoint disk persistence",
-        "SqliteSaver writes every superstep to disk. [S1]",
+        ChatTurn(tool_calls=[("search_sources", {"query": "checkpoint disk persistence"})]),
+        ChatTurn(text="SqliteSaver writes every superstep to disk. [S1]"),
     ])
     client, workspace = _chat_client(tmp_path, chat_model)
     task_id = _write_task_with_source_text(workspace)
@@ -374,9 +385,9 @@ def test_chat_search_loop_caps_at_two_requests(tmp_path):
     """R-292: a model that keeps asking SEARCH forever gets cut off at the
     third call and must answer with what it has."""
     chat_model = _ScriptedChatModel([
-        "SEARCH: one",
-        "SEARCH: two",
-        "SEARCH: three",
+        ChatTurn(tool_calls=[("search_sources", {"query": "one"})]),
+        ChatTurn(tool_calls=[("search_sources", {"query": "two"})]),
+        ChatTurn(tool_calls=[("search_sources", {"query": "three"})]),
         "should never be reached",
     ])
     client, workspace = _chat_client(tmp_path, chat_model)
@@ -500,8 +511,8 @@ def _tool_ok(data: dict):
 
 def test_chat_web_action_runs_gateway_and_cites_evidence(tmp_path):
     chat_model = _ScriptedChatModel([
-        "WEB: reranker latency tradeoffs",
-        "Cross-encoders add 30-80ms latency. [W1]",
+        ChatTurn(tool_calls=[("web_search", {"query": "reranker latency tradeoffs"})]),
+        ChatTurn(text="Cross-encoders add 30-80ms latency. [W1]"),
     ])
     gateway = _FakeGateway([_tool_ok({"results": [
         {"title": "Latency of rerankers", "url": "https://example.com/lat", "content": "Cross-encoders add 30-80ms."}
@@ -526,8 +537,8 @@ def test_chat_web_action_runs_gateway_and_cites_evidence(tmp_path):
 
 def test_chat_read_action_picks_pdf_tool_by_suffix(tmp_path):
     chat_model = _ScriptedChatModel([
-        "READ: https://example.com/paper.pdf",
-        "The paper confirms it. [R1]",
+        ChatTurn(tool_calls=[("read_page", {"url": "https://example.com/paper.pdf"})]),
+        ChatTurn(text="The paper confirms it. [R1]"),
     ])
     gateway = _FakeGateway([_tool_ok({"url": "https://example.com/paper.pdf", "text": "Confirmed by the study.", "page_count": 3})])
     client, workspace = _chat_client_with_tools(tmp_path, chat_model, gateway, _FakeLocalRetriever())
@@ -542,8 +553,8 @@ def test_chat_read_action_picks_pdf_tool_by_suffix(tmp_path):
 
 def test_chat_local_action_queries_vault_retriever(tmp_path):
     chat_model = _ScriptedChatModel([
-        "LOCAL: rerank 策略",
-        "Your notes cover rerank strategies. [L1]",
+        ChatTurn(tool_calls=[("local_search", {"query": "rerank 策略"})]),
+        ChatTurn(text="Your notes cover rerank strategies. [L1]"),
     ])
     retriever = _FakeLocalRetriever()
     client, workspace = _chat_client_with_tools(tmp_path, chat_model, _FakeGateway([]), retriever)
@@ -559,7 +570,9 @@ def test_chat_local_action_queries_vault_retriever(tmp_path):
 
 def test_chat_evidence_actions_capped_per_kind(tmp_path):
     chat_model = _ScriptedChatModel([
-        "WEB: one", "WEB: two", "WEB: three",
+        ChatTurn(tool_calls=[("web_search", {"query": "one"})]),
+        ChatTurn(tool_calls=[("web_search", {"query": "two"})]),
+        ChatTurn(tool_calls=[("web_search", {"query": "three"})]),
         "Budget exhausted answer.",
     ])
     gateway = _FakeGateway([_tool_ok({"results": [{"title": f"t{i}", "url": "https://e.com", "content": "c"}]}) for i in range(3)])
@@ -575,7 +588,10 @@ def test_chat_evidence_actions_capped_per_kind(tmp_path):
 
 def test_chat_history_includes_prior_evidence_summaries(tmp_path):
     """Follow-up turns see earlier evidence actions as one-line summaries."""
-    holder: dict = {"model": _ScriptedChatModel(["WEB: topic", "Answer one. [W1]"])}
+    holder: dict = {"model": _ScriptedChatModel([
+        ChatTurn(tool_calls=[("web_search", {"query": "topic"})]),
+        ChatTurn(text="Answer one. [W1]"),
+    ])}
     gateway = _FakeGateway([_tool_ok({"results": [{"title": "Evidence title", "url": "https://e.com", "content": "c"}]})])
     client, workspace = _chat_client_with_tools_holder(tmp_path, holder, gateway, _FakeLocalRetriever())
     task_id = _write_completed_web_task(workspace)
@@ -587,7 +603,7 @@ def test_chat_history_includes_prior_evidence_summaries(tmp_path):
     summaries = TaskChatService(task_dir=workspace / "tasks" / task_id, chat_model=None)._load_evidence_summaries()
     assert summaries == ['web: "topic"']
     # A follow-up question through the same app sees the summary block.
-    holder["model"] = _ScriptedChatModel(["Follow-up answer."])
+    holder["model"] = _ScriptedChatModel([ChatTurn(text="Follow-up answer.")])
     second = client.post(f"/api/tasks/{task_id}/chat", json={"message": "second question"})
     assert second.status_code == 200
     assert 'web: "topic"' in holder["model"].prompts[0]

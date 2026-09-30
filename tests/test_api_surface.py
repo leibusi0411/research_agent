@@ -25,6 +25,11 @@ class _FixedChatModel:
     def complete(self, prompt: str, *, json_mode: bool = False) -> str:
         return "Local A+G summary."
 
+    def complete_with_tools(self, prompt: str, *, tools):
+        from research_agent.core.providers import ChatTurn
+
+        return ChatTurn(text="Local A+G summary.")
+
 
 class _TestWebRuntime:
     """Minimal deterministic web runtime for API tests."""
