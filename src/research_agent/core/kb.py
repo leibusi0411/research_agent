@@ -22,7 +22,7 @@ from research_agent.core.workspace import Workspace
 logger = logging.getLogger(__name__)
 
 
-SUPPORTED_SUFFIXES = {".md", ".txt", ".pdf", ".html", ".htm"}
+SUPPORTED_SUFFIXES = {".md", ".txt", ".pdf", ".html", ".htm", ".docx", ".pptx", ".epub"}
 
 # ADR-0049 chunking v2: target chunk size and overlap are decoupled from the
 # old 3000/5000 pair — embedding models degrade on long mixed-topic chunks.
@@ -568,30 +568,96 @@ def _parse_frontmatter(text: str) -> dict[str, Any]:
     return data
 
 
-def _extract_text(path: Path) -> str:
-    suffix = path.suffix.lower()
+def extract_text_from_bytes(data: bytes, suffix: str) -> str:
+    """Format-aware text extraction over raw bytes (shared by the KB indexer
+    and web tools, R-291). Supported: txt/html/pdf/docx/pptx/epub."""
+    suffix = suffix.lower()
     if suffix == ".txt":
-        return path.read_text(encoding="utf-8-sig", errors="ignore")
+        return data.decode("utf-8-sig", errors="ignore")
     if suffix in {".html", ".htm"}:
-        raw = path.read_text(encoding="utf-8-sig", errors="ignore")
+        raw = data.decode("utf-8-sig", errors="ignore")
         try:
             import trafilatura
 
             return trafilatura.extract(raw) or ""
         except Exception as exc:
-            logger.warning("HTML extraction via trafilatura failed for %s: %s — falling back to regex strip", path, exc)
+            logger.warning("HTML extraction via trafilatura failed: %s — falling back to regex strip", exc)
             return re.sub(r"<[^>]+>", " ", raw)
     if suffix == ".pdf":
         try:
+            import io as _io
+
             from pypdf import PdfReader  # type: ignore
 
-            reader = PdfReader(str(path))
+            reader = PdfReader(_io.BytesIO(data))
             return "\n\n".join(page.extract_text() or "" for page in reader.pages)
         except Exception as exc:
-            logger.warning("PDF extraction failed for %s: %s", path, exc)
+            logger.warning("PDF extraction failed (bytes): %s", exc)
             return ""
-    logger.warning("Unsupported file type for extraction: %s (suffix: %s)", path, suffix)
+    if suffix == ".docx":
+        try:
+            import io as _io
+
+            from docx import Document  # type: ignore
+
+            doc = Document(_io.BytesIO(data))
+            parts: list[str] = [p.text for p in doc.paragraphs if p.text.strip()]
+            for table in doc.tables:
+                for row in table.rows:
+                    cells = [cell.text.strip() for cell in row.cells]
+                    if any(cells):
+                        parts.append(" | ".join(cells))
+            return "\n\n".join(parts)
+        except Exception as exc:
+            logger.warning("DOCX extraction failed: %s", exc)
+            return ""
+    if suffix == ".pptx":
+        try:
+            import io as _io
+
+            from pptx import Presentation  # type: ignore
+
+            prs = Presentation(_io.BytesIO(data))
+            parts = []
+            for index, slide in enumerate(prs.slides, start=1):
+                texts = []
+                for shape in slide.shapes:
+                    if getattr(shape, "has_text_frame", False):
+                        for paragraph in shape.text_frame.paragraphs:
+                            text = "".join(run.text for run in paragraph.runs).strip()
+                            if text:
+                                texts.append(text)
+                if texts:
+                    parts.append(f"[Slide {index}] " + "\n".join(texts))
+            return "\n\n".join(parts)
+        except Exception as exc:
+            logger.warning("PPTX extraction failed: %s", exc)
+            return ""
+    if suffix == ".epub":
+        try:
+            import io
+            import zipfile
+
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                xhtml_names = [n for n in zf.namelist() if n.endswith((".xhtml", ".html", ".htm"))]
+                parts = []
+                for name in xhtml_names:
+                    raw = zf.read(name).decode("utf-8", errors="replace")
+                    stripped = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", raw)
+                    stripped = re.sub(r"<[^>]+>", " ", stripped)
+                    text = re.sub(r"\s+", " ", stripped).strip()
+                    if text:
+                        parts.append(text)
+                return "\n\n".join(parts)
+        except Exception as exc:
+            logger.warning("EPUB extraction failed: %s", exc)
+            return ""
+    logger.warning("Unsupported file type for extraction (suffix: %s)", suffix)
     return ""
+
+
+def _extract_text(path: Path) -> str:
+    return extract_text_from_bytes(path.read_bytes(), path.suffix)
 
 
 def _flush_pending(

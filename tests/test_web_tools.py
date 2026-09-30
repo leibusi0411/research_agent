@@ -627,6 +627,33 @@ def test_youtube_transcript_tool_fetches_and_joins_segments():
     assert "你好世界" in result.data["text"]
 
 
+def test_fetch_extract_handles_docx_urls():
+    """R-291: fetch_extract routes office/epub documents through the shared
+    document extraction instead of rejecting the binary content type."""
+    import io
+
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("Word source about agent orchestration.")
+    buf = io.BytesIO()
+    doc.save(buf)
+
+    http_client = _InMemoryHttpClient({
+        "https://docs.example.com/report.docx": FetchResponse(
+            url="https://docs.example.com/report.docx", status_code=200,
+            headers={"content-type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+            content=buf.getvalue(),
+        )
+    })
+    runner = ToolRunner(config=web_tools_config(), http_client=http_client)
+
+    result = runner.run("web.fetch_extract", {"url": "https://docs.example.com/report.docx"})
+
+    assert result.status == "ok"
+    assert "agent orchestration" in result.data["text"]
+
+
 def test_fetch_table_parses_csv_preview():
     csv_body = "name,score\nalpha,1\nbeta,2\n".encode("utf-8")
     http_client = _InMemoryHttpClient({

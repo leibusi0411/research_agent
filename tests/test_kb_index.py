@@ -381,3 +381,70 @@ def test_chunk_size_1000_with_10_percent_overlap(tmp_path):
     # 10% overlap: each window starts where the previous one's tail began.
     assert chunks[1][:100] == chunks[0][-100:]
     assert chunks[-1][-1] == "x"  # the tail must not be dropped
+
+
+def _write_docx(path: Path) -> None:
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("Word document introduction about hybrid retrieval.")
+    table = doc.add_table(rows=1, cols=2)
+    table.rows[0].cells[0].text = "reranker"
+    table.rows[0].cells[1].text = "cross-encoder"
+    doc.save(str(path))
+
+
+def _write_pptx(path: Path) -> None:
+    from pptx import Presentation
+
+    prs = Presentation()
+    slide1 = prs.slides.add_slide(prs.slide_layouts[1])
+    slide1.shapes.title.text = "RAG Overview"
+    slide1.placeholders[1].text = "Retrieval augmented generation pipeline."
+    slide2 = prs.slides.add_slide(prs.slide_layouts[1])
+    slide2.shapes.title.text = "Chunking"
+    slide2.placeholders[1].text = "Sliding window with overlap improves recall."
+    prs.save(str(path))
+
+
+def _write_epub(path: Path) -> None:
+    import zipfile
+
+    chapter = """<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Ch1</title></head>
+<body><h1>Dense Retrieval</h1><p>Embedding based dense retrieval chapter.</p></body></html>"""
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("mimetype", "application/epub+zip")
+        zf.writestr(
+            "META-INF/container.xml",
+            '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+            '<rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
+        )
+        zf.writestr(
+            "content.opf",
+            '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0">'
+            '<manifest><item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest>'
+            '<spine><itemref idref="ch1"/></spine></package>',
+        )
+        zf.writestr("ch1.xhtml", chapter)
+
+
+def test_kb_indexes_docx_pptx_and_epub(tmp_path):
+    """R-291: vault 文档格式扩展——Word/PPT/EPUB 走通用切块进索引。"""
+    config_path, workspace, vault = write_config(tmp_path)
+    _write_docx(vault / "report.docx")
+    _write_pptx(vault / "slides.pptx")
+    _write_epub(vault / "book.epub")
+
+    result = CoreService(default_workspace=workspace, config_path=config_path).rebuild_kb_index(embedding_client=_FixedEmbeddingClient())
+
+    assert result["status"] == "ready"
+    assert result["file_count"] == 3
+
+    texts = _read_chunk_texts(workspace)
+    assert "hybrid retrieval" in texts
+    assert "cross-encoder" in texts          # table cells included
+    assert "Retrieval augmented generation pipeline" in texts
+    assert "Sliding window with overlap" in texts
+    assert "Dense Retrieval" in texts
+    assert "Embedding based dense retrieval chapter" in texts

@@ -727,6 +727,20 @@ class ToolRunner:
             )
         content_type_header = _content_type_header(response.headers)
         media_type = _media_type(content_type_header)
+        # R-291: office/epub documents route through the shared document
+        # extractor (same code path as the Knowledge Base indexer).
+        document_suffix = _document_suffix(media_type, urlparse(response.url).path)
+        if document_suffix:
+            from research_agent.core.kb import extract_text_from_bytes
+
+            text = extract_text_from_bytes(response.content, document_suffix)
+            if not text.strip():
+                return ToolResult(status="error", error="permanent_error", message=f"Document extraction produced no text: {document_suffix}")
+            return ToolResult(
+                status="ok",
+                data={"url": response.url, "text": text.strip()},
+                metadata={"content_type": media_type, "response_bytes": len(response.content)},
+            )
         if not _is_supported_text_content_type(media_type):
             return ToolResult(status="error", error="permanent_error", message=f"Unsupported content type: {media_type}")
         raw_text = response.content.decode(_encoding_from_content_type(content_type_header), errors="replace")
@@ -960,6 +974,28 @@ def _encoding_from_content_type(content_type: str) -> str:
     if end == -1:
         end = len(content_type)
     return content_type[start:end].strip() or "utf-8"
+
+
+_DOCUMENT_MIME_SUFFIXES = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/epub+zip": ".epub",
+    "application/pdf": ".pdf",
+}
+
+
+def _document_suffix(media_type: str, url_path: str) -> str:
+    """Resolve office/epub/pdf documents by MIME, falling back to URL suffix
+    for ambiguous octet-stream serving (mirrors download_pdf's R-31 rule)."""
+    suffix = _DOCUMENT_MIME_SUFFIXES.get(media_type)
+    if suffix:
+        return suffix
+    if media_type in {"application/octet-stream", "application/zip", "binary/octet-stream"}:
+        lowered = url_path.lower()
+        for candidate in (".docx", ".pptx", ".epub", ".pdf"):
+            if lowered.endswith(candidate):
+                return candidate
+    return ""
 
 
 def _is_html_content_type(content_type: str) -> bool:
