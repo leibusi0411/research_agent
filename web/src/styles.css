@@ -2431,3 +2431,22 @@ label span {
 .sources-card > .card-fold-head[aria-expanded="false"] {
   padding: 0 24px;
 }
+
+/* Chat citation chips by evidence kind (R-293) */
+.cite-chip.chat-w {
+  background: rgba(253, 214, 99, 0.12);
+  border-color: rgba(253, 214, 99, 0.35);
+  color: var(--warn);
+}
+
+.cite-chip.chat-l {
+  background: rgba(129, 201, 149, 0.12);
+  border-color: rgba(129, 201, 149, 0.35);
+  color: var(--ok);
+}
+
+.cite-chip.chat-r {
+  background: rgba(154, 160, 166, 0.12);
+  border-color: rgba(154, 160, 166, 0.35);
+  color: var(--text-2);
+}

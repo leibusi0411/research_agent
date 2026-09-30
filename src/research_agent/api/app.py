@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 _active_runtimes: dict[str, Any] = {}
 
 from research_agent.core.bus import Bus
-from research_agent.core.chat import TaskChatService
+from research_agent.core.chat import TaskChatService, build_default_chat_toolbox
 from research_agent.core.config import InitConfigRequest, UserConfig, default_config_path, load_user_config
 from research_agent.core.errors import ResearchError
 from research_agent.core.ids import generate_task_id, utc_now_iso, validate_task_id
@@ -51,6 +51,7 @@ def create_app(
     web_runtime_factory: WebRuntimeFactory | None = None,
     embedding_client_factory: EmbeddingClientFactory | None = None,
     chat_model_factory: ChatModelFactory | None = None,
+    chat_toolbox_factory: Callable[[], Any] | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -109,7 +110,7 @@ def create_app(
         chat_model_factory,
     )
     _register_task_routes(app, get_service)
-    _register_chat_routes(app, get_service, resolved_config_path, chat_model_factory, embedding_client_factory)
+    _register_chat_routes(app, get_service, resolved_config_path, chat_model_factory, embedding_client_factory, chat_toolbox_factory)
     _register_kb_routes(app, get_service, resolved_config_path, embedding_client_factory)
 
     return app
@@ -456,6 +457,7 @@ def _register_chat_routes(
     resolved_config_path: Path,
     chat_model_factory: ChatModelFactory | None,
     embedding_client_factory: EmbeddingClientFactory | None,
+    chat_toolbox_factory: Callable[[], Any] | None,
 ) -> None:
     """Register /api/tasks/{task_id}/chat — grounded Q&A over a finished task (ADR-0050)."""
 
@@ -482,7 +484,14 @@ def _register_chat_routes(
             if embedding_client_factory is not None
             else OpenAICompatibleEmbeddingModel.from_config(config.embedding_model)
         )
-        return TaskChatService(task_dir=task_dir, chat_model=chat_model, embedding_client=embedding_client)
+        toolbox = (
+            chat_toolbox_factory()
+            if chat_toolbox_factory is not None
+            else build_default_chat_toolbox(get_service(), config)
+        )
+        return TaskChatService(
+            task_dir=task_dir, chat_model=chat_model, embedding_client=embedding_client, toolbox=toolbox
+        )
 
     @app.get("/api/tasks/{task_id}/chat")
     def chat_history(task_id: str) -> JSONResponse:

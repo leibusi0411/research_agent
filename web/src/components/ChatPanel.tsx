@@ -1,6 +1,29 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, Fragment, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { MessagesSquare, Send } from "lucide-react";
 import { api, type ChatMessage, type ResearchResult } from "../api";
+
+// Inline citation chips (R-293): [S#]=imported source, [W#]=web evidence,
+// [L#]=local vault note, [R#]=fetched page. Anything else stays plain text.
+const _CITE_SPLIT = /(\[[SWLR]\d+\])/g;
+// Anchored matcher for whole tokens (a /g regex with .test() would carry
+// lastIndex state across calls and flip results).
+const _CITE_TOKEN = /^\[([SWLR])\d+\]$/;
+
+function renderCitations(text: string): ReactNode[] {
+  return text.split(_CITE_SPLIT).filter(Boolean).map((token, index) => {
+    const match = _CITE_TOKEN.exec(token);
+    if (match) {
+      const kind = match[1].toLowerCase();
+      return (
+        <span className={`cite-chip chat-${kind}`} key={index}>
+          {token.slice(1, -1)}
+        </span>
+      );
+    }
+    return <Fragment key={index}>{token}</Fragment>;
+  });
+}
 
 /**
  * NotebookLM-style Q&A over one finished research task (ADR-0050).
@@ -102,7 +125,7 @@ export function ChatPanel({ result }: { result: ResearchResult }) {
             )}
             {messages.map((message, index) => (
               <div key={index} className={`chat-bubble ${message.role}`}>
-                {message.content}
+                {renderCitations(message.content)}
               </div>
             ))}
             {sending && <div className="chat-bubble assistant pending">Thinking…</div>}

@@ -324,3 +324,32 @@ describe("ResultCards sectioned report", () => {
     expect(screen.queryByRole("heading", { name: "Overview" })).not.toBeInTheDocument();
   });
 });
+
+
+describe("ChatPanel citation chips", () => {
+  it("renders [S]/[W]/[L]/[R] markers as colored chips (R-293)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/chat") && !init?.method) {
+          return { ok: true, status: 200, text: async () => JSON.stringify({ task_id: webResult.task_id, messages: [] }) };
+        }
+        return { ok: true, status: 200, text: async () => JSON.stringify({ task_id: webResult.task_id, reply: "Mixed evidence [S1] web [W2] local [L1] read [R3]." }) };
+      })
+    );
+    render(<ChatPanel result={webResult} />);
+    await screen.findByText("LangGraph docs");
+    await userEvent.click(screen.getAllByRole("checkbox")[0]);
+    await userEvent.click(screen.getByRole("button", { name: /import 1 selected/i }));
+    await userEvent.type(screen.getByLabelText(/chat message/i), "q");
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    const chips = await screen.findAllByText(/^[SWLR]\d+$/);
+    expect(chips).toHaveLength(4);
+    expect(chips[0]).toHaveClass("chat-s");
+    expect(chips[1]).toHaveClass("chat-w");
+    expect(chips[2]).toHaveClass("chat-l");
+    expect(chips[3]).toHaveClass("chat-r");
+  });
+});

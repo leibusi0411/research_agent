@@ -134,6 +134,27 @@ def build_index_auto_updater(
     return update
 
 
+def build_shared_tool_gateway(config: Any, config_path: str | Path | None) -> ToolGateway:
+    """Shared tool gateway for the research runtime and the chat toolbox
+    (R-293): one assembly point for the registry, providers, and sandbox."""
+    search_provider = TavilySearchProvider(api_key=config.search.api_key)
+    # R-290: scholar.search aggregates arXiv + Crossref (+ Semantic Scholar
+    # when an optional key is configured); github/news are keyless-capable.
+    scholar_sources: list[ScholarSearchProvider] = [ArxivSearchProvider(), CrossrefProvider()]
+    if config.search.semantic_scholar_api_key:
+        scholar_sources.append(SemanticScholarProvider(config.search.semantic_scholar_api_key))
+    tool_runner = ToolRunner(
+        config=config.web_tools,
+        search_provider=search_provider,
+        scholar_provider=AggregatedScholarProvider(scholar_sources),
+        python_sandbox=PythonSandbox(),
+        youtube_provider=YouTubeTranscriptProvider(),
+        github_provider=GithubSearchProvider(config.search.github_api_key),
+        news_provider=GdeltNewsProvider(),
+    )
+    return ToolGateway(registry=create_default_web_tool_registry(), runner=tool_runner)
+
+
 def create_provider_runtime(
     config_path: str | Path | None,
     workspace_root: str,
@@ -156,22 +177,7 @@ def create_provider_runtime(
     resolved_models = chat_models
     if resolved_models is None:
         resolved_models = build_chat_models(config)
-    search_provider = TavilySearchProvider(api_key=config.search.api_key)
-    # R-290: scholar.search aggregates arXiv + Crossref (+ Semantic Scholar
-    # when an optional key is configured); github/news are keyless-capable.
-    scholar_sources: list[ScholarSearchProvider] = [ArxivSearchProvider(), CrossrefProvider()]
-    if config.search.semantic_scholar_api_key:
-        scholar_sources.append(SemanticScholarProvider(config.search.semantic_scholar_api_key))
-    tool_runner = ToolRunner(
-        config=config.web_tools,
-        search_provider=search_provider,
-        scholar_provider=AggregatedScholarProvider(scholar_sources),
-        python_sandbox=PythonSandbox(),
-        youtube_provider=YouTubeTranscriptProvider(),
-        github_provider=GithubSearchProvider(config.search.github_api_key),
-        news_provider=GdeltNewsProvider(),
-    )
-    tool_gateway = ToolGateway(registry=create_default_web_tool_registry(), runner=tool_runner)
+    tool_gateway = build_shared_tool_gateway(config, config_path)
     resolved_workspace = workspace_obj if workspace_obj is not None else Workspace(workspace_root)
     runner_config = RunnerConfig(
         workspace=workspace_root,

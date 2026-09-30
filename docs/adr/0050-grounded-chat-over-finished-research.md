@@ -57,6 +57,23 @@
 
 ## 演进注记
 
+- 2026-10-08（R-293）：对话取证从单一 SEARCH 扩展为**四动作协议**——
+  `SEARCH`（导入原文内再挖）/ `WEB`（新网络检索，走与调研执行器同一个
+  ToolGateway，继承全部工程边界）/ `READ`（读取单个网页或 PDF 全文，
+  按后缀选 fetch/pdf 工具）/ `LOCAL`（本地 vault 混合检索，复用 Planner
+  的 retriever；**不受** Check-local-first 开关约束——显式请求是精准
+  行为，开关只管调研前的自动注入）。预算：每类动作 ≤2 次、每问总计
+  ≤4 次、模型调用 ≤5 轮；触顶注入提示迫使基于现有证据作答。
+  **隔离保证**：动作结果只进对话 prompt 与对话专属的
+  `chat_evidence.jsonl`（append-only，记录 kind+argument），后续轮次
+  以单行摘要回放；原调研产物（result.json/findings/报告/events）与
+  全局知识库零写入——调研任务在结束时刻冻结。引用分色：
+  [S#] 导入源（蓝）/[W#] 网络证据（黄）/[L#] 本地笔记（绿）/
+  [R#] 读取页（灰）。装配：`build_shared_tool_gateway` 从
+  create_provider_runtime 提取为共享构建点，调研运行时与对话
+  ChatToolbox 复用同一 gateway。
+
+
 - 2026-09-30（R-292）：系统指令从"只依据研究上下文"升级为**接地结合式**：
   研究内容仍优先且须 [S#] 引用，但允许模型结合自身知识（要求区分
   来源）；新增 `SEARCH: <query>` 再检索协议——模型可在回答前最多

@@ -387,5 +387,207 @@ def test_chat_search_loop_caps_at_two_requests(tmp_path):
     )
 
     assert sent.status_code == 200
-    assert sent.json()["reply"].startswith("SEARCH: three")  # last model output returned as-is
-    assert len(chat_model.prompts) == 3  # 1 initial + 2 requery rounds
+    # R-293: the third SEARCH hits the per-kind cap; a budget note is injected
+    # and the model's next output becomes the final reply.
+    assert sent.json()["reply"] == "should never be reached"
+    assert len(chat_model.prompts) == 4  # 1 initial + 2 executed + 1 refused round
+
+
+# ---------------------------------------------------------------------------
+# R-293: in-chat evidence actions (WEB / READ / LOCAL)
+# ---------------------------------------------------------------------------
+
+
+class _FakeGateway:
+    """Records tool calls; returns queued results."""
+
+    def __init__(self, results: list) -> None:
+        self.results = list(results)
+        self.calls: list[tuple[str, dict]] = []
+
+    def call(self, workflow: str, function_call: dict):
+        self.calls.append((workflow, dict(function_call)))
+        return self.results.pop(0)
+
+
+class _FakeLocalRetriever:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def __call__(self, query: str) -> list:
+        self.queries.append(query)
+        from research_agent.web.schemas import PriorKnowledgeChunk
+
+        return [PriorKnowledgeChunk(text="Local note about rerankers.", source_path="notes/rerank.md", heading_path=["RAG"])]
+
+
+def _chat_client_with_tools(tmp_path, chat_model, gateway, retriever):
+    """Configured app whose chat routes carry the evidence toolbox."""
+    config_path = tmp_path / "config.toml"
+    workspace = tmp_path / "runtime"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    service = CoreService(default_workspace=workspace, config_path=config_path)
+    service.init_config(
+        InitConfigRequest(
+            default_workspace=workspace,
+            knowledge_base_path=vault,
+            chat_base_url="https://models.example/v1",
+            chat_api_key="chat-key",
+            chat_model="chat-model",
+            embedding_base_url="https://embeddings.example/v1",
+            embedding_api_key="embedding-key",
+            embedding_model="embedding-model",
+            search_api_key="search-key",
+        )
+    )
+
+    from research_agent.core.chat import ChatToolbox
+
+    toolbox = ChatToolbox(gateway=gateway, local_retriever=retriever)
+    app = create_app(
+        config_path=config_path,
+        chat_model_factory=lambda _config: chat_model,
+        embedding_client_factory=lambda _config: _KeyedEmbeddingClient(),
+        chat_toolbox_factory=lambda: toolbox,
+    )
+    return TestClient(app), workspace
+
+
+def _chat_client_with_tools_holder(tmp_path, holder, gateway, retriever):
+    """Like _chat_client_with_tools but the chat model is swappable via holder["model"]."""
+    config_path = tmp_path / "config.toml"
+    workspace = tmp_path / "runtime"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    service = CoreService(default_workspace=workspace, config_path=config_path)
+    service.init_config(
+        InitConfigRequest(
+            default_workspace=workspace,
+            knowledge_base_path=vault,
+            chat_base_url="https://models.example/v1",
+            chat_api_key="chat-key",
+            chat_model="chat-model",
+            embedding_base_url="https://embeddings.example/v1",
+            embedding_api_key="embedding-key",
+            embedding_model="embedding-model",
+            search_api_key="search-key",
+        )
+    )
+
+    from research_agent.core.chat import ChatToolbox
+
+    app = create_app(
+        config_path=config_path,
+        chat_model_factory=lambda _config: holder["model"],
+        embedding_client_factory=lambda _config: _KeyedEmbeddingClient(),
+        chat_toolbox_factory=lambda: ChatToolbox(gateway=gateway, local_retriever=retriever),
+    )
+    return TestClient(app), workspace
+
+
+def _tool_ok(data: dict):
+    class _R:
+        status = "ok"
+        error = None
+        message = ""
+
+        def __init__(self, payload: dict) -> None:
+            self.data = payload
+
+    return _R(data)
+
+
+def test_chat_web_action_runs_gateway_and_cites_evidence(tmp_path):
+    chat_model = _ScriptedChatModel([
+        "WEB: reranker latency tradeoffs",
+        "Cross-encoders add 30-80ms latency. [W1]",
+    ])
+    gateway = _FakeGateway([_tool_ok({"results": [
+        {"title": "Latency of rerankers", "url": "https://example.com/lat", "content": "Cross-encoders add 30-80ms."}
+    ]})])
+    client, workspace = _chat_client_with_tools(tmp_path, chat_model, gateway, _FakeLocalRetriever())
+    task_id = _write_completed_web_task(workspace)
+
+    sent = client.post(f"/api/tasks/{task_id}/chat", json={"message": "reranker 代价是什么？"})
+
+    assert sent.status_code == 200
+    assert sent.json()["reply"] == "Cross-encoders add 30-80ms latency. [W1]"
+    assert gateway.calls[0][0] == "web_research"
+    assert gateway.calls[0][1]["name"] == "web.search"
+    # Evidence reached the second prompt and was persisted to the chat log.
+    assert "Latency of rerankers" in chat_model.prompts[1]
+    evidence_path = workspace / "tasks" / task_id / "chat_evidence.jsonl"
+    assert evidence_path.exists()
+    lines = [json.loads(l) for l in evidence_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert lines[0]["kind"] == "web"
+    assert lines[0]["argument"] == "reranker latency tradeoffs"
+
+
+def test_chat_read_action_picks_pdf_tool_by_suffix(tmp_path):
+    chat_model = _ScriptedChatModel([
+        "READ: https://example.com/paper.pdf",
+        "The paper confirms it. [R1]",
+    ])
+    gateway = _FakeGateway([_tool_ok({"url": "https://example.com/paper.pdf", "text": "Confirmed by the study.", "page_count": 3})])
+    client, workspace = _chat_client_with_tools(tmp_path, chat_model, gateway, _FakeLocalRetriever())
+    task_id = _write_completed_web_task(workspace)
+
+    sent = client.post(f"/api/tasks/{task_id}/chat", json={"message": "细节"})
+
+    assert sent.status_code == 200
+    assert gateway.calls[0][1]["name"] == "web.download_pdf"
+    assert "Confirmed by the study." in chat_model.prompts[1]
+
+
+def test_chat_local_action_queries_vault_retriever(tmp_path):
+    chat_model = _ScriptedChatModel([
+        "LOCAL: rerank 策略",
+        "Your notes cover rerank strategies. [L1]",
+    ])
+    retriever = _FakeLocalRetriever()
+    client, workspace = _chat_client_with_tools(tmp_path, chat_model, _FakeGateway([]), retriever)
+    task_id = _write_completed_web_task(workspace)
+
+    sent = client.post(f"/api/tasks/{task_id}/chat", json={"message": "我的笔记里有什么"})
+
+    assert sent.status_code == 200
+    assert retriever.queries == ["rerank 策略"]
+    assert "Local note about rerankers." in chat_model.prompts[1]
+    assert "notes/rerank.md" in chat_model.prompts[1]
+
+
+def test_chat_evidence_actions_capped_per_kind(tmp_path):
+    chat_model = _ScriptedChatModel([
+        "WEB: one", "WEB: two", "WEB: three",
+        "Budget exhausted answer.",
+    ])
+    gateway = _FakeGateway([_tool_ok({"results": [{"title": f"t{i}", "url": "https://e.com", "content": "c"}]}) for i in range(3)])
+    client, workspace = _chat_client_with_tools(tmp_path, chat_model, gateway, _FakeLocalRetriever())
+    task_id = _write_completed_web_task(workspace)
+
+    sent = client.post(f"/api/tasks/{task_id}/chat", json={"message": "q"})
+
+    assert sent.status_code == 200
+    assert sent.json()["reply"] == "Budget exhausted answer."
+    assert len(gateway.calls) == 2  # third WEB was refused by the per-kind cap
+
+
+def test_chat_history_includes_prior_evidence_summaries(tmp_path):
+    """Follow-up turns see earlier evidence actions as one-line summaries."""
+    holder: dict = {"model": _ScriptedChatModel(["WEB: topic", "Answer one. [W1]"])}
+    gateway = _FakeGateway([_tool_ok({"results": [{"title": "Evidence title", "url": "https://e.com", "content": "c"}]})])
+    client, workspace = _chat_client_with_tools_holder(tmp_path, holder, gateway, _FakeLocalRetriever())
+    task_id = _write_completed_web_task(workspace)
+
+    client.post(f"/api/tasks/{task_id}/chat", json={"message": "first"})
+
+    from research_agent.core.chat import TaskChatService
+
+    summaries = TaskChatService(task_dir=workspace / "tasks" / task_id, chat_model=None)._load_evidence_summaries()
+    assert summaries == ['web: "topic"']
+    # A follow-up question through the same app sees the summary block.
+    holder["model"] = _ScriptedChatModel(["Follow-up answer."])
+    second = client.post(f"/api/tasks/{task_id}/chat", json={"message": "second question"})
+    assert second.status_code == 200
+    assert 'web: "topic"' in holder["model"].prompts[0]
