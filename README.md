@@ -382,10 +382,15 @@ cd web && npm run test:e2e
 | 工具 | 说明 | 参数 |
 |------|------|------|
 | `web.search` | Tavily 网页搜索 | `query`, `max_results` |
-| `scholar.search` | arXiv 学术论文搜索（无需 key） | `query`, `max_results` |
+| `scholar.search` | 学术论文聚合搜索（arXiv + Crossref，可选 Semantic Scholar） | `query`, `max_results` |
+| `github.search` | GitHub 仓库检索（免 key 60/h，可选 key） | `query`, `max_results` |
+| `news.search` | GDELT 新闻时间线（免 key） | `query`, `max_results` |
 | `code.run_python` | 在本地沙箱运行 Python 片段（超时 + 输出截断） | `code` |
 | `web.fetch_extract` | 抓取网页并提取正文（浏览器 UA） | `url` |
 | `web.download_pdf` | 下载 PDF 并提取文本 | `url` |
+| `web.crawl_site` | 站点 sitemap 多页爬取（≤10 页） | `url`, `max_pages` |
+| `media.youtube_transcript` | YouTube 视频字幕转写 | `url` |
+| `data.fetch_table` | CSV/XLSX 表格下载与预览 | `url` |
 
 ---
 

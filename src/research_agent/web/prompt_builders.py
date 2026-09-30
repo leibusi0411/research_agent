@@ -183,6 +183,9 @@ def _render_tool_plan_prompt(
         "Plan a series of tool calls to gather evidence for this subtask.\n"
         "Start with web.search to find relevant sources, then use web.fetch_extract or web.download_pdf to get details.\n"
         "Use scholar.search instead of web.search when the subtask needs academic papers, preprints, or citation-worthy primary literature.\n"
+        "Use github.search for how-to-use-a-library / ecosystem questions; news.search for recent events and timelines.\n"
+        "Use web.crawl_site instead of repeated fetch_extract when the subtask needs a whole documentation site (not one page);\n"
+        "media.youtube_transcript for video sources; data.fetch_table when a CSV/XLSX URL holds the evidence.\n"
         "Use code.run_python only when plain calculation, aggregation, or data processing is needed — never as a substitute for searching.\n"
         "Make 2-5 tool calls. Include at least one web.search or scholar.search call.\n"
     )

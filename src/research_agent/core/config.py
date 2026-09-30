@@ -44,6 +44,10 @@ class ModelConfig:
 class SearchConfig:
     provider: str
     api_key: str
+    # Optional enhancement keys (blank = keyless mode): Semantic Scholar
+    # raises rate limits above 100 req/5min; GitHub above 60 req/h (R-290).
+    semantic_scholar_api_key: str = ""
+    github_api_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -216,7 +220,12 @@ def _parse_user_config(data: dict) -> UserConfig:
                 api_key=embedding_model["api_key"],
                 model=embedding_model["model"],
             ),
-            search=SearchConfig(provider=search.get("provider", "tavily"), api_key=search["api_key"]),
+            search=SearchConfig(
+                provider=search.get("provider", "tavily"),
+                api_key=search["api_key"],
+                semantic_scholar_api_key=str(search.get("semantic_scholar_api_key", "") or ""),
+                github_api_key=str(search.get("github_api_key", "") or ""),
+            ),
             index=IndexConfig(backend=index.get("backend", "sqlite_fts5_chroma")),
             web_tools=WebToolsConfig(**{key: _safe_int(value, f"web_tools.{key}") for key, value in web_tools.items()}),
             rerank_model=_parse_rerank_model(data.get("rerank_model")),

@@ -7,7 +7,11 @@ from pypdf import PdfWriter
 
 from research_agent.core.config import WebToolsConfig
 from research_agent.web.tools import (
+    AggregatedScholarProvider,
     ArxivSearchProvider,
+    GdeltNewsProvider,
+    GithubSearchProvider,
+    YouTubeTranscriptProvider,
     FetchResponse,
     HttpxHttpClient,
     PythonSandbox,
@@ -71,7 +75,12 @@ def test_tool_registry_records_web_tools_permissions_and_input_schemas():
 
     assert sorted(registry.names()) == [
         "code.run_python",
+        "data.fetch_table",
+        "github.search",
+        "media.youtube_transcript",
+        "news.search",
         "scholar.search",
+        "web.crawl_site",
         "web.download_pdf",
         "web.fetch_extract",
         "web.search",
@@ -174,6 +183,72 @@ def test_parse_arxiv_atom_extracts_pdf_link_authors_and_clean_text():
     # No PDF link: falls back to the entry id.
     assert results[1]["url"] == "http://arxiv.org/abs/2401.00002v1"
     assert results[1]["published"] == "2026-02-01"
+
+
+class FakeScholarSource:
+    """Second scholar source for aggregation tests."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def search(self, query: str, max_results: int) -> list[dict]:
+        self.calls.append(query)
+        return [{"title": "Crossref paper", "url": "https://doi.org/10.1/x", "authors": "C. Author", "summary": "s", "published": "2025-01-01"}]
+
+
+def test_scholar_aggregation_merges_sources_with_round_robin(tmp_path):
+    from research_agent.web.tools import AggregatedScholarProvider
+
+    fake = FakeScholarSource()
+    arxiv_like = FakeScholarSource()
+    arxiv_like.search = lambda query, max_results: [
+        {"title": "arXiv paper", "url": "https://arxiv.org/abs/1", "authors": "A", "summary": "s", "published": "2025-02-02"}
+    ]
+    provider = AggregatedScholarProvider([arxiv_like, fake])
+
+    results = provider.search("agents", 4)
+
+    titles = [r["title"] for r in results]
+    assert titles == ["arXiv paper", "Crossref paper"]  # interleaved, not appended
+    assert provider.sources_queried == 2
+
+
+def test_github_search_sends_user_agent_and_parses_items():
+    captured: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["ua"] = request.headers.get("user-agent", "")
+        captured["url"] = str(request.url)
+        return httpx.Response(200, json={"items": [
+            {"full_name": "langchain-ai/langgraph", "description": "Build agents", "stargazers_count": 12000, "html_url": "https://github.com/langchain-ai/langgraph", "language": "Python"},
+        ]}, request=request)
+
+    provider = GithubSearchProvider(transport=httpx.MockTransport(handler))
+    results = provider.search("langgraph agents", 5)
+
+    assert "research-agent" in captured["ua"]  # GitHub API requires a UA
+    assert "search/repositories" in captured["url"]
+    assert results[0]["title"] == "langchain-ai/langgraph"
+    assert results[0]["stars"] == 12000
+    assert results[0]["url"].startswith("https://github.com/")
+
+
+def test_news_search_uses_gdelt_doc_api():
+    captured: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        return httpx.Response(200, json={"articles": [
+            {"title": "A2A protocol launched", "url": "https://news.example/a2a", "seendate": "20260920T120000Z", "domain": "news.example"},
+        ]}, request=request)
+
+    provider = GdeltNewsProvider(transport=httpx.MockTransport(handler))
+    results = provider.search("A2A protocol", 5)
+
+    assert "gdeltproject.org" in captured["url"]
+    assert "mode=artlist" in captured["url"]
+    assert results[0]["title"] == "A2A protocol launched"
+    assert results[0]["published"] == "2026-09-20"
 
 
 def test_arxiv_provider_encodes_query_params_and_parses_response():
@@ -484,6 +559,119 @@ def test_httpx_client_stops_reading_after_configured_byte_limit():
 
     assert fetched.truncated is True
     assert fetched.content == b"abcd"
+
+
+def test_crawl_site_walks_same_domain_pages():
+    pages = {
+        "https://docs.example.com/sitemap.xml": """<?xml version="1.0"?><urlset>
+        <url><loc>https://docs.example.com/guide</loc></url>
+        <url><loc>https://docs.example.com/api</loc></url>
+        <url><loc>https://other.example.net/x</loc></url>
+        </urlset>""",
+        "https://docs.example.com/guide": "<html><body><p>Guide page content.</p></body></html>",
+        "https://docs.example.com/api": "<html><body><p>API page content.</p></body></html>",
+    }
+    http_client = _InMemoryHttpClient(
+        {url: FetchResponse(url=url, status_code=200, headers={"content-type": "application/xml" if url.endswith(".xml") else "text/html"}, content=text.encode("utf-8")) for url, text in pages.items()}
+    )
+    runner = ToolRunner(config=web_tools_config(), http_client=http_client)
+
+    result = runner.run("web.crawl_site", {"url": "https://docs.example.com/", "max_pages": 5})
+
+    assert result.status == "ok"
+    urls = [p["url"] for p in result.data["pages"]]
+    assert "https://docs.example.com/guide" in urls
+    assert "https://docs.example.com/api" in urls
+    assert not any("other.example.net" in u for u in urls)  # cross-domain pruned
+    texts = " ".join(p["text"] for p in result.data["pages"])
+    assert "Guide page content." in texts
+
+
+def test_crawl_site_caps_max_pages():
+    entries = "".join(f"<url><loc>https://docs.example.com/p{i}</loc></url>" for i in range(12))
+    pages = {"https://docs.example.com/sitemap.xml": f'<?xml version="1.0"?><urlset>{entries}</urlset>'}
+    for i in range(12):
+        pages[f"https://docs.example.com/p{i}"] = f"<html><body><p>page {i}</p></body></html>"
+    http_client = _InMemoryHttpClient(
+        {url: FetchResponse(url=url, status_code=200, headers={"content-type": "application/xml" if url.endswith(".xml") else "text/html"}, content=body.encode("utf-8")) for url, body in pages.items()}
+    )
+    runner = ToolRunner(config=web_tools_config(), http_client=http_client)
+
+    result = runner.run("web.crawl_site", {"url": "https://docs.example.com/", "max_pages": 99})
+
+    assert result.status == "ok"
+    assert len(result.data["pages"]) == 10  # hard cap
+    assert result.data["pages"][0]["url"] == "https://docs.example.com/p0"
+
+
+def test_youtube_transcript_tool_fetches_and_joins_segments():
+    def fake_fetch(video_id, languages=None):
+        class Seg:
+            def __init__(self, text):
+                self.text = text
+        class Fetched:
+            def __init__(self):
+                self.snippets = [Seg("Hello "), Seg("world."), Seg(" 你好世界")]
+            def __iter__(self):
+                return iter(self.snippets)
+        return Fetched()
+
+    provider = YouTubeTranscriptProvider(transcript_fetch=fake_fetch)
+    runner = ToolRunner(config=web_tools_config(), youtube_provider=provider)
+
+    result = runner.run("media.youtube_transcript", {"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"})
+
+    assert result.status == "ok"
+    assert result.data["video_id"] == "dQw4w9WgXcQ"
+    assert "Hello world." in result.data["text"]
+    assert "你好世界" in result.data["text"]
+
+
+def test_fetch_table_parses_csv_preview():
+    csv_body = "name,score\nalpha,1\nbeta,2\n".encode("utf-8")
+    http_client = _InMemoryHttpClient({
+        "https://data.example/scores.csv": FetchResponse(
+            url="https://data.example/scores.csv", status_code=200,
+            headers={"content-type": "text/csv"}, content=csv_body,
+        )
+    })
+    runner = ToolRunner(config=web_tools_config(), http_client=http_client)
+
+    result = runner.run("data.fetch_table", {"url": "https://data.example/scores.csv"})
+
+    assert result.status == "ok"
+    assert result.data["rows"] == 2
+    assert result.data["cols"] == 2
+    assert "| name" in result.data["preview"]
+    assert "| alpha" in result.data["preview"]
+
+
+def test_fetch_table_parses_xlsx():
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["tool", "stars"])
+    ws.append(["langgraph", 12000])
+    buf = BytesIO()
+    wb.save(buf)
+    http_client = _InMemoryHttpClient({
+        "https://data.example/tools.xlsx": FetchResponse(
+            url="https://data.example/tools.xlsx", status_code=200,
+            headers={"content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+            content=buf.getvalue(),
+        )
+    })
+    runner = ToolRunner(config=web_tools_config(), http_client=http_client)
+
+    result = runner.run("data.fetch_table", {"url": "https://data.example/tools.xlsx"})
+
+    assert result.status == "ok"
+    assert result.data["rows"] == 1
+    assert result.data["cols"] == 2
+    assert "langgraph" in result.data["preview"]
 
 
 def test_httpx_client_sends_browser_style_headers():

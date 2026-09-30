@@ -7,7 +7,7 @@
 **Research Agent** 是一个本地优先（local-first）的 AI 研究助手，提供两个**相互独立、不共享上下文**的工作流：
 
 1. **Local RAG（本地知识库检索）** — 对用户指定的 Markdown vault 目录建立索引（SQLite FTS5 关键词 + ChromaDB 语义向量 + RRF 融合排序），可选启用 Multi-Query 查询改写与 Cross-Encoder 精排（ADR-0052/0053），检索后可选地用 LLM 生成自然语言总结（`local_summarizer` 角色）。索引构建是**只读**的，不修改源文件。支持 `.md`、`.txt`、`.pdf`、`.html`。
-2. **Web Research（网络调研）** — 基于 LangGraph StateGraph 的多角色流水线：Planner → Executor → Supervisor → Curator。通过 ToolGateway 执行真实工具调用（Tavily 搜索、arXiv 学术搜索、trafilatura 网页提取（浏览器 UA）、pypdf PDF 解析、本地 Python 沙箱），最终生成 Markdown 报告文件。
+2. **Web Research（网络调研）** — 基于 LangGraph StateGraph 的多角色流水线：Planner → Executor → Supervisor → Curator。通过 ToolGateway 执行真实工具调用（Tavily 搜索、arXiv+Crossref 学术聚合搜索、GitHub 仓库检索、GDELT 新闻检索、trafilatura 网页提取（浏览器 UA）、站点 sitemap 爬取、YouTube 字幕、CSV/XLSX 表格预览、pypdf PDF 解析、本地 Python 沙箱），最终生成 Markdown 报告文件。
 
 交互界面为 Web UI（React + Vite），通过 FastAPI 后端和 CoreService 应用层暴露能力面（CLI 已移除，见 ADR-0055）。
 
@@ -76,7 +76,7 @@ research_agent/
 │   ├── playwright.config.ts      # E2E 配置（自动起 5174 端口的 dev server）
 │   └── package.json
 ├── docs/
-│   ├── adr/                      # 56 个架构决策记录（0001~0056，顺序编号）
+│   ├── adr/                      # 57 个架构决策记录（0001~0057，顺序编号）
 │   └── agents/                   # agent 协作约定（issue tracker、triage labels、domain docs）
 ├── CONTEXT.md                    # 领域术语表（命名前必读）
 ├── TODO.md                       # v1 有意延期的功能清单
@@ -131,7 +131,7 @@ cd web && npm run test:e2e             # Playwright E2E（自动起 5174 端口 
 
 - **中文优先**：Review 生成的文件（代码审查报告、ADR 审查等）一律用中文编写，中文翻译版作为主文件（不加 `-zh` 后缀），不保留英文原版。文档（README/USAGE）也是中文。
 - **命名遵守术语表**：`CONTEXT.md` 定义了领域语言（Local RAG、Web Research、Blackboard、Tool Gateway 等）。命名领域概念时使用其中的术语，避免使用被明确否决的同义词（每个词条下有 `_Avoid_` 列表）。
-- **ADR 冲突规则**：若改动与 `docs/adr/` 中已有决策冲突，必须显式提出冲突，而不是静默推翻决策。ADR 共 56 个，顺序编号。
+- **ADR 冲突规则**：若改动与 `docs/adr/` 中已有决策冲突，必须显式提出冲突，而不是静默推翻决策。ADR 共 57 个，顺序编号。
 - **类型注解**：方法签名使用显式类型参数，不用 `*args, **kwargs`；运行时抽象用 `WebResearchRuntime` Protocol 而非 `object`。
 - **简单优先**：用最少代码解决问题，不做未要求的抽象或功能；精准修改，不顺手重构相邻代码；自己改动产生的孤立 import/变量/函数必须清理。
 - **错误模型**：用户可见错误统一为 `ResearchError`（`code` + `message`），API 以 `{error: {code, message}}` 返回。

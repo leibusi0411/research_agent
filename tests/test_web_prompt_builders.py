@@ -168,6 +168,9 @@ def test_build_executor_tool_plan_prompt_guides_when_to_use_new_tools():
     # The mandatory-search floor accepts either search flavor, so a purely
     # academic subtask is not forced back onto web.search.
     assert "at least one web.search or scholar.search call" in prompt
+    # R-290: every new tool gets a when-to-use cue.
+    for cue in ("github.search", "news.search", "web.crawl_site", "media.youtube_transcript", "data.fetch_table"):
+        assert cue in prompt
 
 
 def test_build_supervisor_prompt_requests_json_with_route():
