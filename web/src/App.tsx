@@ -288,9 +288,7 @@ export function App() {
   }
 
   async function cancelTask() {
-    if (!result && events.length > 0) {
-      // The live task id rides the events; fall back to the selected result.
-    }
+    // The live task id rides the events; a finished-but-selected result wins.
     const taskId = result?.task_id ?? events[0]?.task_id;
     if (!taskId) return;
     setCancelling(true);

@@ -229,12 +229,22 @@ class TaskChatService:
                 break
             name, arguments = turn.tool_calls[0]
             kind = _TOOL_KINDS.get(name)
-            if kind is None or round_num == _MAX_CHAT_ROUNDS - 1:
-                # Unknown tool or last round: force a plain answer next turn.
+            if kind is None:
+                # Unknown tool: force a plain answer next turn.
                 evidence_blocks.append(f"[Unknown evidence tool {name!r} — answer in plain text.]")
-                reply = turn.text
-                if kind is None:
-                    continue
+                continue
+            if round_num == _MAX_CHAT_ROUNDS - 1:
+                # R-306: out of rounds while the model still wants evidence.
+                # The hint must actually reach the model, so make one final
+                # tools-free call — a tool_calls ChatTurn carries empty text
+                # and must never be persisted as the reply.
+                evidence_blocks.append("[Round budget exhausted — answer now in plain text.]")
+                final_prompt = self._build_prompt(
+                    message, result, selected_source_ids=selected_source_ids,
+                    excerpts=excerpts, evidence_blocks=evidence_blocks, earlier_evidence=earlier,
+                )
+                turn = caller(final_prompt, tools=[])
+                reply = turn.text or "(The answer budget ran out before a final answer was produced. Please ask again.)"
                 break
             argument = str(arguments.get("query") or arguments.get("url") or "")
             if action_counts[kind] >= _MAX_ACTIONS_PER_KIND or sum(action_counts.values()) >= _MAX_ACTIONS_TOTAL:

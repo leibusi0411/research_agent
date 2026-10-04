@@ -23,7 +23,10 @@ result.json、未释放的 family 锁、孤儿线程。
 2. `GraphContext.cancel_event` 传入图；五个节点（plan / execute /
    supervise / plan_revision / curate）开头统一调用 `_check_cancelled(ctx)`，
    已取消则抛 `ResearchError(code="cancelled")`。取消最迟在**当前节点
-   完成后**生效（几秒级）。
+   完成后**生效——多数节点是单次 LLM 调用（10~30s 级）；execute 节点
+   内部要跑完一整批子任务才回到边界，实际可达分钟级（2026-09-30
+   R-311 措辞修正：原文"几秒级"对 execute 节点不成立；如需更快取消，
+   未来可在子任务完成回调里加协作检查点，属演进方向）。
 3. `_run_graph` 捕获 `code=cancelled` → 复用 `_persist_failed` 落盘
    `status="failed"` + `error={code: "cancelled", message: "Cancelled by user."}`，
    发 `task_result` 终止事件；family 锁由既有后台清理路径释放。

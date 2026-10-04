@@ -23,6 +23,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from research_agent.core.local_research import rrf_fuse
+
 logger = logging.getLogger(__name__)
 
 _CHUNK_SIZE = 1200
@@ -153,15 +155,16 @@ class TaskChatIndex:
         allowed = set(source_ids)
         if not allowed or not self._fts_path.exists():
             return []
-        candidates: dict[str, dict[str, Any]] = {}
-        for rank, chunk in enumerate(self._fts_search(query, allowed, limit=top_k * 3)):
-            candidates.setdefault(chunk["chunk_id"], {**chunk, "score": 0.0})
-            candidates[chunk["chunk_id"]]["score"] += 1.0 / (60 + rank)
-        for rank, chunk in enumerate(self._vector_search(query, allowed, limit=top_k * 3)):
-            candidates.setdefault(chunk["chunk_id"], {**chunk, "score": 0.0})
-            candidates[chunk["chunk_id"]]["score"] += 1.0 / (60 + rank)
-        ranked = sorted(candidates.values(), key=lambda c: c["score"], reverse=True)[:top_k]
-        return ranked
+        # ADR-0057: same RRF fusion as the global hybrid retrieval, keyed by
+        # this index's chunk_id (chunks have no path/offset fields).
+        return rrf_fuse(
+            [
+                self._fts_search(query, allowed, limit=top_k * 3),
+                self._vector_search(query, allowed, limit=top_k * 3),
+            ],
+            top_k=top_k,
+            dedup_key=lambda chunk: str(chunk["chunk_id"]),
+        )
 
     def _fts_search(self, query: str, allowed: set[str], limit: int) -> list[dict[str, Any]]:
         try:

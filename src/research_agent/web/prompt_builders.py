@@ -197,7 +197,9 @@ def _format_tool_result(index: int, result: dict) -> str:
     status = result.get("status", "unknown")
     if status == "ok":
         data = result.get("data", {})
-        if tool_name in {"web.search", "scholar.search"}:
+        # ADR-0059 (R-305): the .search family (github/news) shares the
+        # results shape with web.search/scholar.search.
+        if tool_name.endswith(".search"):
             search_results = data.get("results", [])
             lines = [f"\n--- Tool Call {index}: {tool_name} (status: {status}) ---"]
             for j, sr in enumerate(search_results[:5], 1):
@@ -209,6 +211,21 @@ def _format_tool_result(index: int, result: dict) -> str:
                     lines.append(f"  Result {j}: {title}\n  Authors: {authors}\n  URL: {url}\n  Snippet: {snippet}\n")
                 else:
                     lines.append(f"  Result {j}: {title}\n  URL: {url}\n  Snippet: {snippet}\n")
+            return "\n".join(lines)
+        if tool_name == "web.crawl_site":
+            # Each crawled page: URL + bounded text so synthesis can quote it.
+            lines = [f"\n--- Tool Call {index}: {tool_name} (status: {status}) ---"]
+            for j, page in enumerate(data.get("pages", [])[:10], 1):
+                lines.append(f"  Page {j}: {page.get('url', 'No URL')}\n  Text: {page.get('text', '')[:500]}\n")
+            return "\n".join(lines)
+        if tool_name == "data.fetch_table":
+            # ADR-0059: tables render as a dedicated markdown preview block.
+            lines = [
+                f"\n--- Tool Call {index}: {tool_name} (status: {status}) ---",
+                f"Rows: {data.get('rows', 0)} (excluding header) x Cols: {data.get('cols', 0)}",
+                "Preview:",
+                str(data.get("preview", "")),
+            ]
             return "\n".join(lines)
         if tool_name == "code.run_python":
             lines = [

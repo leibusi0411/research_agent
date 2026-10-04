@@ -272,9 +272,8 @@ class YouTubeTranscriptProvider:
             from youtube_transcript_api import YouTubeTranscriptApi
 
             api = YouTubeTranscriptApi()
-            transcript_fetch = lambda video_id, languages: api.fetch(  # noqa: E731
-                video_id, languages=languages
-            )
+            def transcript_fetch(video_id: str, languages: list[str]):
+                return api.fetch(video_id, languages=languages)
         self._fetch = transcript_fetch
 
     def fetch(self, video_id: str) -> str:
@@ -676,7 +675,7 @@ class ToolRunner:
                 rows.append(["" if cell is None else str(cell) for cell in row])
         else:
             text = response.content.decode("utf-8-sig", errors="replace")
-            rows = [[cell for cell in row] for row in csv.reader(text.splitlines()) if row]
+            rows = [row for row in csv.reader(text.splitlines()) if row]
         rows = [row for row in rows if any(cell.strip() for cell in row)]
         if not rows:
             return ToolResult(status="error", error="permanent_error", message="Table is empty or unreadable.")
@@ -789,10 +788,6 @@ class ToolRunner:
 
 _CRAWL_MAX_PAGES = 10
 _CRAWL_PAGE_TEXT_CHARS = 4_000
-
-
-class SiteCrawlMixin:
-    """Shared crawl helpers used by ToolRunner (R-290)."""
 
 
 def _extract_sitemap_urls(seed_url: str, body: str) -> list[str]:

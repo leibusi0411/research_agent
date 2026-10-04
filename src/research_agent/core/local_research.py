@@ -240,19 +240,22 @@ def rrf_fuse(
     *,
     top_k: int | None,
     k: int = 60,
+    dedup_key: Callable[[dict[str, Any]], str] | None = None,
 ) -> list[dict[str, Any]]:
     """Reciprocal Rank Fusion across ranked result lists (ADR-0052).
 
-    Shared by single-question hybrid retrieval and Multi-Query fusion: each
-    list contributes ``1 / (k + rank)`` to the chunk keyed by
-    ``source_path:start:end``; the first-seen record wins for display, and
-    the fused order is truncated to *top_k* (``None`` keeps every chunk).
+    Shared by single-question hybrid retrieval, Multi-Query fusion, and the
+    task chat index (ADR-0057): each list contributes ``1 / (k + rank)`` to
+    the chunk keyed by *dedup_key* (default ``source_path:start:end``); the
+    first-seen record wins for display, and the fused order is truncated to
+    *top_k* (``None`` keeps every chunk).
     """
+    key_of = dedup_key or _dedup_key
     rrf_scores: dict[str, float] = {}
     result_map: dict[str, dict[str, Any]] = {}
     for results in result_lists:
         for rank, item in enumerate(results, start=1):
-            key = _dedup_key(item)
+            key = key_of(item)
             rrf_scores[key] = rrf_scores.get(key, 0) + 1.0 / (k + rank)
             if key not in result_map:
                 result_map[key] = item

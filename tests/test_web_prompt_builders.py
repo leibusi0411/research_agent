@@ -236,3 +236,68 @@ def test_build_planner_prompt_bounds_prior_knowledge_section():
     assert "notes/n4.md" in prompt
     assert "notes/n5.md" not in prompt  # at most 5 chunks rendered
     assert "x" * 801 not in prompt  # each chunk truncated to 800 chars
+
+
+# ---------------------------------------------------------------------------
+# ADR-0059: tool result rendering generalized to the new tool family (R-305)
+# ---------------------------------------------------------------------------
+
+from research_agent.web.prompt_builders import build_executor_synthesis_prompt
+from research_agent.web.schemas import ResearchSubtask
+
+
+def _synthesis_prompt_for(tool: str, data: dict) -> str:
+    state = create_initial_state(original_question="root")
+    state["subtasks"] = [ResearchSubtask(subtask_id="st_1", question="sub question")]
+    return build_executor_synthesis_prompt(
+        state,
+        "st_1",
+        [{"tool": tool, "status": "ok", "arguments": {}, "data": data}],
+    )
+
+
+def test_format_renders_github_search_results():
+    prompt = _synthesis_prompt_for("github.search", {
+        "results": [{"title": "langgraph repo", "url": "https://github.com/x/y", "content": "State graph framework."}],
+    })
+
+    assert "langgraph repo" in prompt
+    assert "https://github.com/x/y" in prompt
+    assert "State graph framework." in prompt
+    assert "Content preview: \n" not in prompt
+
+
+def test_format_renders_news_search_results():
+    prompt = _synthesis_prompt_for("news.search", {
+        "results": [{"title": "Release notes", "url": "https://news.example/1", "snippet": "v2 shipped today."}],
+    })
+
+    assert "Release notes" in prompt
+    assert "v2 shipped today." in prompt
+    assert "Content preview: \n" not in prompt
+
+
+def test_format_renders_crawl_site_pages():
+    prompt = _synthesis_prompt_for("web.crawl_site", {
+        "pages": [
+            {"url": "https://docs.example/a", "text": "Getting started guide." * 20},
+            {"url": "https://docs.example/b", "text": "API reference."},
+        ],
+        "count": 2,
+    })
+
+    assert "https://docs.example/a" in prompt
+    assert "Getting started guide." in prompt
+    assert "https://docs.example/b" in prompt
+    assert "API reference." in prompt
+    assert "Content preview: \n" not in prompt
+
+
+def test_format_renders_fetch_table_preview_block():
+    table = "| name | stars |\n|---|---|\n| langgraph | 1000 |"
+    prompt = _synthesis_prompt_for("data.fetch_table", {"rows": 1, "cols": 2, "preview": table})
+
+    assert "name" in prompt
+    assert "langgraph" in prompt
+    assert "1000" in prompt
+    assert "Content preview: \n" not in prompt

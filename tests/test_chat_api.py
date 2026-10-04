@@ -607,3 +607,44 @@ def test_chat_history_includes_prior_evidence_summaries(tmp_path):
     second = client.post(f"/api/tasks/{task_id}/chat", json={"message": "second question"})
     assert second.status_code == 200
     assert 'web: "topic"' in holder["model"].prompts[0]
+
+
+def test_chat_round_cap_forces_final_plain_answer(tmp_path):
+    """R-306: when the last round still requests evidence, the hint must reach
+    the model via one final tools-free call, and the persisted reply is that
+    text answer — never an empty string from a tool_calls turn."""
+    gateway = _FakeGateway([_tool_ok({"results": []}), _tool_ok({"results": []})])
+
+    class _AlwaysToolsChatModel:
+        """Answers every tooled call with a WEB request; plain text when no tools."""
+
+        def __init__(self) -> None:
+            self.final_text = "Forced final answer."
+            self.calls: list[list] = []
+            self.prompts: list[str] = []
+
+        def complete(self, prompt: str, *, json_mode: bool = False) -> str:
+            return self.final_text
+
+        def complete_with_tools(self, prompt: str, *, tools):
+            self.calls.append(list(tools))
+            self.prompts.append(prompt)
+            if tools:
+                return ChatTurn(tool_calls=[("web_search", {"query": "more"})])
+            return ChatTurn(text=self.final_text)
+
+    chat_model = _AlwaysToolsChatModel()
+    client, workspace = _chat_client_with_tools(tmp_path, chat_model, gateway, _FakeLocalRetriever())
+    task_id = _write_completed_web_task(workspace)
+
+    sent = client.post(f"/api/tasks/{task_id}/chat", json={"message": "别再搜了，直接回答"})
+
+    assert sent.status_code == 200
+    assert sent.json()["reply"] == "Forced final answer."
+    # The final call carried no tools, and the round-budget hint reached it.
+    assert chat_model.calls[-1] == []
+    assert "plain text" in chat_model.prompts[-1]
+    # The persisted assistant turn is the forced answer, not an empty string.
+    history = client.get(f"/api/tasks/{task_id}/chat").json()["messages"]
+    assert history[-1]["role"] == "assistant"
+    assert history[-1]["content"] == "Forced final answer."

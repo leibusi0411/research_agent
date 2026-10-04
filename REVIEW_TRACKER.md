@@ -7,7 +7,7 @@
 >
 > 每次 review 和修复完成后必须及时更新本文档。
 >
-> 最后更新：2026-09-25 | 测试：Python 离线 265 个（264 通过；test_search_api 因用户 Tavily 配额耗尽 HTTP 432 暂失败，与本仓库代码无关）+ 前端 Vitest 38 + Playwright e2e 全绿 | 第十三轮实现+审查：Executor Output Log 子任务级持久化与重入跳过（ADR-0056，审查 R-285~R-294：9 修复 1 随提交处理） | 第十二轮（2026-09-18，R-276~R-284）：本地前置检索 per-run 开关、Curator 分章报告（ADR-0054）、References 显式导入、CLI 移除（ADR-0055） | 线上调整（2026-09-16）：功能开关取消、配置即开关（ADR-0052/0053 演进）| 第十一轮：Multi-Query 改写 + Cross-Encoder rerank（ADR-0052/0053）
+> 最后更新：2026-09-30 | 测试：Python 离线 265 个（test_search_api 因用户 Tavily 配额耗尽 HTTP 432 暂失败，与本仓库代码无关）+ 前端 Vitest 38 + Playwright e2e 全绿 | 第十四轮审查+修复：双轴 review 十二提交，R-305~R-319 共 15 项（12 修复 3 接受） | 第十三轮：Executor Output Log（ADR-0056，审查 R-295~R-304，原编号撞号已重编） | 第十二轮（2026-09-18，R-276~R-284）：per-run 本地前置开关、Curator 分章报告（ADR-0054）、References 导入、CLI 移除（ADR-0055）
 
 ---
 
@@ -73,6 +73,30 @@
 - 配置解析对旧 TOML 中残留的开关键静默忽略（向后兼容）；设置保存不再渲染开关行
 - 测试：后端离线 266 passed / Vitest 32 passed / Playwright 1 passed；ADR-0052/0053 加演进注记，CONTEXT/AGENTS/USAGE/TODO 同步
 
+### 第十四轮审查+修复（2026-09-30，双轴 review：eccf134...eac9cfb 十二提交）
+
+**审查方式**：code-review skill——Standards 轴与 Spec 轴并行 subagent 审查（本机拉取另一台机器的 12 个提交后对 `eccf134...eac9cfb` 全量 diff），两轴独立计分。结论：Standards PASS with findings（4 硬违规 + 6 判断题）、Spec PASS with findings（a×1、c×3、b×0）。
+
+| 编号 | 级别 | 描述 | 修复 |
+|------|------|------|------|
+| R-305 | P1 | Spec：ADR-0059 要求"`_format_tool_result` 的 results 渲染泛化到 .search 家族，表格走专属预览块"未实现——github.search/news.search/web.crawl_site/data.fetch_table 的 ok 结果落入 else 分支渲染出空 "Content preview"，**Executor 合成阶段看不到四类新工具的产出，新工具调研效用被架空**；且无渲染测试 | ✅ `.search` 后缀泛化（github/news 免改即中）+ crawl 逐页（url+500 字符文本，≤10 页）+ fetch_table 专属 markdown 预览块（rows/cols/preview）；+4 渲染测试 |
+| R-306 | P2 | Spec：chat 轮次上限分支追加"answer in plain text"提示后立即 break——提示无下一轮可送达，且带 tool_calls 的 ChatTurn.text 为空串，**空回复落盘 chat.jsonl 并返回用户** | ✅ 最后一轮有取证请求时做一次 tools=[] 的强制收尾调用（提示真实送达模型），reply 为空时兜底文案，绝不持久化空回复；+1 测试（fake 记录每次 tools 参数，断言末次调用 tools=[] 且提示在末次 prompt 中） |
+| R-307 | P2 | Standards：REVIEW_TRACKER 表格损坏——第十三轮 4 列审查行与第十二轮 3 列功能行被并行编辑粘连成一张表（R-291 功能行截断 + 孤悬片段），且两机并行使用同一 R-285~R-294 编号段 | ✅ 功能行（提交信息绑定编号）归位第十二轮节；第十三轮审查发现重编为 R-295~R-304 并加撞号说明；截断行用孤悬片段拼合；本表顺延 R-305 起 |
+| R-308 | P3 | Standards：`web/tools.py` `SiteCrawlMixin` 空壳死代码（仅 docstring 零引用） | ✅ 删除 |
+| R-309 | P3 | Standards：App.tsx `cancelTask` 空 if 块无语句且注释与代码顺序相反 | ✅ 删除，注释改写为如实描述 |
+| R-310 | P3 | Standards：AGENTS.md ADR 计数"58 个（0001~0058）"失实（实际 60 篇 0001~0060） | ✅ 更正 |
+| R-311 | P3 | Spec：ADR-0058 承诺取消"几秒级"生效，但 execute 节点内部跑完整轮子任务才回边界，实际可达分钟级（实现忠实决策节，属 ADR 承诺过于乐观） | ✅ ADR 措辞修正：区分单 LLM 节点（10~30s）与 execute 批量节点（分钟级），注明子任务级协作检查点为演进方向 |
+| R-312 | P3 | Spec：`inject_local_context=false` 时对话 LOCAL 动作恒 unavailable，与"开关只管调研前自动注入"精神有张力 | ⚠️ 接受：ADR-0050 明言 LOCAL 复用 Planner retriever，装配语义一致；改动需引入独立 retriever 装配路径，收益不成比例 |
+| R-313 | P3 | Standards：`chat_index.py` 内联重写 RRF 融合（k=60 常量与算法双份） | ✅ `rrf_fuse` 增可选 `dedup_key` 参数（chat chunks 无 path/offset 字段，键改为 chunk_id），chat_index 复用；score 字段无消费方一并去除 |
+| R-314 | P3 | Standards：`ChatToolbox.local_retriever` 裸 `Any`，与"运行时抽象用 Protocol"精神不符 | ⚠️ 接受：retriever 返回 list[PriorKnowledgeChunk] 且仅 chat.py 单点消费，对齐 Protocol 需跨模块调整，收益低 |
+| R-315 | nit | Standards：`_run_evidence_action` 对已知工具也注入 "Unknown evidence tool" 文案（名不副实） | ✅ 随 R-306 重构消除：未知工具才进该分支 |
+| R-316 | nit | Standards：`_run_fetch_table` 的 `[[cell for cell in row] ...]` 无操作复制 | ✅ 简化为直接使用 csv.reader 行 |
+| R-317 | nit | Standards：YouTube provider 用 lambda+noqa(E731) 赋值 | ✅ 改 def |
+| R-318 | nit | Standards：`config_missing` 用于"模型不支持工具调用"，与该码"用户未配置"语义错位 | ⚠️ 接受：tracker R-294 行记录为有意选择（复用既有错误码），如需拆分属阶段 9 细粒度错误码工作 |
+| R-319 | P2 | 拉取提交的 `App.test.tsx` 用了 `ByRoleOptions` 不存在的 `exact` 字段（6 处），本机 `tsc -b` 构建被挡（另一台机器可能 testing-library 版本不同或未跑构建；运行时该参数本被忽略，vitest 仍全绿） | ✅ 移除 6 处 `exact: true`（ByRole name 本为全字符串匹配，语义无变化）；tsc 清零，build 通过 |
+
+**已验证**：后端离线全绿（test_search_api 因 Tavily 配额 HTTP 432 排除，与代码无关）；prompt/chat/tools 专项 +9 测试；前端 tsc 清零 + vitest 43 passed + e2e 1 passed + build 通过，dist 随提交更新。
+
 ### 第十三轮实现+审查（2026-09-25，Executor Output Log / ADR-0056）
 
 **动机**：LangGraph checkpoint 是节点级，execute 节点中途崩溃会丢掉批内已完成子任务的结果，恢复/重跑需整批重来。本加固把持久化粒度提前到"每个子任务完成即落盘"，且不依赖完整恢复功能——任何未来的重入机制（checkpoint 恢复、任务重跑按钮）直接受益。
@@ -84,30 +108,20 @@
 
 **测试**：`tests/test_executor_recovery.py` 8 个（落盘即时性用 on_progress 回调在慢子任务仍在跑时断言快子任务已上盘、重入复用、已合并重跑、坏行容错、追加失败不抛、无 log 回退、图级重入 `_execute_node` 二次调用不重跑）+ 全流程集成断言（2 子任务 2 行记录）。
 
-**subagent 审查（R-285~R-294，PASS with findings，全部处理）**：
+**subagent 审查（R-295~R-304，PASS with findings，全部处理）。编号说明：本表原记 R-285~R-294，与第十二轮实现记录（提交信息绑定）撞号，2026-09-30 重编**：
 
 | 编号 | 级别 | 描述 | 修复 |
 |------|------|------|------|
-| R-285 | P2 | uv.lock 被本机清华镜像环境全量重写（URL 换源），与改动无关 | ✅ 提交前 `git checkout -- uv.lock` 剔离 |
-| R-286 | 用户需求：调研任务运行中提供中断按钮 | ✅ ADR-0058：协作式取消——runner.request_cancel() 设 Event，GraphContext 传入图，5 节点开头 _check_cancelled 抛 code=cancelled；_run_graph 捕获 → _persist_failed（status=failed + error.code=cancelled，不引入独立状态）+ task_result 终止事件 + 锁经既有路径释放；POST /api/tasks/{id}/cancel（无活跃 runtime 404）；前端 Trace 卡 Cancel 按钮（Cancelling… 反馈），SSE 驱动 finishTask；踩坑：run() 重建 Event 覆盖了 run 前的取消请求（改 __init__ 一次创建不复位）；Local RAG 单次同步调用不可取消（说明即不做）；测试 +1 图层 +1 API |
-| R-287 | 用户反馈：调研过程一下涌出大量静态内容不流畅；希望子任务/工具调用/发现以固定窄区动态流动展示，可点击看细节 | ✅ 新 FlowFeed 组件：运行中 Trace 卡内 168px 固定高度窄条带——事件驱动单行 chip 流入（240ms 上浮动画），分色（子任务蓝/工具黄/发现绿/来源青/阶段灰），自动吸底滚动（用户上翻即暂停），chip 可点击内联展开详情（工具入参/发现归属/来源路径），来源 chip 带 open 链接；底部脉冲条指示运行中；完成后自动切回静态分组 ProcessView（保持既有汇总视图）；后端配合：plan completed 事件补 subtask questions items（此前只有计数，子任务内容不可见）；测试 +4 组件 +1 e2e 几何断言（高度 ≤170、宽高比 >2）+ 截图自查 |
-| R-288 | 用户反馈：Deposit 按钮移到 Web Report 折叠头右侧；报告底部的 Findings 区不再展示 | ✅ FoldCard 增加 headExtra 插槽（chevron 前，点击不触发折叠）；报告卡头部内联 Deposit（紧凑胶囊：Deposit → ✓ Deposited → Rebuild → ✓ Indexed，vault 路径转 title 悬浮，错误转 title）；底部大按钮形态保留给需要时的调用方；报告卡移除 Findings 区（报告正文 sections 已综合 findings）；deposit 三测试 + e2e 断言同步更新；截图自查两种状态 |
-| R-289 | 用户反馈：Deposit 位置不好看应放右边；任务完成后每张卡默认折叠；折叠后各卡高度要一致 | ✅ 三项：① 根因是 .card-fold-chev 与 .card-fold-extra 双 margin-left:auto 平分剩余空间致 Deposit 悬在中间——相邻选择器清除 chevron 的 auto，Deposit 贴右紧邻 chevron；② 完成后默认折叠——Trace/Report/Notes/Sources 全部 defaultOpen=false（Trace 以 running 作初始值 + key 强制 running→done 重挂载使完成时收起）；③ 折叠态统一 min-height 52px + 0 24px 对称 padding（原三卡头部内容各自撑高 76/72/56 不齐）；e2e 几何断言三卡高度差 <2px + Deposit 贴右 <60px + 截图自查；测试适配（默认折叠后先展开再断言 body，e2e 处理 trace 重挂载窗口吞点击）|
-| R-290 | 用户选定六项工具扩展：scholar 扩源（S2/Crossref）、GitHub、GDELT 新闻、站点爬取、YouTube 字幕、CSV/XLSX 表格 | ✅ ADR-0059：检索类——AggregatedScholarProvider 轮转合并 arXiv+Crossref（S2 需 [search].semantic_scholar_api_key 可选启用，单源失败降级）、github.search（免 key 60/h + 可选 key，强制 UA）、news.search（GDELT artlist 免 key）；阅读类——web.crawl_site（sitemap 优先 + 同域链接回退，≤10 页 × 4k，跨域剪枝）、media.youtube_transcript（youtube-transcript-api 免 key，en/zh）、data.fetch_table（CSV/XLSX→markdown 预览，openpyxl 新依赖）；配置新增 search.semantic_scholar_api_key/github_api_key（可选，存量 config 兼容）；提示词逐工具时机指引 + .search 家族渲染泛化；免 key 真实验证 GitHub ✅（langgraph 42k stars）/学术聚合 ✅（arXiv+DOI 交错）/GDELT 429（共享 IP，transient 重试正确）；测试 +8；全量绿 |
-| R-291 | 用户需求：vault 含 Word/PPT 等多格式文件，补齐 docx+pptx+epub（图片 OCR 明确不做） | ✅ ADR-0060：抽取重构为公共 kb.extract_text_from_bytes（六格式单点，KB 索引与 web.fetch_extract 共用）；SUPPORTED_SUFFIXES 增补三格式走通用切块（无 md 专属增强，增量更新照常）；fetch_extract 按 MIME+octet-stream 后缀回退分流（对齐 R-31 规则）；docx=段落+表格、pptx=[Slide N] 文本框、epub=zip 内 xhtml 剥标签；新依赖 python-docx/python-pptx；旧 .doc/OCR/音频转写明确不做并记录理由；测试 +2（KB 三格式索引 / fetch_extract docx）；实现期间 Git Bash heredoc 连续吃转义（
-| R-292 | 用户需求：对话应结合内容思考回答而非只依据研究上下文，且可进行相关查询 | ✅ ADR-0050 演进：系统指令改接地结合式（研究优先+[S#] 引用、允许结合自身知识但须区分、禁编造不变）；新增 SEARCH: 再检索协议——首行 SEARCH: <query> 触发任务索引增量检索（去重合并，无新块注入提示），≤2 次 requery/3 次调用上限，SEARCH 中间轮不落盘；无导入源时协议不生效；测试 +3（指令断言/循环检索/上限截断）；实现期间 heredoc 转义坑两次，Edit 修复 |
-| R-293 | 用户定稿设计：对话可对某点细致调研——回头细看调研内容 + 必要时网络/本地再取证，且绝不并入原调研阶段 | ✅ ADR-0050 再演进：四动作协议（SEARCH 导入原文/WEB 网络/READ 读页/LOCAL vault），WEB/READ 走与执行器共享的 ToolGateway（build_shared_tool_gateway 提取自 create_provider_runtime），LOCAL 复用 Planner retriever 且不受 Check-local-first 约束；预算每类 ≤2/每问 ≤4 动作/≤5 轮调用；证据只进对话 prompt + chat_evidence.jsonl（append-only，后续轮次单行摘要回放），调研产物零写入；引用芯片分色 [S]蓝/[W]黄/[L]绿/[R]灰；测试 +5 后端 +1 前端；实现期间 heredoc 转义损坏一次 chat.py，git checkout 回基线后全程 Edit 重写 |
-| R-294 | 用户要求实现更优雅的终态方案：对话取证切原生 function calling | ✅ providers 新增 ChatTurn（tool_calls 或纯文本联合返回、无 JSON fallback——自然语言是对话正常结局）+ complete_with_tools（多工具/截断显式报错）；chat.py 注册四证据工具 schema（search_sources/web_search/read_page/local_search，语义进 tool description），首行协议 _parse_action 退役——消除格式容错弱点（动作行写歪泄漏给用户）；预算守门/证据隔离落盘/芯片分色全保留；测试 fake 全面适配 ChatTurn（+3 providers 测试：tool_calls 通道/纯文本直通/截断）；不支持工具调用的模型报 config_missing |
-、反向引用）——已全部以 Edit 工具修复，教训再确认 |
-| R-286 | P2 | 页头把 ADR-0056 误记为 R-276（已被 2026-09-18 占用）且轮次号与既有第十二轮冲突 | ✅ 本轮改记第十三轮、删除 R-276 误引 |
-| R-287 | P2 | 仓库根目录未跟踪的 `简历项目介绍.md` 有误提交风险 | ✅ 加入 .gitignore |
-| R-288 | P3 | 新页头丢测试计数并抹掉历史轮次链 | ✅ 恢复计数与十~十二轮摘要 |
-| R-289 | P3 | ADR-0056 称复用时不补写来源快照，与实现不符（`_saved_source_ids` 是进程内存态，恢复进程会照常写快照，方向有利） | ✅ ADR 措辞修正 |
-| R-290 | P3 | append 位于成功分支 try 内，非 OSError 异常会把成功子任务扭曲成 failed | ✅ append 移出 try/except + append 内部捕获放宽到 Exception |
-| R-291 | P3 | 测试 5 处直接摸 `log._path` 私有属性 | ✅ ExecutorOutputLog 暴露公开 `path` property，测试改用 |
-| R-292 | P3 | 重入语义只有 executor 层测试，缺 `_execute_node` 图级重入测试 | ✅ +1 图级测试（二次调用不重跑、log 仍 1 行） |
-| R-293 | P3 | AGENTS.md 测试/ADR 计数过时 | ✅ 更新（离线 264、ADR 56） |
-| R-294 | nit | 复用/正常路径手写重复的 subtask_completed 事件 dict | ✅ 提取 `_notify_subtask_completed` 共用 |
+| R-295 | P2 | uv.lock 被本机清华镜像环境全量重写（URL 换源），与改动无关 | ✅ 提交前 `git checkout -- uv.lock` 剔离 |
+| R-296 | P2 | 页头把 ADR-0056 误记为 R-276（已被 2026-09-18 占用）且轮次号与既有第十二轮冲突 | ✅ 本轮改记第十三轮、删除 R-276 误引 |
+| R-297 | P2 | 仓库根目录未跟踪的 `简历项目介绍.md` 有误提交风险 | ✅ 加入 .gitignore |
+| R-298 | P3 | 新页头丢测试计数并抹掉历史轮次链 | ✅ 恢复计数与十~十二轮摘要 |
+| R-299 | P3 | ADR-0056 称复用时不补写来源快照，与实现不符（`_saved_source_ids` 是进程内存态，恢复进程会照常写快照，方向有利） | ✅ ADR 措辞修正 |
+| R-300 | P3 | append 位于成功分支 try 内，非 OSError 异常会把成功子任务扭曲成 failed | ✅ append 移出 try/except + append 内部捕获放宽到 Exception |
+| R-301 | P3 | 测试 5 处直接摸 `log._path` 私有属性 | ✅ ExecutorOutputLog 暴露公开 `path` property，测试改用 |
+| R-302 | P3 | 重入语义只有 executor 层测试，缺 `_execute_node` 图级重入测试 | ✅ +1 图级测试（二次调用不重跑、log 仍 1 行） |
+| R-303 | P3 | AGENTS.md 测试/ADR 计数过时 | ✅ 更新（离线 264、ADR 56） |
+| R-304 | nit | 复用/正常路径手写重复的 subtask_completed 事件 dict | ✅ 提取 `_notify_subtask_completed` 共用 |
 
 ### 第八轮审查存档（2026-09-09，历史 ADR 对照最新代码）
 
@@ -199,6 +213,15 @@
 | R-283 | 用户需求：问答参考资料改为显式导入——选好后点导入才生效（默认不导入），支持追加导入，上限 50 | ✅ 前端 References 卡重做（勾选=暂存、Import selected 按钮入集合、Imported 徽章+checkbox 禁用、追加分批、N/50 计数、超限按钮禁用提示剩余配额、未导入时 Send 禁用+空态引导）；后端 selected_sources 语义拆分：显式 [] = 无来源接地（仅 summary+sections）、缺省 = 全量（兼容）；>50 报 config_invalid；测试 +6 |
 | R-284 | 用户需求：删除 CLI 模式 | ✅ ADR-0055：删 `research_agent.cli` + `research-agent` 入口点（pyproject scripts）；service 孤儿清理（run_both/_run_family_result/_safe_future_result；run_web_research/run_local_research 保留为测试与脚本复用入口）；config_missing 文案改 Web Settings 引导；测试清理（CLI 子进程用例、TestPrintWebEvent、use_case_shells 的 run_both）；ADR-0011 演进注记；AGENTS/README/USAGE/CONTEXT/CLAUDE 全面同步（结构图/命令/双界面表述/8 词条）；离线全量 257 绿 |
 | R-285 | 用户确认设计：导入来源 = 原文可对话（NotebookLM 式），任务级隔离索引、追加导入触发增量更新，关心是否增加模型调用 | ✅ ADR-0057：① Executor 原文落盘（source_text_sink → artifacts/source_texts/{sha1(url)[:16]}.txt，失败降级）；② TaskChatIndex（core/chat_index.py，tasks/{id}/chat_index/ FTS5+Chroma 物理隔离于 indexes/，imports.json 幂等增量，混合检索 RRF top-6，向量失败降级 FTS5）；③ chat.py 导入集合非空时建索引+检索，原文块注入 [Imported sources — retrieved excerpts]；成本：索引零 chat-model 调用（切块纯代码+embedding API 每来源一次），每问 +1 查询向量；测试 +2（索引隔离落位/增量幂等），executor 套件 34 绿 |
+| R-286 | 用户需求：调研任务运行中提供中断按钮 | ✅ ADR-0058：协作式取消——runner.request_cancel() 设 Event，GraphContext 传入图，5 节点开头 _check_cancelled 抛 code=cancelled；_run_graph 捕获 → _persist_failed（status=failed + error.code=cancelled，不引入独立状态）+ task_result 终止事件 + 锁经既有路径释放；POST /api/tasks/{id}/cancel（无活跃 runtime 404）；前端 Trace 卡 Cancel 按钮（Cancelling… 反馈），SSE 驱动 finishTask；踩坑：run() 重建 Event 覆盖了 run 前的取消请求（改 __init__ 一次创建不复位）；Local RAG 单次同步调用不可取消（说明即不做）；测试 +1 图层 +1 API |
+| R-287 | 用户反馈：调研过程一下涌出大量静态内容不流畅；希望子任务/工具调用/发现以固定窄区动态流动展示，可点击看细节 | ✅ 新 FlowFeed 组件：运行中 Trace 卡内 168px 固定高度窄条带——事件驱动单行 chip 流入（240ms 上浮动画），分色（子任务蓝/工具黄/发现绿/来源青/阶段灰），自动吸底滚动（用户上翻即暂停），chip 可点击内联展开详情（工具入参/发现归属/来源路径），来源 chip 带 open 链接；底部脉冲条指示运行中；完成后自动切回静态分组 ProcessView（保持既有汇总视图）；后端配合：plan completed 事件补 subtask questions items（此前只有计数，子任务内容不可见）；测试 +4 组件 +1 e2e 几何断言（高度 ≤170、宽高比 >2）+ 截图自查 |
+| R-288 | 用户反馈：Deposit 按钮移到 Web Report 折叠头右侧；报告底部的 Findings 区不再展示 | ✅ FoldCard 增加 headExtra 插槽（chevron 前，点击不触发折叠）；报告卡头部内联 Deposit（紧凑胶囊：Deposit → ✓ Deposited → Rebuild → ✓ Indexed，vault 路径转 title 悬浮，错误转 title）；底部大按钮形态保留给需要时的调用方；报告卡移除 Findings 区（报告正文 sections 已综合 findings）；deposit 三测试 + e2e 断言同步更新；截图自查两种状态 |
+| R-289 | 用户反馈：Deposit 位置不好看应放右边；任务完成后每张卡默认折叠；折叠后各卡高度要一致 | ✅ 三项：① 根因是 .card-fold-chev 与 .card-fold-extra 双 margin-left:auto 平分剩余空间致 Deposit 悬在中间——相邻选择器清除 chevron 的 auto，Deposit 贴右紧邻 chevron；② 完成后默认折叠——Trace/Report/Notes/Sources 全部 defaultOpen=false（Trace 以 running 作初始值 + key 强制 running→done 重挂载使完成时收起）；③ 折叠态统一 min-height 52px + 0 24px 对称 padding（原三卡头部内容各自撑高 76/72/56 不齐）；e2e 几何断言三卡高度差 <2px + Deposit 贴右 <60px + 截图自查；测试适配（默认折叠后先展开再断言 body，e2e 处理 trace 重挂载窗口吞点击）|
+| R-290 | 用户选定六项工具扩展：scholar 扩源（S2/Crossref）、GitHub、GDELT 新闻、站点爬取、YouTube 字幕、CSV/XLSX 表格 | ✅ ADR-0059：检索类——AggregatedScholarProvider 轮转合并 arXiv+Crossref（S2 需 [search].semantic_scholar_api_key 可选启用，单源失败降级）、github.search（免 key 60/h + 可选 key，强制 UA）、news.search（GDELT artlist 免 key）；阅读类——web.crawl_site（sitemap 优先 + 同域链接回退，≤10 页 × 4k，跨域剪枝）、media.youtube_transcript（youtube-transcript-api 免 key，en/zh）、data.fetch_table（CSV/XLSX→markdown 预览，openpyxl 新依赖）；配置新增 search.semantic_scholar_api_key/github_api_key（可选，存量 config 兼容）；提示词逐工具时机指引 + .search 家族渲染泛化；免 key 真实验证 GitHub ✅（langgraph 42k stars）/学术聚合 ✅（arXiv+DOI 交错）/GDELT 429（共享 IP，transient 重试正确）；测试 +8；全量绿 |
+| R-291 | 用户需求：vault 含 Word/PPT 等多格式文件，补齐 docx+pptx+epub（图片 OCR 明确不做） | ✅ ADR-0060：抽取重构为公共 kb.extract_text_from_bytes（六格式单点，KB 索引与 web.fetch_extract 共用）；SUPPORTED_SUFFIXES 增补三格式走通用切块（无 md 专属增强，增量更新照常）；fetch_extract 按 MIME+octet-stream 后缀回退分流（对齐 R-31 规则）；docx=段落+表格、pptx=[Slide N] 文本框、epub=zip 内 xhtml 剥标签；新依赖 python-docx/python-pptx；旧 .doc/OCR/音频转写明确不做并记录理由；测试 +2（KB 三格式索引 / fetch_extract docx）；实现期间 Git Bash heredoc 连续吃转义（转义损坏、反向引用）——已全部以 Edit 工具修复，教训再确认 |
+| R-292 | 用户需求：对话应结合内容思考回答而非只依据研究上下文，且可进行相关查询 | ✅ ADR-0050 演进：系统指令改接地结合式（研究优先+[S#] 引用、允许结合自身知识但须区分、禁编造不变）；新增 SEARCH: 再检索协议——首行 SEARCH: <query> 触发任务索引增量检索（去重合并，无新块注入提示），≤2 次 requery/3 次调用上限，SEARCH 中间轮不落盘；无导入源时协议不生效；测试 +3（指令断言/循环检索/上限截断）；实现期间 heredoc 转义坑两次，Edit 修复 |
+| R-293 | 用户定稿设计：对话可对某点细致调研——回头细看调研内容 + 必要时网络/本地再取证，且绝不并入原调研阶段 | ✅ ADR-0050 再演进：四动作协议（SEARCH 导入原文/WEB 网络/READ 读页/LOCAL vault），WEB/READ 走与执行器共享的 ToolGateway（build_shared_tool_gateway 提取自 create_provider_runtime），LOCAL 复用 Planner retriever 且不受 Check-local-first 约束；预算每类 ≤2/每问 ≤4 动作/≤5 轮调用；证据只进对话 prompt + chat_evidence.jsonl（append-only，后续轮次单行摘要回放），调研产物零写入；引用芯片分色 [S]蓝/[W]黄/[L]绿/[R]灰；测试 +5 后端 +1 前端；实现期间 heredoc 转义损坏一次 chat.py，git checkout 回基线后全程 Edit 重写 |
+| R-294 | 用户要求实现更优雅的终态方案：对话取证切原生 function calling | ✅ providers 新增 ChatTurn（tool_calls 或纯文本联合返回、无 JSON fallback——自然语言是对话正常结局）+ complete_with_tools（多工具/截断显式报错）；chat.py 注册四证据工具 schema（search_sources/web_search/read_page/local_search，语义进 tool description），首行协议 _parse_action 退役——消除格式容错弱点（动作行写歪泄漏给用户）；预算守门/证据隔离落盘/芯片分色全保留；测试 fake 全面适配 ChatTurn（+3 providers 测试：tool_calls 通道/纯文本直通/截断）；不支持工具调用的模型报 config_missing |
 
 ### 第九轮实现（2026-09-09，Chunking v2 / ADR-0049，R-258）
 

@@ -372,18 +372,18 @@ describe("App", () => {
     await userEvent.click(await screen.findByText("web question"));
     expect(await screen.findByText("Web Report")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Deposit", exact: true }));
+    await userEvent.click(screen.getByRole("button", { name: "Deposit" }));
 
     expect(await screen.findByText("✓ Deposited")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Rebuild", exact: true }));
+    await userEvent.click(screen.getByRole("button", { name: "Rebuild" }));
 
     expect(await screen.findByText("✓ Indexed")).toBeInTheDocument();
 
     // Local results have no deposit affordance.
     await userEvent.click(screen.getByText("local question"));
     expect(await screen.findByText("Local Result")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Deposit", exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Deposit" })).not.toBeInTheDocument();
   });
 
   it("shows already-deposited state when the task was deposited before", async () => {
@@ -395,7 +395,7 @@ describe("App", () => {
     await userEvent.click(await screen.findByText("web question"));
     expect(await screen.findByText("Web Report")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Deposit", exact: true }));
+    await userEvent.click(screen.getByRole("button", { name: "Deposit" }));
 
     expect(await screen.findByText("✓ Deposited")).toBeInTheDocument();
   });
@@ -410,14 +410,14 @@ describe("App", () => {
     await expandCard(".report-card");
     expect(await screen.findByText("Web summary")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Deposit", exact: true }));
+    await userEvent.click(screen.getByRole("button", { name: "Deposit" }));
     expect(await screen.findByText("✓ Deposited")).toBeInTheDocument();
 
     await userEvent.click(screen.getByText("second web question"));
 
     await expandCard(".report-card");
     expect(await screen.findByText("Second summary")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Deposit", exact: true })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Deposit" })).toBeInTheDocument();
     expect(screen.queryByText("✓ Deposited")).not.toBeInTheDocument();
   });
 
